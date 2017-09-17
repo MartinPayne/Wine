@@ -1436,11 +1436,21 @@ static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu )
 
     do
     {
-        flags = GET_WORD(res);
+        /* Windows 3.00 and later use a WORD for the flags, whereas 1.x and 2.x use a BYTE. */
+        if (GetExeVersion16() >= 0x0300)
+        {
+            flags = GET_WORD(res);
+            res += sizeof(WORD);
+        }
+        else
+        {
+            flags = GET_BYTE(res);
+            res += sizeof(BYTE);
+        }
+
         end_flag = flags & MF_END;
         /* Remove MF_END because it has the same value as MF_HILITE */
         flags &= ~MF_END;
-        res += sizeof(WORD);
         if (!(flags & MF_POPUP))
         {
             id = GET_WORD(res);
@@ -1473,15 +1483,21 @@ HMENU16 WINAPI LoadMenuIndirect16( LPCVOID template )
     LPCSTR p = template;
 
     TRACE("(%p)\n", template );
-    version = GET_WORD(p);
-    p += sizeof(WORD);
-    if (version)
+
+    /* Windows 3.00 and later menu items are preceded by a MENUITEMTEMPLATEHEADER structure */
+    if (GetExeVersion16() >= 0x0300)
     {
-        WARN("version must be 0 for Win16\n" );
-        return 0;
+        version = GET_WORD(p);
+        p += sizeof(WORD);
+        if (version)
+        {
+            WARN("version must be 0 for Win16 >= 3.00 applications\n" );
+            return 0;
+        }
+        offset = GET_WORD(p);
+        p += sizeof(WORD) + offset;
     }
-    offset = GET_WORD(p);
-    p += sizeof(WORD) + offset;
+
     if (!(hMenu = CreateMenu())) return 0;
     if (!parse_menu_resource( p, hMenu ))
     {
