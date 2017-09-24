@@ -1428,7 +1428,7 @@ HMENU16 WINAPI LookupMenuHandle16( HMENU16 hmenu, INT16 id )
 }
 
 
-static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu )
+static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu, BOOL oldFormat )
 {
     WORD flags, id = 0;
     LPCSTR str;
@@ -1437,15 +1437,15 @@ static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu )
     do
     {
         /* Windows 3.00 and later use a WORD for the flags, whereas 1.x and 2.x use a BYTE. */
-        if (GetExeVersion16() >= 0x0300)
-        {
-            flags = GET_WORD(res);
-            res += sizeof(WORD);
-        }
-        else
+        if (oldFormat)
         {
             flags = GET_BYTE(res);
             res += sizeof(BYTE);
+        }
+        else
+        {
+            flags = GET_WORD(res);
+            res += sizeof(WORD);
         }
 
         end_flag = flags & MF_END;
@@ -1462,7 +1462,7 @@ static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu )
         {
             HMENU hSubMenu = CreatePopupMenu();
             if (!hSubMenu) return NULL;
-            if (!(res = parse_menu_resource( res, hSubMenu ))) return NULL;
+            if (!(res = parse_menu_resource( res, hSubMenu, oldFormat ))) return NULL;
             AppendMenuA( hMenu, flags, (UINT_PTR)hSubMenu, str );
         }
         else  /* Not a popup */
@@ -1478,14 +1478,18 @@ static LPCSTR parse_menu_resource( LPCSTR res, HMENU hMenu )
  */
 HMENU16 WINAPI LoadMenuIndirect16( LPCVOID template )
 {
+    BOOL oldFormat;
     HMENU hMenu;
     WORD version, offset;
     LPCSTR p = template;
 
     TRACE("(%p)\n", template );
 
+    /* Windows 1.x and 2.x menus have a slightly different menu format from 3.x menus */
+    oldFormat = (GetExeVersion16() < 0x0300);
+
     /* Windows 3.00 and later menu items are preceded by a MENUITEMTEMPLATEHEADER structure */
-    if (GetExeVersion16() >= 0x0300)
+    if (!oldFormat)
     {
         version = GET_WORD(p);
         p += sizeof(WORD);
@@ -1499,7 +1503,7 @@ HMENU16 WINAPI LoadMenuIndirect16( LPCVOID template )
     }
 
     if (!(hMenu = CreateMenu())) return 0;
-    if (!parse_menu_resource( p, hMenu ))
+    if (!parse_menu_resource( p, hMenu, oldFormat ))
     {
         DestroyMenu( hMenu );
         return 0;
