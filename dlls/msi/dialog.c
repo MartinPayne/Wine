@@ -4309,7 +4309,7 @@ static UINT event_end_dialog( msi_dialog *dialog, const WCHAR *argument )
 static UINT pending_event_end_dialog( msi_dialog *dialog, const WCHAR *argument )
 {
     dialog->pending_event = event_end_dialog;
-    if (dialog->pending_argument) msi_free( dialog->pending_argument );
+    msi_free( dialog->pending_argument );
     dialog->pending_argument = strdupW( argument );
     return ERROR_SUCCESS;
 }
@@ -4327,7 +4327,7 @@ static UINT event_new_dialog( msi_dialog *dialog, const WCHAR *argument )
 static UINT pending_event_new_dialog( msi_dialog *dialog, const WCHAR *argument )
 {
     dialog->pending_event = event_new_dialog;
-    if (dialog->pending_argument) msi_free( dialog->pending_argument );
+    msi_free( dialog->pending_argument );
     dialog->pending_argument = strdupW( argument );
     return ERROR_SUCCESS;
 }
@@ -4352,7 +4352,7 @@ static UINT event_spawn_dialog( msi_dialog *dialog, const WCHAR *argument )
 static UINT pending_event_spawn_dialog( msi_dialog *dialog, const WCHAR *argument )
 {
     dialog->pending_event = event_spawn_dialog;
-    if (dialog->pending_argument) msi_free( dialog->pending_argument );
+    msi_free( dialog->pending_argument );
     dialog->pending_argument = strdupW( argument );
     return ERROR_SUCCESS;
 }
@@ -4366,7 +4366,7 @@ static UINT event_spawn_wait_dialog( msi_dialog *dialog, const WCHAR *argument )
 
 static UINT event_do_action( msi_dialog *dialog, const WCHAR *argument )
 {
-    ACTION_PerformAction( dialog->package, argument, SCRIPT_NONE );
+    ACTION_PerformAction( dialog->package, argument );
     return ERROR_SUCCESS;
 }
 

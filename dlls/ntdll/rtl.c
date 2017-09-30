@@ -884,12 +884,22 @@ void WINAPI RtlCopyLuidAndAttributesArray(
     for (i = 0; i < Count; i++) Dest[i] = Src[i];
 }
 
-NTSTATUS WINAPI RtlIpv4StringToAddressExW(PULONG IP, PULONG Port,
-                                          LPCWSTR Buffer, PULONG MaxSize)
+/***********************************************************************
+ * RtlIpv4StringToAddressExW [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlIpv4StringToAddressExW(const WCHAR *str, BOOLEAN strict, IN_ADDR *address, USHORT *port)
 {
-    FIXME("(%p,%p,%p,%p): stub\n", IP, Port, Buffer, MaxSize);
+    FIXME("(%s, %u, %p, %p): stub\n", debugstr_w(str), strict, address, port);
+    return STATUS_NOT_IMPLEMENTED;
+}
 
-    return STATUS_SUCCESS;
+/***********************************************************************
+ * RtlIpv4StringToAddressW [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlIpv4StringToAddressW(const WCHAR *str, BOOLEAN strict, const WCHAR **terminator, IN_ADDR *address)
+{
+    FIXME("(%s, %u, %p, %p): stub\n", debugstr_w(str), strict, terminator, address);
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 /***********************************************************************

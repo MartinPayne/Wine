@@ -785,6 +785,8 @@ struct rawinput_device
     mod_handle_t module;       /* main module base address */
     client_ptr_t ldt_copy;     /* address of LDT copy (in thread address space) */
     client_ptr_t entry;        /* process entry point */
+@REPLY
+    int          suspend;      /* is process suspended? */
 @END
 
 
@@ -915,7 +917,6 @@ struct rawinput_device
     mod_handle_t base_address; /* base address of module */
 @REPLY
     client_ptr_t entry_point;
-    data_size_t  size;            /* module size */
     data_size_t  filename_len;    /* buffer len in bytes required to store filename */
     VARARG(filename,unicode_str); /* file name of module */
 @END
@@ -939,12 +940,10 @@ struct rawinput_device
 
 /* Notify the server that a dll has been loaded */
 @REQ(load_dll)
-    obj_handle_t mapping;      /* file mapping handle */
+    data_size_t  dbg_offset;   /* debug info offset */
     mod_handle_t base;         /* base address */
     client_ptr_t name;         /* ptr to ptr to name (in process addr space) */
-    data_size_t  size;         /* dll size */
-    int          dbg_offset;   /* debug info offset */
-    int          dbg_size;     /* debug info size */
+    data_size_t  dbg_size;     /* debug info size */
     VARARG(filename,unicode_str); /* file name of dll */
 @END
 
@@ -1718,15 +1717,30 @@ enum char_info_mode
 @REPLY
     mem_size_t   size;          /* mapping size */
     unsigned int flags;         /* SEC_* flags */
-    obj_handle_t mapping;       /* duplicate mapping handle unless removable */
     obj_handle_t shared_file;   /* shared mapping file handle */
     VARARG(image,pe_image_info);/* image info for SEC_IMAGE mappings */
 @END
 
 
+/* Add a memory view in the current process */
+@REQ(map_view)
+    obj_handle_t mapping;       /* file mapping handle */
+    unsigned int access;        /* wanted access rights */
+    client_ptr_t base;          /* view base address (page-aligned) */
+    mem_size_t   size;          /* view size */
+    file_pos_t   start;         /* start offset in mapping */
+@END
+
+
+/* Unmap a memory view from the current process */
+@REQ(unmap_view)
+    client_ptr_t base;          /* view base address */
+@END
+
+
 /* Get a range of committed pages in a file mapping */
 @REQ(get_mapping_committed_range)
-    obj_handle_t handle;        /* handle to the mapping */
+    client_ptr_t base;          /* view base address */
     file_pos_t   offset;        /* starting offset (page-aligned, in bytes) */
 @REPLY
     mem_size_t   size;          /* size of range starting at offset (page-aligned, in bytes) */
@@ -1736,9 +1750,16 @@ enum char_info_mode
 
 /* Add a range to the committed pages in a file mapping */
 @REQ(add_mapping_committed_range)
-    obj_handle_t handle;        /* handle to the mapping */
+    client_ptr_t base;          /* view base address */
     file_pos_t   offset;        /* starting offset (page-aligned, in bytes) */
     mem_size_t   size;          /* size to set (page-aligned, in bytes) or 0 if only retrieving */
+@END
+
+
+/* Check if two memory maps are for the same file */
+@REQ(is_same_mapping)
+    client_ptr_t base1;         /* first view base address */
+    client_ptr_t base2;         /* second view base address */
 @END
 
 

@@ -1009,15 +1009,12 @@ static void test_MapViewOfFile(void)
 
     SetLastError(0xdeadbeef);
     map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
-    todo_wine
     ok( map2 == 0, "OpenFileMappingA succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_FILE_NOT_FOUND, "OpenFileMappingA set error %d\n", GetLastError() );
     if (map2) CloseHandle(map2); /* FIXME: remove once Wine is fixed */
     SetLastError(0xdeadbeef);
     mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
     ok( mapping != 0, "CreateFileMappingA failed\n" );
-    todo_wine
     ok( GetLastError() == ERROR_SUCCESS, "CreateFileMappingA set error %d\n", GetLastError() );
     SetLastError(0xdeadbeef);
     ret = CloseHandle(mapping);
@@ -1098,15 +1095,12 @@ static void test_MapViewOfFile(void)
 
     SetLastError(0xdeadbeef);
     map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
-    todo_wine
     ok( map2 == 0, "OpenFileMappingA succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_FILE_NOT_FOUND, "OpenFileMappingA set error %d\n", GetLastError() );
     CloseHandle(map2);
     SetLastError(0xdeadbeef);
     mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
     ok( mapping != 0, "CreateFileMappingA failed\n" );
-    todo_wine
     ok( GetLastError() == ERROR_SUCCESS, "CreateFileMappingA set error %d\n", GetLastError() );
     SetLastError(0xdeadbeef);
     ret = CloseHandle(mapping);
@@ -1821,19 +1815,44 @@ static void test_IsBadCodePtr(void)
     ok(ret == FALSE, "Expected IsBadCodePtr to return FALSE, got %d\n", ret);
 }
 
+struct read_pipe_args
+{
+    HANDLE pipe;
+    int index;
+    void *base;
+    DWORD size;
+};
+
+static const char testdata[] = "Hello World";
+
+static DWORD CALLBACK read_pipe( void *arg )
+{
+    struct read_pipe_args *args = arg;
+    DWORD num_bytes;
+    BOOL success = ConnectNamedPipe( args->pipe, NULL );
+    ok( success || GetLastError() == ERROR_PIPE_CONNECTED,
+        "%u: ConnectNamedPipe failed %u\n", args->index, GetLastError() );
+
+    success = ReadFile( args->pipe, args->base, args->size, &num_bytes, NULL );
+    ok( success, "%u: ReadFile failed %u\n", args->index, GetLastError() );
+    ok( num_bytes == sizeof(testdata), "%u: wrong number of bytes read %u\n", args->index, num_bytes );
+    ok( !memcmp( args->base, testdata, sizeof(testdata)),
+        "%u: didn't receive expected data\n", args->index );
+    return 0;
+}
+
 static void test_write_watch(void)
 {
     static const char pipename[] = "\\\\.\\pipe\\test_write_watch_pipe";
-    static const char testdata[] = "Hello World";
     DWORD ret, size, old_prot, num_bytes;
     MEMORY_BASIC_INFORMATION info;
-    HANDLE readpipe, writepipe;
+    HANDLE readpipe, writepipe, file;
     OVERLAPPED overlapped;
     void *results[64];
     ULONG_PTR count;
-    ULONG pagesize;
+    ULONG i, pagesize;
     BOOL success;
-    char *base;
+    char path[MAX_PATH], filename[MAX_PATH], *base;
 
     if (!pGetWriteWatch || !pResetWriteWatch)
     {
@@ -1983,61 +2002,154 @@ static void test_write_watch(void)
 
     /* ReadFile should trigger write watches */
 
-    memset( &overlapped, 0, sizeof(overlapped) );
-    overlapped.hEvent = CreateEventA( NULL, TRUE, FALSE, NULL );
+    for (i = 0; i < 2; i++)
+    {
+        memset( &overlapped, 0, sizeof(overlapped) );
+        overlapped.hEvent = CreateEventA( NULL, TRUE, FALSE, NULL );
 
-    readpipe = CreateNamedPipeA( pipename, FILE_FLAG_OVERLAPPED | PIPE_ACCESS_INBOUND,
-                                 PIPE_TYPE_BYTE | PIPE_WAIT, 1, 1024, 1024,
-                                 NMPWAIT_USE_DEFAULT_WAIT, NULL );
-    ok( readpipe != INVALID_HANDLE_VALUE, "CreateNamedPipeA failed %u\n", GetLastError() );
+        readpipe = CreateNamedPipeA( pipename, FILE_FLAG_OVERLAPPED | PIPE_ACCESS_INBOUND,
+                                     (i ? PIPE_TYPE_MESSAGE : PIPE_TYPE_BYTE) | PIPE_WAIT, 1, 1024, 1024,
+                                     NMPWAIT_USE_DEFAULT_WAIT, NULL );
+        ok( readpipe != INVALID_HANDLE_VALUE, "CreateNamedPipeA failed %u\n", GetLastError() );
 
-    success = ConnectNamedPipe( readpipe, &overlapped );
-    ok( !success, "ConnectNamedPipe unexpectedly succeeded\n" );
-    ok( GetLastError() == ERROR_IO_PENDING, "expected ERROR_IO_PENDING, got %u\n", GetLastError() );
+        success = ConnectNamedPipe( readpipe, &overlapped );
+        ok( !success, "%u: ConnectNamedPipe unexpectedly succeeded\n", i );
+        ok( GetLastError() == ERROR_IO_PENDING, "%u: expected ERROR_IO_PENDING, got %u\n",
+            i, GetLastError() );
 
-    writepipe = CreateFileA( pipename, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL );
-    ok( writepipe != INVALID_HANDLE_VALUE, "CreateFileA failed %u\n", GetLastError() );
+        writepipe = CreateFileA( pipename, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL );
+        ok( writepipe != INVALID_HANDLE_VALUE, "%u: CreateFileA failed %u\n", i, GetLastError() );
 
-    ret = WaitForSingleObject( overlapped.hEvent, 1000 );
-    ok( ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret );
+        ret = WaitForSingleObject( overlapped.hEvent, 1000 );
+        ok( ret == WAIT_OBJECT_0, "%u: expected WAIT_OBJECT_0, got %u\n", i, ret );
 
-    memset( base, 0, size );
+        memset( base, 0, size );
+
+        count = 64;
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 16, "%u: wrong count %lu\n", i, count );
+
+        success = ReadFile( readpipe, base, size, NULL, &overlapped );
+        ok( !success, "%u: ReadFile unexpectedly succeeded\n", i );
+        ok( GetLastError() == ERROR_IO_PENDING, "%u: expected ERROR_IO_PENDING, got %u\n",
+            i, GetLastError() );
+
+        count = 64;
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 16, "%u: wrong count %lu\n", i, count );
+
+        num_bytes = 0;
+        success = WriteFile( writepipe, testdata, sizeof(testdata), &num_bytes, NULL );
+        ok( success, "%u: WriteFile failed %u\n", i, GetLastError() );
+        ok( num_bytes == sizeof(testdata), "%u: wrong number of bytes written %u\n", i, num_bytes );
+
+        num_bytes = 0;
+        success = GetOverlappedResult( readpipe, &overlapped, &num_bytes, TRUE );
+        ok( success, "%u: GetOverlappedResult failed %u\n", i, GetLastError() );
+        ok( num_bytes == sizeof(testdata), "%u: wrong number of bytes read %u\n", i, num_bytes );
+        ok( !memcmp( base, testdata, sizeof(testdata)), "%u: didn't receive expected data\n", i );
+
+        count = 64;
+        memset( results, 0, sizeof(results) );
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 1, "%u: wrong count %lu\n", i, count );
+        ok( results[0] == base, "%u: wrong result %p\n", i, results[0] );
+
+        CloseHandle( readpipe );
+        CloseHandle( writepipe );
+        CloseHandle( overlapped.hEvent );
+    }
+
+    for (i = 0; i < 2; i++)
+    {
+        struct read_pipe_args args;
+        HANDLE thread;
+
+        readpipe = CreateNamedPipeA( pipename, PIPE_ACCESS_INBOUND,
+                                     (i ? PIPE_TYPE_MESSAGE : PIPE_TYPE_BYTE) | PIPE_WAIT, 1, 1024, 1024,
+                                     NMPWAIT_USE_DEFAULT_WAIT, NULL );
+        ok( readpipe != INVALID_HANDLE_VALUE, "CreateNamedPipeA failed %u\n", GetLastError() );
+
+        memset( base, 0, size );
+
+        count = 64;
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 16, "%u: wrong count %lu\n", i, count );
+
+        args.pipe = readpipe;
+        args.index = i;
+        args.base = base;
+        args.size = size;
+        thread = CreateThread( NULL, 0, read_pipe, &args, 0, NULL );
+
+        writepipe = CreateFileA( pipename, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL );
+        ok( writepipe != INVALID_HANDLE_VALUE, "%u: CreateFileA failed %u\n", i, GetLastError() );
+        Sleep( 200 );
+
+        count = 64;
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 16, "%u: wrong count %lu\n", i, count );
+
+        num_bytes = 0;
+        success = WriteFile( writepipe, testdata, sizeof(testdata), &num_bytes, NULL );
+        ok( success, "%u: WriteFile failed %u\n", i, GetLastError() );
+        ok( num_bytes == sizeof(testdata), "%u: wrong number of bytes written %u\n", i, num_bytes );
+        WaitForSingleObject( thread, 10000 );
+
+        count = 64;
+        memset( results, 0, sizeof(results) );
+        ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+        ok( !ret, "%u: GetWriteWatch failed %u\n", i, GetLastError() );
+        ok( count == 1, "%u: wrong count %lu\n", i, count );
+        ok( results[0] == base, "%u: wrong result %p\n", i, results[0] );
+
+        CloseHandle( readpipe );
+        CloseHandle( writepipe );
+        CloseHandle( thread );
+    }
+
+    GetTempPathA( MAX_PATH, path );
+    GetTempFileNameA( path, "map", 0, filename );
+    file = CreateFileA( filename, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile error %u\n", GetLastError() );
+    SetFilePointer( file, 2 * pagesize + 3, NULL, FILE_BEGIN );
+    SetEndOfFile( file );
+    SetFilePointer( file, 0, NULL, FILE_BEGIN );
+
+    success = ReadFile( file, base, size, &num_bytes, NULL );
+    ok( success, "ReadFile failed %u\n", GetLastError() );
+    ok( num_bytes == 2 * pagesize + 3, "wrong bytes %u\n", num_bytes );
 
     count = 64;
     ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
     ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
     ok( count == 16, "wrong count %lu\n", count );
 
-    success = ReadFile( readpipe, base, size, NULL, &overlapped );
-    ok( !success, "ReadFile unexpectedly succeeded\n" );
-    ok( GetLastError() == ERROR_IO_PENDING, "expected ERROR_IO_PENDING, got %u\n", GetLastError() );
+    success = ReadFile( file, base, size, &num_bytes, NULL );
+    ok( success, "ReadFile failed %u\n", GetLastError() );
+    ok( num_bytes == 0, "wrong bytes %u\n", num_bytes );
 
     count = 64;
     ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
     ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
     ok( count == 16, "wrong count %lu\n", count );
 
-    num_bytes = 0;
-    success = WriteFile( writepipe, testdata, sizeof(testdata), &num_bytes, NULL );
-    ok( success, "WriteFile failed %u\n", GetLastError() );
-    ok( num_bytes == sizeof(testdata), "wrong number of bytes written\n" );
+    CloseHandle( file );
+    DeleteFileA( filename );
 
-    num_bytes = 0;
-    success = GetOverlappedResult( readpipe, &overlapped, &num_bytes, TRUE );
-    todo_wine ok( success, "GetOverlappedResult failed %u\n", GetLastError() );
-    todo_wine ok( num_bytes == sizeof(testdata), "wrong number of bytes read\n" );
-    todo_wine ok( !memcmp( base, testdata, sizeof(testdata)), "didn't receive expected data\n" );
+    success = ReadFile( (HANDLE)0xdead, base, size, &num_bytes, NULL );
+    ok( !success, "ReadFile succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_HANDLE, "wrong error %u\n", GetLastError() );
 
     count = 64;
-    memset( results, 0, sizeof(results) );
     ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
     ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
-    todo_wine ok( count == 1, "wrong count %lu\n", count );
-    todo_wine ok( results[0] == base, "wrong result %p\n", results[0] );
-
-    CloseHandle( readpipe );
-    CloseHandle( writepipe );
-    CloseHandle( overlapped.hEvent );
+    ok( count == 0, "wrong count %lu\n", count );
 
     /* some invalid parameter tests */
 
@@ -3466,7 +3578,7 @@ static void test_CreateFileMapping_protection(void)
         { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE, PAGE_NOACCESS } /* 0xf0 */
     };
     char *base, *ptr;
-    DWORD ret, i, alloc_prot, prot, old_prot;
+    DWORD ret, i, alloc_prot, old_prot;
     MEMORY_BASIC_INFORMATION info;
     char temp_path[MAX_PATH];
     char file_name[MAX_PATH];
@@ -3523,16 +3635,6 @@ static void test_CreateFileMapping_protection(void)
             ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
             ok(info.Type == MEM_MAPPED, "%d: %#x != MEM_MAPPED\n", i, info.Type);
 
-            if (is_mem_writable(info.Protect))
-            {
-                base[0] = 0xfe;
-
-                SetLastError(0xdeadbeef);
-                ret = VirtualQuery(base, &info, sizeof(info));
-                ok(ret, "VirtualQuery failed %d\n", GetLastError());
-                ok(info.Protect == td[i].prot, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot);
-            }
-
             SetLastError(0xdeadbeef);
             ptr = VirtualAlloc(base, si.dwPageSize, MEM_COMMIT, td[i].prot);
             ok(!ptr, "%d: VirtualAlloc(%02x) should fail\n", i, td[i].prot);
@@ -3564,18 +3666,18 @@ static void test_CreateFileMapping_protection(void)
     hmap = CreateFileMappingW(hfile, NULL, alloc_prot, 0, si.dwPageSize, NULL);
     ok(hmap != 0, "%d: CreateFileMapping error %d\n", i, GetLastError());
 
-    SetLastError(0xdeadbeef);
-    base = MapViewOfFile(hmap, FILE_MAP_READ | FILE_MAP_WRITE | (page_exec_supported ? FILE_MAP_EXECUTE : 0), 0, 0, 0);
-    ok(base != NULL, "MapViewOfFile failed %d\n", GetLastError());
-
-    old_prot = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = VirtualProtect(base, si.dwPageSize, PAGE_NOACCESS, &old_prot);
-    ok(ret, "VirtualProtect error %d\n", GetLastError());
-    ok(old_prot == alloc_prot, "got %#x != expected %#x\n", old_prot, alloc_prot);
-
     for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
     {
+        SetLastError(0xdeadbeef);
+        base = MapViewOfFile(hmap, FILE_MAP_READ | FILE_MAP_WRITE | (page_exec_supported ? FILE_MAP_EXECUTE : 0), 0, 0, 0);
+        ok(base != NULL, "MapViewOfFile failed %d\n", GetLastError());
+
+        old_prot = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = VirtualProtect(base, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+        ok(ret, "VirtualProtect error %d\n", GetLastError());
+        ok(old_prot == alloc_prot, "got %#x != expected %#x\n", old_prot, alloc_prot);
+
         SetLastError(0xdeadbeef);
         ret = VirtualQuery(base, &info, sizeof(info));
         ok(ret, "VirtualQuery failed %d\n", GetLastError());
@@ -3617,18 +3719,12 @@ static void test_CreateFileMapping_protection(void)
             ok(ret, "%d: VirtualProtect error %d\n", i, GetLastError());
             ok(old_prot == PAGE_NOACCESS, "%d: got %#x != expected PAGE_NOACCESS\n", i, old_prot);
 
-            prot = td[i].prot;
-            /* looks strange but Windows doesn't do this for PAGE_WRITECOPY */
-            if (prot == PAGE_EXECUTE_WRITECOPY) prot = PAGE_EXECUTE_READWRITE;
-
             SetLastError(0xdeadbeef);
             ret = VirtualQuery(base, &info, sizeof(info));
             ok(ret, "VirtualQuery failed %d\n", GetLastError());
             ok(info.BaseAddress == base, "%d: got %p != expected %p\n", i, info.BaseAddress, base);
             ok(info.RegionSize == si.dwPageSize, "%d: got %#lx != expected %#x\n", i, info.RegionSize, si.dwPageSize);
-            /* FIXME: remove the condition below once Wine is fixed */
-            todo_wine_if (td[i].prot == PAGE_EXECUTE_WRITECOPY)
-                ok(info.Protect == prot, "%d: got %#x != expected %#x\n", i, info.Protect, prot);
+            ok(info.Protect == td[i].prot, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot);
             ok(info.AllocationBase == base, "%d: %p != %p\n", i, info.AllocationBase, base);
             ok(info.AllocationProtect == alloc_prot, "%d: %#x != %#x\n", i, info.AllocationProtect, alloc_prot);
             ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
@@ -3660,9 +3756,10 @@ static void test_CreateFileMapping_protection(void)
         /* FIXME: remove the condition below once Wine is fixed */
         todo_wine_if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
             ok(old_prot == td[i].prot_after_write, "%d: got %#x != expected %#x\n", i, old_prot, td[i].prot_after_write);
+
+        UnmapViewOfFile(base);
     }
 
-    UnmapViewOfFile(base);
     CloseHandle(hmap);
 
     CloseHandle(hfile);
@@ -3729,6 +3826,16 @@ static DWORD map_prot_no_write(DWORD prot)
     {
     case PAGE_READWRITE: return PAGE_WRITECOPY;
     case PAGE_EXECUTE_READWRITE: return PAGE_EXECUTE_WRITECOPY;
+    default: return prot;
+    }
+}
+
+static DWORD map_prot_written(DWORD prot)
+{
+    switch (prot)
+    {
+    case PAGE_WRITECOPY: return PAGE_READWRITE;
+    case PAGE_EXECUTE_WRITECOPY: return PAGE_EXECUTE_READWRITE;
     default: return prot;
     }
 }
@@ -3980,27 +4087,9 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags )
                 if (is_compatible_protection(alloc_prot, actual_prot))
                 {
                     /* win2k and XP don't support EXEC on file mappings */
-                    if (!ret && page_prot[k] == PAGE_EXECUTE)
+                    if (!ret && (page_prot[k] == PAGE_EXECUTE || page_prot[k] == PAGE_EXECUTE_WRITECOPY || view[j].prot == PAGE_EXECUTE_WRITECOPY))
                     {
                         ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE\n");
-                        continue;
-                    }
-                    /* NT4 and win2k don't support EXEC on file mappings */
-                    if (!ret && (page_prot[k] == PAGE_EXECUTE_READ || page_prot[k] == PAGE_EXECUTE_READWRITE))
-                    {
-                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE\n");
-                        continue;
-                    }
-                    /* Vista+ supports PAGE_EXECUTE_WRITECOPY, earlier versions don't */
-                    if (!ret && page_prot[k] == PAGE_EXECUTE_WRITECOPY)
-                    {
-                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE_WRITECOPY\n");
-                        continue;
-                    }
-                    /* win2k and XP don't support PAGE_EXECUTE_WRITECOPY views properly  */
-                    if (!ret && view[j].prot == PAGE_EXECUTE_WRITECOPY)
-                    {
-                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE_WRITECOPY view properly\n");
                         continue;
                     }
 
@@ -4061,6 +4150,53 @@ static void test_mapping( HANDLE hfile, DWORD sec_flags )
                 }
             }
 
+            if (!anon_mapping && is_compatible_protection(alloc_prot, PAGE_WRITECOPY))
+            {
+                ret = VirtualProtect(base, si.dwPageSize, PAGE_WRITECOPY, &old_prot);
+                ok(ret, "VirtualProtect error %d, map %#x, view %#x\n", GetLastError(), page_prot[i], view[j].prot);
+                if (ret) *(DWORD*)base = 0xdeadbeef;
+                ret = VirtualQuery(base, &info, sizeof(info));
+                ok(ret, "%d: VirtualQuery failed %d\n", j, GetLastError());
+                todo_wine
+                ok(info.Protect == PAGE_READWRITE, "VirtualProtect wrong prot, map %#x, view %#x got %#x\n",
+                   page_prot[i], view[j].prot, info.Protect );
+
+                prev_prot = info.Protect;
+                alloc_prot = info.AllocationProtect;
+
+                for (k = 0; k < sizeof(page_prot)/sizeof(page_prot[0]); k++)
+                {
+                    DWORD actual_prot = (sec_flags & SEC_IMAGE) ? map_prot_no_write(page_prot[k]) : page_prot[k];
+                    SetLastError(0xdeadbeef);
+                    old_prot = 0xdeadbeef;
+                    ret = VirtualProtect(base, si.dwPageSize, page_prot[k], &old_prot);
+                    if (is_compatible_protection(alloc_prot, actual_prot))
+                    {
+                        /* win2k and XP don't support EXEC on file mappings */
+                        if (!ret && (page_prot[k] == PAGE_EXECUTE || page_prot[k] == PAGE_EXECUTE_WRITECOPY || view[j].prot == PAGE_EXECUTE_WRITECOPY))
+                        {
+                            ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE\n");
+                            continue;
+                        }
+
+                        ok(ret, "VirtualProtect error %d, map %#x, view %#x, requested prot %#x\n", GetLastError(), page_prot[i], view[j].prot, page_prot[k]);
+                        ok(old_prot == prev_prot, "got %#x, expected %#x\n", old_prot, prev_prot);
+
+                        ret = VirtualQuery(base, &info, sizeof(info));
+                        ok(ret, "%d: VirtualQuery failed %d\n", j, GetLastError());
+                        todo_wine_if( map_prot_written( page_prot[k] ) != actual_prot )
+                        ok(info.Protect == map_prot_written( page_prot[k] ),
+                           "VirtualProtect wrong prot, map %#x, view %#x, requested prot %#x got %#x\n",
+                           page_prot[i], view[j].prot, page_prot[k], info.Protect );
+                        prev_prot = info.Protect;
+                    }
+                    else
+                    {
+                        ok(!ret, "VirtualProtect should fail, map %#x, view %#x, requested prot %#x\n", page_prot[i], view[j].prot, page_prot[k]);
+                        ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+                    }
+                }
+            }
             UnmapViewOfFile(base);
         }
 

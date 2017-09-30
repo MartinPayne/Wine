@@ -506,7 +506,7 @@ static UINT ITERATE_Actions(MSIRECORD *row, LPVOID param)
         return ERROR_SUCCESS;
     }
 
-    rc = ACTION_PerformAction(package, action, SCRIPT_NONE);
+    rc = ACTION_PerformAction(package, action);
 
     msi_dialog_check_messages( NULL );
 
@@ -557,13 +557,13 @@ static UINT ACTION_ProcessExecSequence(MSIPACKAGE *package)
     MSIQUERY *view;
     UINT rc;
 
-    if (package->script->ExecuteSequenceRun)
+    if (package->ExecuteSequenceRun)
     {
         TRACE("Execute Sequence already Run\n");
         return ERROR_SUCCESS;
     }
 
-    package->script->ExecuteSequenceRun = TRUE;
+    package->ExecuteSequenceRun = TRUE;
 
     rc = MSI_OpenQuery(package->db, &view, query);
     if (rc == ERROR_SUCCESS)
@@ -600,7 +600,7 @@ static UINT ACTION_ProcessUISequence(MSIPACKAGE *package)
 /********************************************************
  * ACTION helper functions and functions that perform the actions
  *******************************************************/
-static UINT ACTION_HandleCustomAction(MSIPACKAGE *package, LPCWSTR action, UINT script)
+static UINT ACTION_HandleCustomAction(MSIPACKAGE *package, LPCWSTR action)
 {
     UINT arc;
     INT uirc;
@@ -609,7 +609,7 @@ static UINT ACTION_HandleCustomAction(MSIPACKAGE *package, LPCWSTR action, UINT 
     if (uirc == IDCANCEL)
         return ERROR_INSTALL_USEREXIT;
     ui_actioninfo(package, action, TRUE, 0);
-    arc = ACTION_CustomAction( package, action, script );
+    arc = ACTION_CustomAction(package, action);
     uirc = !arc;
 
     if (arc == ERROR_FUNCTION_NOT_CALLED && needs_ui_sequence(package))
@@ -1536,41 +1536,43 @@ static UINT ACTION_CostInitialize(MSIPACKAGE *package)
     return ERROR_SUCCESS;
 }
 
-static UINT execute_script_action( MSIPACKAGE *package, UINT script, UINT index )
-{
-    const WCHAR *action = package->script->Actions[script][index];
-    ui_actionstart( package, action, NULL, NULL );
-    TRACE("executing %s\n", debugstr_w(action));
-    return ACTION_PerformAction( package, action, script );
-}
-
 static UINT execute_script( MSIPACKAGE *package, UINT script )
 {
     UINT i, rc = ERROR_SUCCESS;
 
     TRACE("executing script %u\n", script);
 
-    if (!package->script)
-    {
-        ERR("no script!\n");
-        return ERROR_FUNCTION_FAILED;
-    }
+    package->script = script;
+
     if (script == SCRIPT_ROLLBACK)
     {
-        for (i = package->script->ActionCount[script]; i > 0; i--)
+        for (i = package->script_actions_count[script]; i > 0; i--)
         {
-            rc = execute_script_action( package, script, i - 1 );
-            if (rc != ERROR_SUCCESS) break;
+            rc = ACTION_PerformAction(package, package->script_actions[script][i-1]);
+            if (rc != ERROR_SUCCESS)
+            {
+                ERR("Execution of script %i halted; action %s returned %u\n",
+                    script, debugstr_w(package->script_actions[script][i-1]), rc);
+                break;
+            }
         }
     }
     else
     {
-        for (i = 0; i < package->script->ActionCount[script]; i++)
+        for (i = 0; i < package->script_actions_count[script]; i++)
         {
-            rc = execute_script_action( package, script, i );
-            if (rc != ERROR_SUCCESS) break;
+            rc = ACTION_PerformAction(package, package->script_actions[script][i]);
+            if (rc != ERROR_SUCCESS)
+            {
+                ERR("Execution of script %i halted; action %s returned %u\n",
+                    script, debugstr_w(package->script_actions[script][i]), rc);
+                break;
+            }
         }
     }
+
+    package->script = SCRIPT_NONE;
+
     msi_free_action_script(package, script);
     return rc;
 }
@@ -5569,8 +5571,9 @@ static UINT ACTION_ExecuteAction(MSIPACKAGE *package)
         {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','`','_','P','r','o','p','e','r','t','y','`',0};
     WCHAR *productname;
     WCHAR *action;
+    WCHAR *info_template;
     MSIQUERY *view;
-    MSIRECORD *uirow;
+    MSIRECORD *uirow, *uirow_info;
     UINT rc;
 
     /* Send COMMONDATA and INFO messages. */
@@ -5584,6 +5587,22 @@ static UINT ACTION_ExecuteAction(MSIPACKAGE *package)
     MSI_ProcessMessageVerbatim(package, INSTALLMESSAGE_COMMONDATA, uirow);
     /* FIXME: send INSTALLMESSAGE_PROGRESS */
     MSI_ProcessMessageVerbatim(package, INSTALLMESSAGE_COMMONDATA, uirow);
+
+    if (!(needs_ui_sequence(package) && ui_sequence_exists(package)))
+    {
+        uirow_info = MSI_CreateRecord(0);
+        if (!uirow_info)
+        {
+            msiobj_release(&uirow->hdr);
+            return ERROR_OUTOFMEMORY;
+        }
+        info_template = msi_get_error_message(package->db, MSIERR_INFO_LOGGINGSTART);
+        MSI_RecordSetStringW(uirow_info, 0, info_template);
+        msi_free(info_template);
+        MSI_ProcessMessage(package, INSTALLMESSAGE_INFO|MB_ICONHAND, uirow_info);
+        msiobj_release(&uirow_info->hdr);
+    }
+
     MSI_ProcessMessage(package, INSTALLMESSAGE_COMMONDATA, uirow);
 
     productname = msi_dup_property(package->db, INSTALLPROPERTY_PRODUCTNAMEW);
@@ -5617,7 +5636,7 @@ static UINT ACTION_ExecuteAction(MSIPACKAGE *package)
         msiobj_release(&uirow->hdr);
 
         /* Perform the installation. Always use the ExecuteSequence. */
-        package->script->InWhatSequence |= SEQUENCE_EXEC;
+        package->InWhatSequence |= SEQUENCE_EXEC;
         rc = ACTION_ProcessExecSequence(package);
 
         /* Send return value and INSTALLEND. */
@@ -5636,7 +5655,7 @@ static UINT ACTION_ExecuteAction(MSIPACKAGE *package)
         msiobj_release(&uirow->hdr);
     }
     else
-        rc = ACTION_PerformAction(package, action, SCRIPT_NONE);
+        rc = ACTION_PerformAction(package, action);
 
     /* Send all set properties. */
     if (!MSI_OpenQuery(package->db, &view, prop_query))
@@ -5671,7 +5690,7 @@ static UINT ACTION_INSTALL(MSIPACKAGE *package)
     msi_set_property(package->db, szEXECUTEACTION, szINSTALL, -1);
     if (needs_ui_sequence(package) && ui_sequence_exists(package))
     {
-        package->script->InWhatSequence |= SEQUENCE_UI;
+        package->InWhatSequence |= SEQUENCE_UI;
         return ACTION_ProcessUISequence(package);
     }
     else
@@ -7875,7 +7894,7 @@ static UINT ACTION_HandleStandardAction(MSIPACKAGE *package, LPCWSTR action)
     return rc;
 }
 
-UINT ACTION_PerformAction(MSIPACKAGE *package, const WCHAR *action, UINT script)
+UINT ACTION_PerformAction(MSIPACKAGE *package, const WCHAR *action)
 {
     UINT rc;
 
@@ -7885,7 +7904,7 @@ UINT ACTION_PerformAction(MSIPACKAGE *package, const WCHAR *action, UINT script)
     rc = ACTION_HandleStandardAction(package, action);
 
     if (rc == ERROR_FUNCTION_NOT_CALLED)
-        rc = ACTION_HandleCustomAction(package, action, script);
+        rc = ACTION_HandleCustomAction(package, action);
 
     if (rc == ERROR_FUNCTION_NOT_CALLED)
         WARN("unhandled msi action %s\n", debugstr_w(action));
@@ -7938,7 +7957,7 @@ static UINT ACTION_PerformActionSequence(MSIPACKAGE *package, UINT seq)
             return ERROR_FUNCTION_FAILED;
         }
 
-        rc = ACTION_PerformAction(package, action, SCRIPT_NONE);
+        rc = ACTION_PerformAction(package, action);
 
         msiobj_release(&row->hdr);
     }
@@ -7958,8 +7977,6 @@ UINT MSI_InstallPackage( MSIPACKAGE *package, LPCWSTR szPackagePath,
     WCHAR *reinstall, *remove, *patch, *productcode, *action;
     UINT rc;
     DWORD len = 0;
-
-    package->script->InWhatSequence = SEQUENCE_INSTALL;
 
     if (szPackagePath)
     {
@@ -8038,7 +8055,7 @@ UINT MSI_InstallPackage( MSIPACKAGE *package, LPCWSTR szPackagePath,
         msi_set_property( package->db, szRollbackDisabled, szOne, -1 );
     }
 
-    rc = ACTION_PerformAction(package, action, SCRIPT_NONE);
+    rc = ACTION_PerformAction(package, action);
 
     /* process the ending type action */
     if (rc == ERROR_SUCCESS)

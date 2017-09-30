@@ -1502,7 +1502,7 @@
 @ cdecl _utime32(str ptr) msvcr120._utime32
 @ cdecl _utime64(str ptr) msvcr120._utime64
 @ cdecl _vacopy(ptr ptr) msvcr120._vacopy
-@ stub _vfprintf_l
+@ cdecl _vfprintf_l(ptr str ptr ptr) msvcr120._vfprintf_l
 @ stub _vfprintf_p
 @ stub _vfprintf_p_l
 @ stub _vfprintf_s_l
@@ -1745,7 +1745,7 @@
 @ stub cimagf
 @ stub cimagl
 @ cdecl clearerr(ptr) msvcr120.clearerr
-@ stub clearerr_s
+@ cdecl clearerr_s(ptr) msvcr120.clearerr_s
 @ cdecl clock() msvcr120.clock
 @ stub clog
 @ stub clog10
@@ -2098,10 +2098,10 @@
 @ stub vscanf_s
 @ cdecl vsprintf(ptr str ptr) msvcr120.vsprintf
 @ cdecl vsprintf_s(ptr long str ptr) msvcr120.vsprintf_s
-@ stub vsscanf
+@ cdecl vsscanf(ptr str ptr) msvcr120.vsscanf
 @ stub vsscanf_s
 @ cdecl vswprintf_s(ptr long wstr ptr) msvcr120.vswprintf_s
-@ stub vswscanf
+@ cdecl vswscanf(ptr wstr ptr) msvcr120.vswscanf
 @ stub vswscanf_s
 @ cdecl vwprintf(wstr ptr) msvcr120.vwprintf
 @ cdecl vwprintf_s(wstr ptr) msvcr120.vwprintf_s

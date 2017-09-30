@@ -1467,6 +1467,21 @@ void CDECL MSVCRT_clearerr(MSVCRT_FILE* file)
 }
 
 /*********************************************************************
+ *		clearerr_s (MSVCRT.@)
+ */
+int CDECL MSVCRT_clearerr_s(MSVCRT_FILE* file)
+{
+  TRACE(":file (%p)\n",file);
+
+  if (!MSVCRT_CHECK_PMT(file != NULL)) return MSVCRT_EINVAL;
+
+  MSVCRT__lock_file(file);
+  file->_flag &= ~(MSVCRT__IOERR | MSVCRT__IOEOF);
+  MSVCRT__unlock_file(file);
+  return 0;
+}
+
+/*********************************************************************
  *		rewind (MSVCRT.@)
  */
 void CDECL MSVCRT_rewind(MSVCRT_FILE* file)
@@ -5208,6 +5223,26 @@ int CDECL MSVCRT__stdio_common_vfwprintf_s(unsigned __int64 options, MSVCRT_FILE
             arg_clbk_valist, NULL, &valist);
 
     if (tmp_buf) remove_std_buffer(file);
+    MSVCRT__unlock_file(file);
+
+    return ret;
+}
+
+/*********************************************************************
+ *    _vfprintf_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__vfprintf_l(MSVCRT_FILE* file, const char *format,
+        MSVCRT__locale_t locale, __ms_va_list valist)
+{
+    BOOL tmp_buf;
+    int ret;
+
+    if(!MSVCRT_CHECK_PMT(file != NULL)) return -1;
+
+    MSVCRT__lock_file(file);
+    tmp_buf = add_std_buffer(file);
+    ret = pf_printf_a(puts_clbk_file_a, file, format, locale, 0, arg_clbk_valist, NULL, &valist);
+    if(tmp_buf) remove_std_buffer(file);
     MSVCRT__unlock_file(file);
 
     return ret;

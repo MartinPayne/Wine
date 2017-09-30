@@ -196,8 +196,11 @@ DECL_HANDLER(read_change);
 DECL_HANDLER(create_mapping);
 DECL_HANDLER(open_mapping);
 DECL_HANDLER(get_mapping_info);
+DECL_HANDLER(map_view);
+DECL_HANDLER(unmap_view);
 DECL_HANDLER(get_mapping_committed_range);
 DECL_HANDLER(add_mapping_committed_range);
+DECL_HANDLER(is_same_mapping);
 DECL_HANDLER(create_snapshot);
 DECL_HANDLER(next_process);
 DECL_HANDLER(next_thread);
@@ -486,8 +489,11 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_create_mapping,
     (req_handler)req_open_mapping,
     (req_handler)req_get_mapping_info,
+    (req_handler)req_map_view,
+    (req_handler)req_unmap_view,
     (req_handler)req_get_mapping_committed_range,
     (req_handler)req_add_mapping_committed_range,
+    (req_handler)req_is_same_mapping,
     (req_handler)req_create_snapshot,
     (req_handler)req_next_process,
     (req_handler)req_next_thread,
@@ -757,6 +763,8 @@ C_ASSERT( FIELD_OFFSET(struct init_process_done_request, module) == 16 );
 C_ASSERT( FIELD_OFFSET(struct init_process_done_request, ldt_copy) == 24 );
 C_ASSERT( FIELD_OFFSET(struct init_process_done_request, entry) == 32 );
 C_ASSERT( sizeof(struct init_process_done_request) == 40 );
+C_ASSERT( FIELD_OFFSET(struct init_process_done_reply, suspend) == 8 );
+C_ASSERT( sizeof(struct init_process_done_reply) == 16 );
 C_ASSERT( FIELD_OFFSET(struct init_thread_request, unix_pid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct init_thread_request, unix_tid) == 16 );
 C_ASSERT( FIELD_OFFSET(struct init_thread_request, debug_level) == 20 );
@@ -840,8 +848,7 @@ C_ASSERT( FIELD_OFFSET(struct get_dll_info_request, handle) == 12 );
 C_ASSERT( FIELD_OFFSET(struct get_dll_info_request, base_address) == 16 );
 C_ASSERT( sizeof(struct get_dll_info_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, entry_point) == 8 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, size) == 16 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, filename_len) == 20 );
+C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, filename_len) == 16 );
 C_ASSERT( sizeof(struct get_dll_info_reply) == 24 );
 C_ASSERT( FIELD_OFFSET(struct suspend_thread_request, handle) == 12 );
 C_ASSERT( sizeof(struct suspend_thread_request) == 16 );
@@ -851,13 +858,11 @@ C_ASSERT( FIELD_OFFSET(struct resume_thread_request, handle) == 12 );
 C_ASSERT( sizeof(struct resume_thread_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct resume_thread_reply, count) == 8 );
 C_ASSERT( sizeof(struct resume_thread_reply) == 16 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, mapping) == 12 );
+C_ASSERT( FIELD_OFFSET(struct load_dll_request, dbg_offset) == 12 );
 C_ASSERT( FIELD_OFFSET(struct load_dll_request, base) == 16 );
 C_ASSERT( FIELD_OFFSET(struct load_dll_request, name) == 24 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, size) == 32 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, dbg_offset) == 36 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, dbg_size) == 40 );
-C_ASSERT( sizeof(struct load_dll_request) == 48 );
+C_ASSERT( FIELD_OFFSET(struct load_dll_request, dbg_size) == 32 );
+C_ASSERT( sizeof(struct load_dll_request) == 40 );
 C_ASSERT( FIELD_OFFSET(struct unload_dll_request, base) == 16 );
 C_ASSERT( sizeof(struct unload_dll_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct queue_apc_request, handle) == 12 );
@@ -1261,19 +1266,29 @@ C_ASSERT( FIELD_OFFSET(struct get_mapping_info_request, access) == 16 );
 C_ASSERT( sizeof(struct get_mapping_info_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_info_reply, size) == 8 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_info_reply, flags) == 16 );
-C_ASSERT( FIELD_OFFSET(struct get_mapping_info_reply, mapping) == 20 );
-C_ASSERT( FIELD_OFFSET(struct get_mapping_info_reply, shared_file) == 24 );
-C_ASSERT( sizeof(struct get_mapping_info_reply) == 32 );
-C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, handle) == 12 );
-C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, offset) == 16 );
-C_ASSERT( sizeof(struct get_mapping_committed_range_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_info_reply, shared_file) == 20 );
+C_ASSERT( sizeof(struct get_mapping_info_reply) == 24 );
+C_ASSERT( FIELD_OFFSET(struct map_view_request, mapping) == 12 );
+C_ASSERT( FIELD_OFFSET(struct map_view_request, access) == 16 );
+C_ASSERT( FIELD_OFFSET(struct map_view_request, base) == 24 );
+C_ASSERT( FIELD_OFFSET(struct map_view_request, size) == 32 );
+C_ASSERT( FIELD_OFFSET(struct map_view_request, start) == 40 );
+C_ASSERT( sizeof(struct map_view_request) == 48 );
+C_ASSERT( FIELD_OFFSET(struct unmap_view_request, base) == 16 );
+C_ASSERT( sizeof(struct unmap_view_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, base) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, offset) == 24 );
+C_ASSERT( sizeof(struct get_mapping_committed_range_request) == 32 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_reply, size) == 8 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_reply, committed) == 16 );
 C_ASSERT( sizeof(struct get_mapping_committed_range_reply) == 24 );
-C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, handle) == 12 );
-C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, offset) == 16 );
-C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, size) == 24 );
-C_ASSERT( sizeof(struct add_mapping_committed_range_request) == 32 );
+C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, base) == 16 );
+C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, offset) == 24 );
+C_ASSERT( FIELD_OFFSET(struct add_mapping_committed_range_request, size) == 32 );
+C_ASSERT( sizeof(struct add_mapping_committed_range_request) == 40 );
+C_ASSERT( FIELD_OFFSET(struct is_same_mapping_request, base1) == 16 );
+C_ASSERT( FIELD_OFFSET(struct is_same_mapping_request, base2) == 24 );
+C_ASSERT( sizeof(struct is_same_mapping_request) == 32 );
 C_ASSERT( FIELD_OFFSET(struct create_snapshot_request, attributes) == 12 );
 C_ASSERT( FIELD_OFFSET(struct create_snapshot_request, flags) == 16 );
 C_ASSERT( sizeof(struct create_snapshot_request) == 24 );

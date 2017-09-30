@@ -35,6 +35,7 @@
 #include "debughlp.h"
 
 #include "shell32_main.h"
+#include "pidl.h"
 
 #include "wine/debug.h"
 
@@ -62,15 +63,17 @@ typedef struct {
 typedef struct {
     Folder3 Folder3_iface;
     LONG ref;
-    VARIANT dir;
     IDispatch *application;
+    IShellFolder2 *folder;
+    PIDLIST_ABSOLUTE pidl;
+    BSTR path;
 } FolderImpl;
 
 typedef struct {
     FolderItems3 FolderItems3_iface;
     LONG ref;
     FolderImpl *folder;
-    WCHAR **item_filenames;
+    BSTR *item_names;
     LONG item_count;
 } FolderItemsImpl;
 
@@ -78,7 +81,8 @@ typedef struct {
     FolderItem2 FolderItem2_iface;
     LONG ref;
     FolderImpl *folder;
-    VARIANT dir;
+    WCHAR *path; /* if NULL, folder path is used */
+    DWORD attributes;
 } FolderItemImpl;
 
 typedef struct {
@@ -192,9 +196,7 @@ static HRESULT WINAPI FolderItemVerbImpl_QueryInterface(FolderItemVerb *iface,
 {
     FolderItemVerbImpl *This = impl_from_FolderItemVerb(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
-
-    *ppv = NULL;
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (IsEqualIID(&IID_IUnknown, riid) ||
         IsEqualIID(&IID_IDispatch, riid) ||
@@ -202,7 +204,7 @@ static HRESULT WINAPI FolderItemVerbImpl_QueryInterface(FolderItemVerb *iface,
         *ppv = &This->FolderItemVerb_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -292,13 +294,19 @@ static HRESULT WINAPI FolderItemVerbImpl_Invoke(FolderItemVerb *iface,
 
 static HRESULT WINAPI FolderItemVerbImpl_get_Application(FolderItemVerb *iface, IDispatch **disp)
 {
-    FIXME("(%p, %p)\n", iface, disp);
+    TRACE("(%p, %p)\n", iface, disp);
+
+    if (disp)
+        *disp = NULL;
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI FolderItemVerbImpl_get_Parent(FolderItemVerb *iface, IDispatch **disp)
 {
-    FIXME("(%p, %p)\n", iface, disp);
+    TRACE("(%p, %p)\n", iface, disp);
+
+    if (disp)
+        *disp = NULL;
     return E_NOTIMPL;
 }
 
@@ -358,9 +366,7 @@ static HRESULT WINAPI FolderItemVerbsImpl_QueryInterface(FolderItemVerbs *iface,
 {
     FolderItemVerbsImpl *This = impl_from_FolderItemVerbs(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
-
-    *ppv = NULL;
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (IsEqualIID(&IID_IUnknown, riid) ||
         IsEqualIID(&IID_IDispatch, riid) ||
@@ -368,7 +374,7 @@ static HRESULT WINAPI FolderItemVerbsImpl_QueryInterface(FolderItemVerbs *iface,
         *ppv = &This->FolderItemVerbs_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -471,13 +477,19 @@ static HRESULT WINAPI FolderItemVerbsImpl_get_Count(FolderItemVerbs *iface, LONG
 
 static HRESULT WINAPI FolderItemVerbsImpl_get_Application(FolderItemVerbs *iface, IDispatch **disp)
 {
-    FIXME("(%p, %p)\n", iface, disp);
+    TRACE("(%p, %p)\n", iface, disp);
+
+    if (disp)
+        *disp = NULL;
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI FolderItemVerbsImpl_get_Parent(FolderItemVerbs *iface, IDispatch **disp)
 {
-    FIXME("(%p, %p)\n", iface, disp);
+    TRACE("(%p, %p)\n", iface, disp);
+
+    if (disp)
+        *disp = NULL;
     return E_NOTIMPL;
 }
 
@@ -564,6 +576,8 @@ static HRESULT FolderItemVerbs_Constructor(BSTR path, FolderItemVerbs **verbs)
     LPITEMIDLIST pidl;
     HRESULT hr;
 
+    *verbs = NULL;
+
     This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderItemVerbsImpl));
     if (!This)
         return E_OUTOFMEMORY;
@@ -608,7 +622,7 @@ static HRESULT WINAPI FolderItemImpl_QueryInterface(FolderItem2 *iface,
 {
     FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (!ppv) return E_INVALIDARG;
 
@@ -619,7 +633,7 @@ static HRESULT WINAPI FolderItemImpl_QueryInterface(FolderItem2 *iface,
         *ppv = &This->FolderItem2_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -646,8 +660,8 @@ static ULONG WINAPI FolderItemImpl_Release(FolderItem2 *iface)
 
     if (!ref)
     {
-        VariantClear(&This->dir);
         Folder3_Release(&This->folder->Folder3_iface);
+        HeapFree(GetProcessHeap(), 0, This->path);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -718,21 +732,55 @@ static HRESULT WINAPI FolderItemImpl_get_Application(FolderItem2 *iface, IDispat
     return Folder3_get_Application(&This->folder->Folder3_iface, disp);
 }
 
-static HRESULT WINAPI FolderItemImpl_get_Parent(FolderItem2 *iface,
-        IDispatch **ppid)
+static HRESULT WINAPI FolderItemImpl_get_Parent(FolderItem2 *iface, IDispatch **disp)
 {
-    FIXME("(%p,%p)\n", iface, ppid);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    *ppid = NULL;
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, disp);
+
+    if (disp)
+    {
+        *disp = (IDispatch *)&This->folder->Folder3_iface;
+        IDispatch_AddRef(*disp);
+    }
+
+    return S_OK;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_Name(FolderItem2 *iface, BSTR *pbs)
+static HRESULT WINAPI FolderItemImpl_get_Name(FolderItem2 *iface, BSTR *name)
 {
-    FIXME("(%p,%p)\n", iface, pbs);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
+    LPCITEMIDLIST last_part;
+    IShellFolder2 *parent;
+    HRESULT hr = S_OK;
+    LPITEMIDLIST pidl;
+    STRRET strret;
 
-    *pbs = NULL;
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, name);
+
+    *name = NULL;
+
+    if (This->path)
+        hr = SHParseDisplayName(This->path, NULL, &pidl, 0, NULL);
+    else
+        pidl = This->folder->pidl;
+
+    if (FAILED(hr))
+        return S_FALSE;
+
+    hr = SHBindToParent(pidl, &IID_IShellFolder2, (void **)&parent, &last_part);
+    if (hr == S_OK)
+        hr = IShellFolder2_GetDisplayNameOf(parent, last_part, SHGDN_INFOLDER, &strret);
+
+    IShellFolder2_Release(parent);
+
+    if (hr == S_OK)
+        hr = StrRetToBSTR(&strret, last_part, name);
+
+    if (This->path)
+        ILFree(pidl);
+
+    return hr;
 }
 
 static HRESULT WINAPI FolderItemImpl_put_Name(FolderItem2 *iface, BSTR bs)
@@ -742,40 +790,14 @@ static HRESULT WINAPI FolderItemImpl_put_Name(FolderItem2 *iface, BSTR bs)
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_Path(FolderItem2 *iface, BSTR *pbs)
+static HRESULT WINAPI FolderItemImpl_get_Path(FolderItem2 *iface, BSTR *path)
 {
     FolderItemImpl *This = impl_from_FolderItem(iface);
-    HRESULT ret = S_OK;
-    WCHAR *pathW;
-    int len;
 
-    TRACE("(%p,%p)\n", iface, pbs);
+    TRACE("(%p,%p)\n", iface, path);
 
-    *pbs = NULL;
-    if (V_VT(&This->dir) == VT_I4)
-    {
-        pathW = HeapAlloc(GetProcessHeap(), 0, MAX_PATH * sizeof(WCHAR));
-        if (!pathW) return E_OUTOFMEMORY;
-        ret = SHGetFolderPathW(NULL, V_I4(&This->dir), NULL, SHGFP_TYPE_CURRENT,
-                pathW);
-        if (ret == S_OK)
-            *pbs = SysAllocString(pathW);
-        else if (ret == E_INVALIDARG)
-        {
-            FIXME("not implemented for %#x\n", V_I4(&This->dir));
-            ret = E_NOTIMPL;
-        }
-        HeapFree(GetProcessHeap(), 0, pathW);
-    }
-    else /* VT_BSTR */
-    {
-        pathW = V_BSTR(&This->dir);
-        len = lstrlenW(pathW);
-        *pbs = SysAllocStringLen(pathW, pathW[len - 1] == '\\' ? len - 1 : len);
-    }
-    if (ret == S_OK && !*pbs)
-        ret = E_OUTOFMEMORY;
-    return ret;
+    *path = SysAllocString(This->path ? This->path : This->folder->path);
+    return *path ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI FolderItemImpl_get_GetLink(FolderItem2 *iface,
@@ -796,36 +818,48 @@ static HRESULT WINAPI FolderItemImpl_get_GetFolder(FolderItem2 *iface,
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_IsLink(FolderItem2 *iface,
-        VARIANT_BOOL *pb)
+static HRESULT WINAPI FolderItemImpl_get_IsLink(FolderItem2 *iface, VARIANT_BOOL *b)
 {
-    FIXME("(%p,%p)\n", iface, pb);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, b);
+
+    *b = This->attributes & SFGAO_LINK ? VARIANT_TRUE : VARIANT_FALSE;
+
+    return S_OK;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_IsFolder(FolderItem2 *iface,
-        VARIANT_BOOL *pb)
+static HRESULT WINAPI FolderItemImpl_get_IsFolder(FolderItem2 *iface, VARIANT_BOOL *b)
 {
-    FIXME("(%p,%p)\n", iface, pb);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, b);
+
+    *b = This->attributes & SFGAO_FOLDER ? VARIANT_TRUE : VARIANT_FALSE;
+
+    return S_OK;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_IsFileSystem(FolderItem2 *iface,
-        VARIANT_BOOL *pb)
+static HRESULT WINAPI FolderItemImpl_get_IsFileSystem(FolderItem2 *iface, VARIANT_BOOL *b)
 {
-    FIXME("(%p,%p)\n", iface, pb);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, b);
+
+    *b = This->attributes & SFGAO_FILESYSTEM ? VARIANT_TRUE : VARIANT_FALSE;
+
+    return S_OK;
 }
 
-static HRESULT WINAPI FolderItemImpl_get_IsBrowsable(FolderItem2 *iface,
-        VARIANT_BOOL *pb)
+static HRESULT WINAPI FolderItemImpl_get_IsBrowsable(FolderItem2 *iface, VARIANT_BOOL *b)
 {
-    FIXME("(%p,%p)\n", iface, pb);
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, b);
+
+    *b = This->attributes & SFGAO_BROWSABLE ? VARIANT_TRUE : VARIANT_FALSE;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI FolderItemImpl_get_ModifyDate(FolderItem2 *iface,
@@ -860,23 +894,14 @@ static HRESULT WINAPI FolderItemImpl_get_Type(FolderItem2 *iface, BSTR *pbs)
 
 static HRESULT WINAPI FolderItemImpl_Verbs(FolderItem2 *iface, FolderItemVerbs **verbs)
 {
-    HRESULT hr;
-    BSTR path;
+    FolderItemImpl *This = impl_from_FolderItem(iface);
 
     TRACE("(%p, %p)\n", iface, verbs);
 
     if (!verbs)
         return E_INVALIDARG;
 
-    *verbs = NULL;
-
-    hr = FolderItem2_get_Path(iface, &path);
-    if (FAILED(hr))
-        return hr;
-
-    hr = FolderItemVerbs_Constructor(path, verbs);
-    SysFreeString(path);
-    return hr;
+    return FolderItemVerbs_Constructor(This->path ? This->path : This->folder->path, verbs);
 }
 
 static HRESULT WINAPI FolderItemImpl_InvokeVerb(FolderItem2 *iface,
@@ -930,33 +955,32 @@ static const FolderItem2Vtbl FolderItemImpl_Vtbl = {
     FolderItemImpl_ExtendedProperty
 };
 
-static HRESULT FolderItem_Constructor(FolderImpl *folder, VARIANT *dir, FolderItem **ppfi)
+static HRESULT FolderItem_Constructor(FolderImpl *folder, const WCHAR *path, FolderItem **item)
 {
+    PIDLIST_ABSOLUTE pidl;
     FolderItemImpl *This;
-    HRESULT ret;
 
-    TRACE("%s\n", debugstr_variant(dir));
+    TRACE("%s\n", debugstr_w(path));
 
-    *ppfi = NULL;
+    *item = NULL;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderItemImpl));
-    if (!This) return E_OUTOFMEMORY;
+    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This));
+    if (!This)
+        return E_OUTOFMEMORY;
+
     This->FolderItem2_iface.lpVtbl = &FolderItemImpl_Vtbl;
     This->ref = 1;
-
-    VariantInit(&This->dir);
-    ret = VariantCopy(&This->dir, dir);
-    if (FAILED(ret))
-    {
-        HeapFree(GetProcessHeap(), 0, This);
-        return E_OUTOFMEMORY;
-    }
+    if (path)
+        This->path = strdupW(path);
 
     This->folder = folder;
     Folder3_AddRef(&folder->Folder3_iface);
 
-    *ppfi = (FolderItem *)&This->FolderItem2_iface;
-    return ret;
+    if (SHParseDisplayName(This->path, NULL, &pidl, ~0u, &This->attributes) == S_OK)
+        ILFree(pidl);
+
+    *item = (FolderItem *)&This->FolderItem2_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI FolderItemsImpl_QueryInterface(FolderItems3 *iface,
@@ -964,7 +988,7 @@ static HRESULT WINAPI FolderItemsImpl_QueryInterface(FolderItems3 *iface,
 {
     FolderItemsImpl *This = impl_from_FolderItems(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (!ppv) return E_INVALIDARG;
 
@@ -976,7 +1000,7 @@ static HRESULT WINAPI FolderItemsImpl_QueryInterface(FolderItems3 *iface,
         *ppv = &This->FolderItems3_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -1006,8 +1030,8 @@ static ULONG WINAPI FolderItemsImpl_Release(FolderItems3 *iface)
     {
         Folder3_Release(&This->folder->Folder3_iface);
         for (i = 0; i < This->item_count; i++)
-            HeapFree(GetProcessHeap(), 0, This->item_filenames[i]);
-        HeapFree(GetProcessHeap(), 0, This->item_filenames);
+            SysFreeString(This->item_names[i]);
+        HeapFree(GetProcessHeap(), 0, This->item_names);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -1065,13 +1089,24 @@ static HRESULT WINAPI FolderItemsImpl_Invoke(FolderItems3 *iface,
     return hr;
 }
 
+static BOOL shellfolder_exists(const WCHAR *path)
+{
+    PIDLIST_ABSOLUTE pidl = NULL;
+    HRESULT hr;
+
+    hr = SHParseDisplayName(path, NULL, &pidl, 0, NULL);
+    ILFree(pidl);
+
+    return SUCCEEDED(hr);
+}
+
 static HRESULT WINAPI FolderItemsImpl_get_Count(FolderItems3 *iface, LONG *count)
 {
     FolderItemsImpl *This = impl_from_FolderItems(iface);
 
     TRACE("(%p,%p)\n", iface, count);
 
-    *count = PathIsDirectoryW(V_BSTR(&This->folder->dir)) ? This->item_count : 0;
+    *count = shellfolder_exists(This->folder->path) ? This->item_count : 0;
     return S_OK;
 }
 
@@ -1094,18 +1129,17 @@ static HRESULT WINAPI FolderItemsImpl_get_Parent(FolderItems3 *iface, IDispatch 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderItemsImpl_Item(FolderItems3 *iface, VARIANT index, FolderItem **ppid)
+static HRESULT WINAPI FolderItemsImpl_Item(FolderItems3 *iface, VARIANT index, FolderItem **item)
 {
     FolderItemsImpl *This = impl_from_FolderItems(iface);
-    WCHAR canonicalized_index[MAX_PATH], path_str[MAX_PATH];
-    VARIANT path_var;
-    HRESULT ret;
+    BSTR display_name = NULL;
+    HRESULT hr;
 
-    TRACE("(%p,%s,%p)\n", iface, debugstr_variant(&index), ppid);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_variant(&index), item);
 
-    *ppid = NULL;
+    *item = NULL;
 
-    if (!PathIsDirectoryW(V_BSTR(&This->folder->dir)))
+    if (!shellfolder_exists(This->folder->path))
         return S_FALSE;
 
     switch (V_VT(&index))
@@ -1118,41 +1152,39 @@ static HRESULT WINAPI FolderItemsImpl_Item(FolderItems3 *iface, VARIANT index, F
             if (V_I4(&index) >= This->item_count || V_I4(&index) < 0)
                 return S_FALSE;
 
-            if (!PathCombineW(path_str, V_BSTR(&This->folder->dir), This->item_filenames[V_I4(&index)]))
-                return S_FALSE;
-
+            display_name = SysAllocString(This->item_names[V_I4(&index)]);
             break;
 
         case VT_BSTR:
+        {
+            LPITEMIDLIST pidl;
+            STRRET strret;
+
             if (!V_BSTR(&index))
                 return S_FALSE;
 
-            if (!PathCanonicalizeW(canonicalized_index, V_BSTR(&index)))
+            if (FAILED(hr = IShellFolder2_ParseDisplayName(This->folder->folder, NULL, NULL, V_BSTR(&index),
+                    NULL, &pidl, NULL)))
                 return S_FALSE;
 
-            if (strcmpW(V_BSTR(&index), canonicalized_index) != 0)
-                return S_FALSE;
-
-            if (!PathCombineW(path_str, V_BSTR(&This->folder->dir), V_BSTR(&index)))
-                return S_FALSE;
-
-            if (!PathFileExistsW(path_str))
-                return S_FALSE;
-
+            if (IShellFolder2_GetDisplayNameOf(This->folder->folder, pidl, SHGDN_FORPARSING, &strret) == S_OK)
+                StrRetToBSTR(&strret, pidl, &display_name);
+            ILFree(pidl);
+            break;
+        }
+        case VT_ERROR:
             break;
 
-        case VT_ERROR:
-            return FolderItem_Constructor(This->folder, &This->folder->dir, ppid);
-
         default:
+            FIXME("Index type %d not handled.\n", V_VT(&index));
+            /* fall through */
+        case VT_EMPTY:
             return E_NOTIMPL;
     }
 
-    V_VT(&path_var) = VT_BSTR;
-    V_BSTR(&path_var) = SysAllocString(path_str);
-    ret = FolderItem_Constructor(This->folder, &path_var, ppid);
-    VariantClear(&path_var);
-    return ret;
+    hr = FolderItem_Constructor(This->folder, display_name, item);
+    SysFreeString(display_name);
+    return hr;
 }
 
 static HRESULT WINAPI FolderItemsImpl__NewEnum(FolderItems3 *iface, IUnknown **ppunk)
@@ -1209,83 +1241,112 @@ static const FolderItems3Vtbl FolderItemsImpl_Vtbl = {
     FolderItemsImpl_get_Verbs
 };
 
-static HRESULT FolderItems_Constructor(FolderImpl *folder, FolderItems **ppfi)
+static void idlist_sort(LPITEMIDLIST *idlist, unsigned int l, unsigned int r, IShellFolder2 *folder)
 {
-    static const WCHAR backslash_star[] = {'\\','*',0};
-    static const WCHAR dot[] = {'.',0};
-    static const WCHAR dot_dot[] = {'.','.',0};
-    FolderItemsImpl *This;
-    LONG item_size;
-    WCHAR glob[MAX_PATH + 2];
-    HANDLE first_file;
-    WIN32_FIND_DATAW file_info;
-    WCHAR **filenames;
+    unsigned int m;
 
-    TRACE("(%s,%p)\n", debugstr_variant(&folder->dir), ppfi);
+    if (l == r)
+        return;
 
-    *ppfi = NULL;
-
-    if (V_VT(&folder->dir) == VT_I4)
+    if (r < l)
     {
-        FIXME("special folder constants are not supported\n");
-        return E_NOTIMPL;
+        idlist_sort(idlist, r, l, folder);
+        return;
     }
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderItemsImpl));
-    if (!This) return E_OUTOFMEMORY;
+    m = (l + r) / 2;
+    idlist_sort(idlist, l, m, folder);
+    idlist_sort(idlist, m + 1, r, folder);
+
+    /* join the two sides */
+    while (l <= m && m < r)
+    {
+        if ((short)IShellFolder2_CompareIDs(folder, 0, idlist[l], idlist[m + 1]) > 0)
+        {
+            LPITEMIDLIST t = idlist[m + 1];
+            memmove(&idlist[l + 1], &idlist[l], (m - l + 1) * sizeof(idlist[l]));
+            idlist[l] = t;
+
+            m++;
+        }
+        l++;
+    }
+}
+
+static HRESULT FolderItems_Constructor(FolderImpl *folder, FolderItems **ret)
+{
+    IEnumIDList *enumidlist;
+    FolderItemsImpl *This;
+    LPITEMIDLIST pidl;
+    unsigned int i;
+    HRESULT hr;
+
+    TRACE("(%s,%p)\n", debugstr_w(folder->path), ret);
+
+    *ret = NULL;
+
+    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This));
+    if (!This)
+        return E_OUTOFMEMORY;
+
     This->FolderItems3_iface.lpVtbl = &FolderItemsImpl_Vtbl;
     This->ref = 1;
     This->folder = folder;
     Folder3_AddRef(&folder->Folder3_iface);
 
-    This->item_count = 0;
-    lstrcpyW(glob, V_BSTR(&folder->dir));
-    lstrcatW(glob, backslash_star);
-    first_file = FindFirstFileW(glob, &file_info);
-    if (first_file != INVALID_HANDLE_VALUE)
+    enumidlist = NULL;
+    if (FAILED(hr = IShellFolder2_EnumObjects(folder->folder, NULL, SHCONTF_FOLDERS | SHCONTF_NONFOLDERS,
+            &enumidlist)))
     {
-        item_size = 128;
-        This->item_filenames = HeapAlloc(GetProcessHeap(), 0, item_size * sizeof(WCHAR*));
-        if (!This->item_filenames)
-            goto fail;
+        goto failed;
+    }
 
-        do
+    while (IEnumIDList_Next(enumidlist, 1, &pidl, NULL) == S_OK)
+    {
+        This->item_count++;
+        ILFree(pidl);
+    }
+
+    if (This->item_count)
+    {
+        LPITEMIDLIST *pidls;
+        ULONG fetched;
+
+        pidls = HeapAlloc(GetProcessHeap(), 0, This->item_count * sizeof(*pidls));
+        This->item_names = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, This->item_count * sizeof(*This->item_names));
+
+        if (!pidls || !This->item_names)
         {
-            if (!strcmpW(file_info.cFileName, dot) || !strcmpW(file_info.cFileName, dot_dot))
-                continue;
-
-            if (This->item_count >= item_size)
-            {
-                item_size *= 2;
-                filenames = HeapReAlloc(GetProcessHeap(), 0, This->item_filenames, item_size * sizeof(WCHAR*));
-                if (!filenames)
-                    goto fail;
-                This->item_filenames = filenames;
-            }
-
-            This->item_filenames[This->item_count] = strdupW(file_info.cFileName);
-            if (!This->item_filenames[This->item_count])
-                goto fail;
-            This->item_count++;
+            HeapFree(GetProcessHeap(), 0, pidls);
+            HeapFree(GetProcessHeap(), 0, This->item_names);
+            hr = E_OUTOFMEMORY;
+            goto failed;
         }
-        while (FindNextFileW(first_file, &file_info));
 
-        FindClose(first_file);
-        HeapReAlloc(GetProcessHeap(), HEAP_REALLOC_IN_PLACE_ONLY,
-                    This->item_filenames, This->item_count * sizeof(WCHAR*));
-    }
-    else
-    {
-        This->item_filenames = NULL;
-    }
+        IEnumIDList_Reset(enumidlist);
+        if (IEnumIDList_Next(enumidlist, This->item_count, pidls, &fetched) == S_OK)
+            idlist_sort(pidls, 0, This->item_count - 1, folder->folder);
 
-    *ppfi = (FolderItems*)&This->FolderItems3_iface;
+        for (i = 0; i < This->item_count; i++)
+        {
+            STRRET strret;
+
+            if (IShellFolder2_GetDisplayNameOf(folder->folder, pidls[i], SHGDN_FORPARSING, &strret) == S_OK)
+                StrRetToBSTR(&strret, pidls[i], &This->item_names[i]);
+
+            ILFree(pidls[i]);
+        }
+        HeapFree(GetProcessHeap(), 0, pidls);
+    }
+    IEnumIDList_Release(enumidlist);
+
+    *ret = (FolderItems *)&This->FolderItems3_iface;
     return S_OK;
 
-fail:
-    FindClose(first_file);
-    FolderItems3_Release(&This->FolderItems3_iface);
-    return E_OUTOFMEMORY;
+failed:
+    if (enumidlist)
+        IEnumIDList_Release(enumidlist);
+    return hr;
 }
 
 static HRESULT WINAPI FolderImpl_QueryInterface(Folder3 *iface, REFIID riid,
@@ -1293,7 +1354,7 @@ static HRESULT WINAPI FolderImpl_QueryInterface(Folder3 *iface, REFIID riid,
 {
     FolderImpl *This = impl_from_Folder(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (!ppv) return E_INVALIDARG;
 
@@ -1305,7 +1366,7 @@ static HRESULT WINAPI FolderImpl_QueryInterface(Folder3 *iface, REFIID riid,
         *ppv = &This->Folder3_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -1332,8 +1393,10 @@ static ULONG WINAPI FolderImpl_Release(Folder3 *iface)
 
     if (!ref)
     {
+        ILFree(This->pidl);
+        SysFreeString(This->path);
+        IShellFolder2_Release(This->folder);
         IDispatch_Release(This->application);
-        VariantClear(&This->dir);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -1393,25 +1456,27 @@ static HRESULT WINAPI FolderImpl_Invoke(Folder3 *iface, DISPID dispIdMember,
     return hr;
 }
 
-static HRESULT WINAPI FolderImpl_get_Title(Folder3 *iface, BSTR *pbs)
+static HRESULT WINAPI FolderImpl_get_Title(Folder3 *iface, BSTR *title)
 {
     FolderImpl *This = impl_from_Folder(iface);
-    WCHAR *p;
-    int len;
+    PCUITEMID_CHILD last_part;
+    IShellFolder2 *parent;
+    SHELLDETAILS sd;
+    HRESULT hr;
 
-    TRACE("(%p,%p)\n", iface, pbs);
+    TRACE("(%p,%p)\n", iface, title);
 
-    *pbs = NULL;
+    *title = NULL;
 
-    if (V_VT(&This->dir) == VT_I4)
-    {
-        FIXME("special folder constants are not supported\n");
-        return E_NOTIMPL;
-    }
-    p = PathFindFileNameW(V_BSTR(&This->dir));
-    len = lstrlenW(p);
-    *pbs = SysAllocStringLen(p, p[len - 1] == '\\' ? len - 1 : len);
-    return *pbs ? S_OK : E_OUTOFMEMORY;
+    if (FAILED(hr = SHBindToParent(This->pidl, &IID_IShellFolder2, (void **)&parent, &last_part)))
+        return hr;
+
+    hr = IShellFolder2_GetDetailsOf(parent, last_part, 0, &sd);
+    IShellFolder2_Release(parent);
+    if (FAILED(hr))
+        return hr;
+
+    return StrRetToBSTR(&sd.str, last_part, title);
 }
 
 static HRESULT WINAPI FolderImpl_get_Application(Folder3 *iface, IDispatch **disp)
@@ -1429,11 +1494,12 @@ static HRESULT WINAPI FolderImpl_get_Application(Folder3 *iface, IDispatch **dis
     return S_OK;
 }
 
-static HRESULT WINAPI FolderImpl_get_Parent(Folder3 *iface, IDispatch **ppid)
+static HRESULT WINAPI FolderImpl_get_Parent(Folder3 *iface, IDispatch **disp)
 {
-    FIXME("(%p,%p)\n", iface, ppid);
+    TRACE("(%p,%p)\n", iface, disp);
 
-    *ppid = NULL;
+    if (disp)
+        *disp = NULL;
     return E_NOTIMPL;
 }
 
@@ -1457,79 +1523,66 @@ static HRESULT WINAPI FolderImpl_Items(Folder3 *iface, FolderItems **ppid)
 static HRESULT WINAPI FolderImpl_ParseName(Folder3 *iface, BSTR name, FolderItem **item)
 {
     FolderImpl *This = impl_from_Folder(iface);
-    FolderItem *self;
-    BSTR str;
-    WCHAR pathW[MAX_PATH];
-    VARIANT v;
+    LPITEMIDLIST pidl;
+    STRRET strret;
     HRESULT hr;
+    BSTR path;
 
     TRACE("(%p,%s,%p)\n", iface, debugstr_w(name), item);
 
     *item = NULL;
 
-    if (!name || !name[0])
+    if (FAILED(IShellFolder2_ParseDisplayName(This->folder, NULL, NULL, name, NULL, &pidl, NULL)))
         return S_FALSE;
 
-    hr = Folder3_get_Self(iface, &self);
+    if ((hr = IShellFolder2_GetDisplayNameOf(This->folder, pidl, SHGDN_FORPARSING, &strret)) == S_OK)
+        StrRetToBSTR(&strret, pidl, &path);
+
+    ILFree(pidl);
     if (FAILED(hr))
-        return hr;
-
-    hr = FolderItem_get_Path(self, &str);
-    FolderItem_Release(self);
-
-    PathCombineW(pathW, str, name);
-    SysFreeString(str);
-
-    if (!PathFileExistsW(pathW))
         return S_FALSE;
 
-    V_VT(&v) = VT_BSTR;
-    V_BSTR(&v) = SysAllocString(pathW);
-    hr = FolderItem_Constructor(This, &v, item);
-    VariantClear(&v);
+    hr = FolderItem_Constructor(This, path, item);
+    SysFreeString(path);
     return hr;
 }
 
-static HRESULT WINAPI FolderImpl_NewFolder(Folder3 *iface, BSTR bName,
-        VARIANT vOptions)
+static HRESULT WINAPI FolderImpl_NewFolder(Folder3 *iface, BSTR name, VARIANT options)
 {
-    FIXME("(%p,%s)\n", iface, debugstr_w(bName));
+    FIXME("(%p,%s,%s)\n", iface, debugstr_w(name), debugstr_variant(&options));
 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderImpl_MoveHere(Folder3 *iface, VARIANT vItem,
-        VARIANT vOptions)
+static HRESULT WINAPI FolderImpl_MoveHere(Folder3 *iface, VARIANT item, VARIANT options)
 {
-    FIXME("(%p)\n", iface);
+    FIXME("(%p,%s,%s)\n", iface, debugstr_variant(&item), debugstr_variant(&options));
 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderImpl_CopyHere(Folder3 *iface, VARIANT vItem,
-        VARIANT vOptions)
+static HRESULT WINAPI FolderImpl_CopyHere(Folder3 *iface, VARIANT item, VARIANT options)
 {
-    FIXME("(%p)\n", iface);
+    FIXME("(%p,%s,%s)\n", iface, debugstr_variant(&item), debugstr_variant(&options));
 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderImpl_GetDetailsOf(Folder3 *iface, VARIANT vItem,
-        int iColumn, BSTR *pbs)
+static HRESULT WINAPI FolderImpl_GetDetailsOf(Folder3 *iface, VARIANT item, int column, BSTR *str)
 {
-    FIXME("(%p,%d,%p)\n", iface, iColumn, pbs);
+    FIXME("(%p,%s,%d,%p)\n", iface, debugstr_variant(&item), column, str);
 
-    *pbs = NULL;
+    *str = NULL;
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI FolderImpl_get_Self(Folder3 *iface, FolderItem **ppfi)
+static HRESULT WINAPI FolderImpl_get_Self(Folder3 *iface, FolderItem **item)
 {
     FolderImpl *This = impl_from_Folder(iface);
 
-    TRACE("(%p,%p)\n", iface, ppfi);
+    TRACE("(%p,%p)\n", iface, item);
 
-    return FolderItem_Constructor(This, &This->dir, ppfi);
+    return FolderItem_Constructor(This, NULL, item);
 }
 
 static HRESULT WINAPI FolderImpl_get_OfflineStatus(Folder3 *iface, LONG *pul)
@@ -1604,43 +1657,34 @@ static const Folder3Vtbl FolderImpl_Vtbl = {
     FolderImpl_put_ShowWebViewBarricade
 };
 
-static HRESULT Folder_Constructor(VARIANT *dir, Folder **ppsdf)
+static HRESULT Folder_Constructor(IShellFolder2 *folder, LPITEMIDLIST pidl, Folder **ret)
 {
+    PCUITEMID_CHILD last_part;
+    IShellFolder2 *parent;
     FolderImpl *This;
-    HRESULT ret;
+    STRRET strret;
+    HRESULT hr;
 
-    *ppsdf = NULL;
+    *ret = NULL;
 
-    switch (V_VT(dir))
-    {
-        case VT_I4:
-            /* FIXME: add some checks */
-            break;
-        case VT_BSTR:
-            if (PathIsDirectoryW(V_BSTR(dir)) &&
-                !PathIsRelativeW(V_BSTR(dir)) &&
-                PathFileExistsW(V_BSTR(dir)))
-                break;
-        default:
-            return S_FALSE;
-    }
+    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    if (!This)
+        return E_OUTOFMEMORY;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderImpl));
-    if (!This) return E_OUTOFMEMORY;
     This->Folder3_iface.lpVtbl = &FolderImpl_Vtbl;
     This->ref = 1;
+    This->folder = folder;
+    This->pidl = pidl;
+
+    hr = SHBindToParent(pidl, &IID_IShellFolder2, (void **)&parent, &last_part);
+    IShellFolder2_GetDisplayNameOf(parent, last_part, SHGDN_FORPARSING, &strret);
+    StrRetToBSTR(&strret, last_part, &This->path);
+    IShellFolder2_Release(parent);
+
     IShellDispatch_Constructor(NULL, &IID_IDispatch, (void **)&This->application);
 
-    VariantInit(&This->dir);
-    ret = VariantCopy(&This->dir, dir);
-    if (FAILED(ret))
-    {
-        HeapFree(GetProcessHeap(), 0, This);
-        return E_OUTOFMEMORY;
-    }
-
-    *ppsdf = (Folder*)&This->Folder3_iface;
-    return ret;
+    *ret = (Folder *)&This->Folder3_iface;
+    return hr;
 }
 
 static HRESULT WINAPI ShellDispatch_QueryInterface(IShellDispatch6 *iface,
@@ -1648,7 +1692,7 @@ static HRESULT WINAPI ShellDispatch_QueryInterface(IShellDispatch6 *iface,
 {
     ShellDispatch *This = impl_from_IShellDispatch6(iface);
 
-    TRACE("(%p,%s,%p)\n", iface, shdebugstr_guid(riid), ppv);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppv);
 
     if (!ppv) return E_INVALIDARG;
 
@@ -1663,7 +1707,7 @@ static HRESULT WINAPI ShellDispatch_QueryInterface(IShellDispatch6 *iface,
         *ppv = &This->IShellDispatch6_iface;
     else
     {
-        FIXME("not implemented for %s\n", shdebugstr_guid(riid));
+        WARN("not implemented for %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
@@ -1751,36 +1795,85 @@ static HRESULT WINAPI ShellDispatch_Invoke(IShellDispatch6 *iface,
     return hr;
 }
 
-static HRESULT WINAPI ShellDispatch_get_Application(IShellDispatch6 *iface,
-        IDispatch **ppid)
+static HRESULT WINAPI ShellDispatch_get_Application(IShellDispatch6 *iface, IDispatch **disp)
 {
-    FIXME("(%p,%p)\n", iface, ppid);
+    TRACE("(%p,%p)\n", iface, disp);
 
-    *ppid = NULL;
-    return E_NOTIMPL;
+    if (!disp)
+        return E_INVALIDARG;
+
+    *disp = (IDispatch *)iface;
+    IDispatch_AddRef(*disp);
+    return S_OK;
 }
 
-static HRESULT WINAPI ShellDispatch_get_Parent(IShellDispatch6 *iface,
-        IDispatch **ppid)
+static HRESULT WINAPI ShellDispatch_get_Parent(IShellDispatch6 *iface, IDispatch **disp)
 {
-    FIXME("(%p,%p)\n", iface, ppid);
+    TRACE("(%p,%p)\n", iface, disp);
 
-    *ppid = NULL;
-    return E_NOTIMPL;
+    if (disp)
+    {
+        *disp = (IDispatch *)iface;
+        IDispatch_AddRef(*disp);
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI ShellDispatch_NameSpace(IShellDispatch6 *iface,
-        VARIANT vDir, Folder **ppsdf)
+        VARIANT dir, Folder **ret)
 {
-    TRACE("(%p,%p)\n", iface, ppsdf);
+    IShellFolder2 *folder;
+    IShellFolder *desktop;
+    LPITEMIDLIST pidl;
+    HRESULT hr;
 
-    return Folder_Constructor(&vDir, ppsdf);
+    TRACE("(%p,%s,%p)\n", iface, debugstr_variant(&dir), ret);
+
+    *ret = NULL;
+
+    switch (V_VT(&dir))
+    {
+        case VT_I2:
+            if (FAILED(hr = VariantChangeType(&dir, &dir, 0, VT_I4)))
+                return hr;
+
+            /* fallthrough */
+        case VT_I4:
+            if (FAILED(hr = SHGetFolderLocation(NULL, V_I4(&dir), NULL, 0, &pidl)))
+                return S_FALSE;
+
+            break;
+        case VT_BSTR:
+            if (FAILED(hr = SHParseDisplayName(V_BSTR(&dir), NULL, &pidl, 0, NULL)))
+                return S_FALSE;
+
+            break;
+        default:
+            WARN("Ignoring directory value %s\n", debugstr_variant(&dir));
+            return S_FALSE;
+    }
+
+    if (FAILED(hr = SHGetDesktopFolder(&desktop)))
+        return hr;
+
+    if (_ILIsDesktop(pidl))
+        hr = IShellFolder_QueryInterface(desktop, &IID_IShellFolder2, (void **)&folder);
+    else
+        hr = IShellFolder_BindToObject(desktop, pidl, NULL, &IID_IShellFolder2, (void **)&folder);
+
+    IShellFolder_Release(desktop);
+
+    if (FAILED(hr))
+        return S_FALSE;
+
+    return Folder_Constructor(folder, pidl, ret);
 }
 
 static HRESULT WINAPI ShellDispatch_BrowseForFolder(IShellDispatch6 *iface,
         LONG Hwnd, BSTR Title, LONG Options, VARIANT RootFolder, Folder **ppsdf)
 {
-    FIXME("(%p,%x,%s,%x,%p)\n", iface, Hwnd, debugstr_w(Title), Options, ppsdf);
+    FIXME("(%p,%x,%s,%x,%s,%p)\n", iface, Hwnd, debugstr_w(Title), Options, debugstr_variant(&RootFolder), ppsdf);
 
     *ppsdf = NULL;
     return E_NOTIMPL;
@@ -1795,16 +1888,16 @@ static HRESULT WINAPI ShellDispatch_Windows(IShellDispatch6 *iface,
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ShellDispatch_Open(IShellDispatch6 *iface, VARIANT vDir)
+static HRESULT WINAPI ShellDispatch_Open(IShellDispatch6 *iface, VARIANT dir)
 {
-    FIXME("(%p)\n", iface);
+    FIXME("(%p,%s)\n", iface, debugstr_variant(&dir));
 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ShellDispatch_Explore(IShellDispatch6 *iface, VARIANT vDir)
+static HRESULT WINAPI ShellDispatch_Explore(IShellDispatch6 *iface, VARIANT dir)
 {
-    FIXME("(%p)\n", iface);
+    FIXME("(%p,%s)\n", iface, debugstr_variant(&dir));
 
     return E_NOTIMPL;
 }
@@ -1983,13 +2076,13 @@ static HRESULT WINAPI ShellDispatch_GetSystemInformation(IShellDispatch6 *iface,
 
 static HRESULT WINAPI ShellDispatch_ServiceStart(IShellDispatch6 *iface, BSTR service, VARIANT persistent, VARIANT *ret)
 {
-    FIXME("(%s, %p): stub\n", debugstr_w(service), ret);
+    FIXME("(%s, %s, %p): stub\n", debugstr_w(service), debugstr_variant(&persistent), ret);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ShellDispatch_ServiceStop(IShellDispatch6 *iface, BSTR service, VARIANT persistent, VARIANT *ret)
 {
-    FIXME("(%s, %p): stub\n", debugstr_w(service), ret);
+    FIXME("(%s, %s, %p): stub\n", debugstr_w(service), debugstr_variant(&persistent), ret);
     return E_NOTIMPL;
 }
 
@@ -2045,13 +2138,13 @@ static HRESULT WINAPI ShellDispatch_CanStartStopService(IShellDispatch6 *iface, 
 
 static HRESULT WINAPI ShellDispatch_ShowBrowserBar(IShellDispatch6 *iface, BSTR clsid, VARIANT show, VARIANT *ret)
 {
-    FIXME("(%s, %p): stub\n", debugstr_w(clsid), ret);
+    FIXME("(%s, %s, %p): stub\n", debugstr_w(clsid), debugstr_variant(&show), ret);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ShellDispatch_AddToRecent(IShellDispatch6 *iface, VARIANT file, BSTR category)
 {
-    FIXME("(%s): stub\n", debugstr_w(category));
+    FIXME("(%s, %s): stub\n", debugstr_variant(&file), debugstr_w(category));
     return E_NOTIMPL;
 }
 

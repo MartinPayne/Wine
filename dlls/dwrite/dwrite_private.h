@@ -177,7 +177,8 @@ extern HRESULT get_system_fontcollection(IDWriteFactory5*,IDWriteFontCollection1
 extern HRESULT get_eudc_fontcollection(IDWriteFactory5*,IDWriteFontCollection1**) DECLSPEC_HIDDEN;
 extern IDWriteTextAnalyzer *get_text_analyzer(void) DECLSPEC_HIDDEN;
 extern HRESULT create_font_file(IDWriteFontFileLoader *loader, const void *reference_key, UINT32 key_size, IDWriteFontFile **font_file) DECLSPEC_HIDDEN;
-extern HRESULT create_localfontfileloader(IDWriteLocalFontFileLoader** iface) DECLSPEC_HIDDEN;
+extern void    init_local_fontfile_loader(void) DECLSPEC_HIDDEN;
+extern IDWriteFontFileLoader *get_local_fontfile_loader(void) DECLSPEC_HIDDEN;
 extern HRESULT create_fontface(const struct fontface_desc*,struct list*,IDWriteFontFace4**) DECLSPEC_HIDDEN;
 extern HRESULT create_font_collection(IDWriteFactory5*,IDWriteFontFileEnumerator*,BOOL,IDWriteFontCollection1**) DECLSPEC_HIDDEN;
 extern HRESULT create_glyphrunanalysis(const struct glyphrunanalysis_desc*,IDWriteGlyphRunAnalysis**) DECLSPEC_HIDDEN;
@@ -191,6 +192,7 @@ extern HRESULT create_colorglyphenum(FLOAT,FLOAT,const DWRITE_GLYPH_RUN*,const D
 extern BOOL lb_is_newline_char(WCHAR) DECLSPEC_HIDDEN;
 extern HRESULT create_system_fontfallback(IDWriteFactory5*,IDWriteFontFallback**) DECLSPEC_HIDDEN;
 extern void    release_system_fontfallback(IDWriteFontFallback*) DECLSPEC_HIDDEN;
+extern HRESULT create_fontfallback_builder(IDWriteFactory5*,IDWriteFontFallbackBuilder**) DECLSPEC_HIDDEN;
 extern HRESULT create_matching_font(IDWriteFontCollection*,const WCHAR*,DWRITE_FONT_WEIGHT,DWRITE_FONT_STYLE,DWRITE_FONT_STRETCH,
     IDWriteFont**) DECLSPEC_HIDDEN;
 extern HRESULT create_fontfacereference(IDWriteFactory5*,IDWriteFontFile*,UINT32,DWRITE_FONT_SIMULATIONS,

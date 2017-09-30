@@ -1862,7 +1862,7 @@
 @ cdecl _realloc_base(ptr long)
 @ cdecl _recalloc(ptr long long)
 @ cdecl _register_onexit_function(ptr ptr) MSVCRT__register_onexit_function
-@ stub _register_thread_local_exe_atexit_callback
+@ cdecl _register_thread_local_exe_atexit_callback(ptr)
 @ cdecl _resetstkoflw() MSVCRT__resetstkoflw
 @ cdecl _rmdir(str) MSVCRT__rmdir
 @ cdecl _rmtmp() MSVCRT__rmtmp
@@ -2222,7 +2222,7 @@
 @ stub cimagf
 @ stub cimagl
 @ cdecl clearerr(ptr) MSVCRT_clearerr
-@ stub clearerr_s
+@ cdecl clearerr_s(ptr) MSVCRT_clearerr_s
 @ cdecl clock() MSVCRT_clock
 @ stub clog
 @ stub clog10

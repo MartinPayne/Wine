@@ -406,11 +406,6 @@ static void d2d_point_calculate_bezier(D2D1_POINT_2F *out, const D2D1_POINT_2F *
     out->y = t_c * (t_c * p0->y + t * p1->y) + t * (t_c * p1->y + t * p2->y);
 }
 
-static float d2d_point_dot(const D2D1_POINT_2F *p0, const D2D1_POINT_2F *p1)
-{
-    return p0->x * p1->x + p0->y * p1->y;
-}
-
 static void d2d_point_normalise(D2D1_POINT_2F *p)
 {
     float l;
@@ -2956,6 +2951,11 @@ static void STDMETHODCALLTYPE d2d_geometry_sink_AddQuadraticBeziers(ID2D1Geometr
 
     for (i = 0; i < bezier_count; ++i)
     {
+        D2D1_RECT_F bezier_bounds;
+
+        d2d_rect_get_bezier_bounds(&bezier_bounds, &figure->vertices[figure->vertex_count - 1],
+                &beziers[i].point1, &beziers[i].point2);
+
         figure->vertex_types[figure->vertex_count - 1] = D2D_VERTEX_TYPE_BEZIER;
         if (!d2d_figure_add_bezier_control(figure, &beziers[i].point1))
         {
@@ -2970,6 +2970,8 @@ static void STDMETHODCALLTYPE d2d_geometry_sink_AddQuadraticBeziers(ID2D1Geometr
             geometry->u.path.state = D2D_GEOMETRY_STATE_ERROR;
             return;
         }
+
+        d2d_rect_union(&figure->bounds, &bezier_bounds);
     }
 
     geometry->u.path.segment_count += bezier_count;

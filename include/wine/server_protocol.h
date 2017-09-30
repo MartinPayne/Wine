@@ -799,6 +799,8 @@ struct init_process_done_request
 struct init_process_done_reply
 {
     struct reply_header __header;
+    int          suspend;
+    char __pad_12[4];
 };
 
 
@@ -989,9 +991,9 @@ struct get_dll_info_reply
 {
     struct reply_header __header;
     client_ptr_t entry_point;
-    data_size_t  size;
     data_size_t  filename_len;
     /* VARARG(filename,unicode_str); */
+    char __pad_20[4];
 };
 
 
@@ -1027,14 +1029,12 @@ struct resume_thread_reply
 struct load_dll_request
 {
     struct request_header __header;
-    obj_handle_t mapping;
+    data_size_t  dbg_offset;
     mod_handle_t base;
     client_ptr_t name;
-    data_size_t  size;
-    int          dbg_offset;
-    int          dbg_size;
+    data_size_t  dbg_size;
     /* VARARG(filename,unicode_str); */
-    char __pad_44[4];
+    char __pad_36[4];
 };
 struct load_dll_reply
 {
@@ -2218,10 +2218,38 @@ struct get_mapping_info_reply
     struct reply_header __header;
     mem_size_t   size;
     unsigned int flags;
-    obj_handle_t mapping;
     obj_handle_t shared_file;
     /* VARARG(image,pe_image_info); */
-    char __pad_28[4];
+};
+
+
+
+struct map_view_request
+{
+    struct request_header __header;
+    obj_handle_t mapping;
+    unsigned int access;
+    char __pad_20[4];
+    client_ptr_t base;
+    mem_size_t   size;
+    file_pos_t   start;
+};
+struct map_view_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct unmap_view_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    client_ptr_t base;
+};
+struct unmap_view_reply
+{
+    struct reply_header __header;
 };
 
 
@@ -2229,7 +2257,8 @@ struct get_mapping_info_reply
 struct get_mapping_committed_range_request
 {
     struct request_header __header;
-    obj_handle_t handle;
+    char __pad_12[4];
+    client_ptr_t base;
     file_pos_t   offset;
 };
 struct get_mapping_committed_range_reply
@@ -2245,11 +2274,26 @@ struct get_mapping_committed_range_reply
 struct add_mapping_committed_range_request
 {
     struct request_header __header;
-    obj_handle_t handle;
+    char __pad_12[4];
+    client_ptr_t base;
     file_pos_t   offset;
     mem_size_t   size;
 };
 struct add_mapping_committed_range_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct is_same_mapping_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    client_ptr_t base1;
+    client_ptr_t base2;
+};
+struct is_same_mapping_reply
 {
     struct reply_header __header;
 };
@@ -5624,8 +5668,11 @@ enum request
     REQ_create_mapping,
     REQ_open_mapping,
     REQ_get_mapping_info,
+    REQ_map_view,
+    REQ_unmap_view,
     REQ_get_mapping_committed_range,
     REQ_add_mapping_committed_range,
+    REQ_is_same_mapping,
     REQ_create_snapshot,
     REQ_next_process,
     REQ_next_thread,
@@ -5915,8 +5962,11 @@ union generic_request
     struct create_mapping_request create_mapping_request;
     struct open_mapping_request open_mapping_request;
     struct get_mapping_info_request get_mapping_info_request;
+    struct map_view_request map_view_request;
+    struct unmap_view_request unmap_view_request;
     struct get_mapping_committed_range_request get_mapping_committed_range_request;
     struct add_mapping_committed_range_request add_mapping_committed_range_request;
+    struct is_same_mapping_request is_same_mapping_request;
     struct create_snapshot_request create_snapshot_request;
     struct next_process_request next_process_request;
     struct next_thread_request next_thread_request;
@@ -6204,8 +6254,11 @@ union generic_reply
     struct create_mapping_reply create_mapping_reply;
     struct open_mapping_reply open_mapping_reply;
     struct get_mapping_info_reply get_mapping_info_reply;
+    struct map_view_reply map_view_reply;
+    struct unmap_view_reply unmap_view_reply;
     struct get_mapping_committed_range_reply get_mapping_committed_range_reply;
     struct add_mapping_committed_range_reply add_mapping_committed_range_reply;
+    struct is_same_mapping_reply is_same_mapping_reply;
     struct create_snapshot_reply create_snapshot_reply;
     struct next_process_reply next_process_reply;
     struct next_thread_reply next_thread_reply;
@@ -6406,6 +6459,6 @@ union generic_reply
     struct terminate_job_reply terminate_job_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 536
+#define SERVER_PROTOCOL_VERSION 542
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

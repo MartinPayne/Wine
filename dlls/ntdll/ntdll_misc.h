@@ -67,7 +67,7 @@ extern LPCSTR debugstr_ObjectAttributes(const OBJECT_ATTRIBUTES *oa) DECLSPEC_HI
 extern NTSTATUS signal_alloc_thread( TEB **teb ) DECLSPEC_HIDDEN;
 extern void signal_free_thread( TEB *teb ) DECLSPEC_HIDDEN;
 extern void signal_init_thread( TEB *teb ) DECLSPEC_HIDDEN;
-extern void signal_init_process(void) DECLSPEC_HIDDEN;
+extern void signal_init_process( CONTEXT *context, LPTHREAD_START_ROUTINE entry ) DECLSPEC_HIDDEN;
 extern void version_init( const WCHAR *appname ) DECLSPEC_HIDDEN;
 extern void debug_init(void) DECLSPEC_HIDDEN;
 extern HANDLE thread_init(void) DECLSPEC_HIDDEN;
@@ -82,12 +82,13 @@ extern timeout_t server_start_time DECLSPEC_HIDDEN;
 extern unsigned int server_cpus DECLSPEC_HIDDEN;
 extern BOOL is_wow64 DECLSPEC_HIDDEN;
 extern void server_init_process(void) DECLSPEC_HIDDEN;
-extern NTSTATUS server_init_process_done(void) DECLSPEC_HIDDEN;
+extern NTSTATUS server_init_process_done( CONTEXT *context ) DECLSPEC_HIDDEN;
 extern size_t server_init_thread( void *entry_point ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN abort_thread( int status ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN terminate_thread( int status ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN exit_thread( int status ) DECLSPEC_HIDDEN;
 extern sigset_t server_block_set DECLSPEC_HIDDEN;
+extern unsigned int server_call_unlocked( void *req_ptr ) DECLSPEC_HIDDEN;
 extern void server_enter_uninterrupted_section( RTL_CRITICAL_SECTION *cs, sigset_t *sigset ) DECLSPEC_HIDDEN;
 extern void server_leave_uninterrupted_section( RTL_CRITICAL_SECTION *cs, sigset_t *sigset ) DECLSPEC_HIDDEN;
 extern unsigned int server_select( const select_op_t *select_op, data_size_t size,
@@ -114,6 +115,7 @@ extern UNICODE_STRING system_dir DECLSPEC_HIDDEN;
 
 typedef LONG (WINAPI *PUNHANDLED_EXCEPTION_FILTER)(PEXCEPTION_POINTERS);
 extern PUNHANDLED_EXCEPTION_FILTER unhandled_exception_filter DECLSPEC_HIDDEN;
+extern LPTHREAD_START_ROUTINE kernel32_start_process DECLSPEC_HIDDEN;
 
 /* redefine these to make sure we don't reference kernel symbols */
 #define GetProcessHeap()       (NtCurrentTeb()->Peb->ProcessHeap)
@@ -168,6 +170,9 @@ extern void virtual_clear_thread_stack(void) DECLSPEC_HIDDEN;
 extern BOOL virtual_handle_stack_fault( void *addr ) DECLSPEC_HIDDEN;
 extern BOOL virtual_is_valid_code_address( const void *addr, SIZE_T size ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_handle_fault( LPCVOID addr, DWORD err, BOOL on_signal_stack ) DECLSPEC_HIDDEN;
+extern unsigned int virtual_locked_server_call( void *req_ptr ) DECLSPEC_HIDDEN;
+extern ssize_t virtual_locked_read( int fd, void *addr, size_t size ) DECLSPEC_HIDDEN;
+extern ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset ) DECLSPEC_HIDDEN;
 extern BOOL virtual_check_buffer_for_read( const void *ptr, SIZE_T size ) DECLSPEC_HIDDEN;
 extern BOOL virtual_check_buffer_for_write( void *ptr, SIZE_T size ) DECLSPEC_HIDDEN;
 extern SIZE_T virtual_uninterrupted_read_memory( const void *addr, void *buffer, SIZE_T size ) DECLSPEC_HIDDEN;

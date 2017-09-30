@@ -3539,7 +3539,8 @@ static DWORD cpu_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit
         ERR("Failed to blit.\n");
     wined3d_texture_load_location(dst_texture, dst_sub_resource_idx, context, dst_location);
 
-    return dst_texture->resource.map_binding | dst_location;
+    return dst_location | (dst_texture->sub_resources[dst_sub_resource_idx].locations
+            & dst_texture->resource.map_binding);
 }
 
 static const struct wined3d_blitter_ops cpu_blitter_ops =
@@ -3708,8 +3709,8 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
     {
         blit_op = WINED3D_BLIT_OP_COLOR_BLIT_ALPHATEST;
     }
-    else if ((src_sub_resource->locations & WINED3D_LOCATION_SYSMEM)
-            && !(dst_sub_resource->locations & WINED3D_LOCATION_SYSMEM))
+    else if ((src_sub_resource->locations & surface_simple_locations)
+            && !(dst_sub_resource->locations & surface_simple_locations))
     {
         /* Upload */
         if (scale)

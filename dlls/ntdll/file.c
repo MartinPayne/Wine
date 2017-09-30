@@ -438,7 +438,7 @@ static NTSTATUS irp_completion( void *user, IO_STATUS_BLOCK *io, NTSTATUS status
         {
             req->user_arg = wine_server_client_ptr( async );
             wine_server_set_reply( req, async->buffer, async->size );
-            status = wine_server_call( req );
+            status = virtual_locked_server_call( req );
             information = reply->size;
         }
         SERVER_END_REQ;
@@ -517,7 +517,7 @@ static NTSTATUS FILE_AsyncReadService( void *user, IO_STATUS_BLOCK *iosb, NTSTAT
                                           &needs_close, NULL, NULL )))
             break;
 
-        result = read(fd, &fileio->buffer[fileio->already], fileio->count - fileio->already);
+        result = virtual_locked_read(fd, &fileio->buffer[fileio->already], fileio->count-fileio->already);
         if (needs_close) close( fd );
 
         if (result < 0)
@@ -577,7 +577,7 @@ static NTSTATUS server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE a
         req->async = server_async( handle, &async->io, event, apc, apc_context, io );
         req->pos   = offset ? offset->QuadPart : 0;
         wine_server_set_reply( req, buffer, size );
-        status = wine_server_call( req );
+        status = virtual_locked_server_call( req );
         wait_handle = wine_server_ptr_handle( reply->wait );
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)
@@ -869,7 +869,7 @@ NTSTATUS WINAPI NtReadFile(HANDLE hFile, HANDLE hEvent,
         if (offset && offset->QuadPart != FILE_USE_FILE_POINTER_POSITION)
         {
             /* async I/O doesn't make sense on regular files */
-            while ((result = pread( unix_handle, buffer, length, offset->QuadPart )) == -1)
+            while ((result = virtual_locked_pread( unix_handle, buffer, length, offset->QuadPart )) == -1)
             {
                 if (errno != EINTR)
                 {
@@ -911,7 +911,7 @@ NTSTATUS WINAPI NtReadFile(HANDLE hFile, HANDLE hEvent,
 
     for (;;)
     {
-        if ((result = read( unix_handle, (char *)buffer + total, length - total )) >= 0)
+        if ((result = virtual_locked_read( unix_handle, (char *)buffer + total, length - total )) >= 0)
         {
             total += result;
             if (!result || total == length)
@@ -937,7 +937,7 @@ NTSTATUS WINAPI NtReadFile(HANDLE hFile, HANDLE hEvent,
                     break;
                 default:
                     status = STATUS_PIPE_BROKEN;
-                    goto done;
+                    goto err;
                 }
             }
             else if (type == FD_TYPE_FILE) continue;  /* no async I/O on regular files */
@@ -946,7 +946,7 @@ NTSTATUS WINAPI NtReadFile(HANDLE hFile, HANDLE hEvent,
         {
             if (errno == EINTR) continue;
             if (!total) status = FILE_GetNtStatus();
-            goto done;
+            goto err;
         }
 
         if (async_read)
@@ -1331,7 +1331,7 @@ NTSTATUS WINAPI NtWriteFile(HANDLE hFile, HANDLE hEvent,
                 if (errno == EFAULT) status = STATUS_INVALID_USER_BUFFER;
                 else status = FILE_GetNtStatus();
             }
-            goto done;
+            goto err;
         }
 
         if (async_write)
@@ -1540,7 +1540,7 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
         if ((code & 3) != METHOD_BUFFERED)
             wine_server_add_data( req, out_buffer, out_size );
         wine_server_set_reply( req, out_buffer, out_size );
-        status = wine_server_call( req );
+        status = virtual_locked_server_call( req );
         wait_handle = wine_server_ptr_handle( reply->wait );
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)

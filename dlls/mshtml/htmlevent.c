@@ -185,6 +185,8 @@ static const event_info_t event_info[] = {
         EVENT_FIXME}
 };
 
+static BOOL use_event_quirks(EventTarget*);
+
 eventid_t str_to_eid(LPCWSTR str)
 {
     int i;
@@ -953,6 +955,9 @@ void call_event_handlers(HTMLDocumentNode *doc, HTMLEventObj *event_obj, EventTa
         VARIANTARG arg;
         DISPPARAMS dp = {&arg, &named_arg, 1, 1};
 
+        if(!use_event_quirks(event_target))
+            FIXME("Event argument not supported\n");
+
         V_VT(&arg) = VT_DISPATCH;
         V_DISPATCH(&arg) = this_obj;
         V_VT(&v) = VT_EMPTY;
@@ -1381,6 +1386,12 @@ static HRESULT set_event_handler_disp(EventTarget *event_target, eventid_t eid, 
 HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var)
 {
     switch(V_VT(var)) {
+    case VT_EMPTY:
+        if(use_event_quirks(event_target)) {
+            WARN("attempt to set to VT_EMPTY in quirks mode\n");
+            return E_NOTIMPL;
+        }
+        /* fall through */
     case VT_NULL:
         remove_event_handler(event_target, eid);
         return S_OK;
@@ -1391,6 +1402,9 @@ HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var
     case VT_BSTR: {
         VARIANT *v;
         HRESULT hres;
+
+        if(!use_event_quirks(event_target))
+            FIXME("Setting to string %s not supported\n", debugstr_w(V_BSTR(var)));
 
         /*
          * Setting event handler to string is a rare case and we don't want to
@@ -1413,8 +1427,6 @@ HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var
 
     default:
         FIXME("not handler %s\n", debugstr_variant(var));
-        /* fall through */
-    case VT_EMPTY:
         return E_NOTIMPL;
     }
 
@@ -1638,14 +1650,152 @@ HRESULT doc_init_events(HTMLDocumentNode *doc)
     return S_OK;
 }
 
+static inline EventTarget *impl_from_IEventTarget(IEventTarget *iface)
+{
+    return CONTAINING_RECORD(iface, EventTarget, IEventTarget_iface);
+}
+
+static HRESULT WINAPI EventTarget_QueryInterface(IEventTarget *iface, REFIID riid, void **ppv)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
+}
+
+static ULONG WINAPI EventTarget_AddRef(IEventTarget *iface)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
+}
+
+static ULONG WINAPI EventTarget_Release(IEventTarget *iface)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
+}
+
+static HRESULT WINAPI EventTarget_GetTypeInfoCount(IEventTarget *iface, UINT *pctinfo)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_GetTypeInfoCount(&This->dispex.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI EventTarget_GetTypeInfo(IEventTarget *iface, UINT iTInfo,
+                                              LCID lcid, ITypeInfo **ppTInfo)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI EventTarget_GetIDsOfNames(IEventTarget *iface, REFIID riid, LPOLESTR *rgszNames,
+                                                UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface, riid,
+            rgszNames, cNames, lcid, rgDispId);
+}
+
+static HRESULT WINAPI EventTarget_Invoke(IEventTarget *iface, DISPID dispIdMember,
+                                         REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams,
+                                         VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    return IDispatchEx_Invoke(&This->dispex.IDispatchEx_iface, dispIdMember,
+            riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI EventTarget_addEventListener(IEventTarget *iface, BSTR type,
+                                                   IDispatch *listener, VARIANT_BOOL capture)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    FIXME("(%p)->(%s %p %x)\n", This, debugstr_w(type), listener, capture);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EventTarget_removeEventListener(IEventTarget *iface, BSTR type,
+                                                      IDispatch *listener, VARIANT_BOOL capture)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    FIXME("(%p)->(%s %p %x)\n", This, debugstr_w(type), listener, capture);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EventTarget_dispatchEvent(IEventTarget *iface, IDOMEvent *event, VARIANT_BOOL *result)
+{
+    EventTarget *This = impl_from_IEventTarget(iface);
+    FIXME("(%p)->(%p %p)\n", This, event, result);
+    return E_NOTIMPL;
+}
+
+static const IEventTargetVtbl EventTargetVtbl = {
+    EventTarget_QueryInterface,
+    EventTarget_AddRef,
+    EventTarget_Release,
+    EventTarget_GetTypeInfoCount,
+    EventTarget_GetTypeInfo,
+    EventTarget_GetIDsOfNames,
+    EventTarget_Invoke,
+    EventTarget_addEventListener,
+    EventTarget_removeEventListener,
+    EventTarget_dispatchEvent
+};
+
+#define DELAY_INIT_VTBL ((const IEventTargetVtbl*)1)
+
+static BOOL use_event_quirks(EventTarget *event_target)
+{
+    if(event_target->IEventTarget_iface.lpVtbl == DELAY_INIT_VTBL) {
+        event_target->IEventTarget_iface.lpVtbl =
+            dispex_compat_mode(&event_target->dispex) >= COMPAT_MODE_IE9
+            ? &EventTargetVtbl : NULL;
+    }
+    return !event_target->IEventTarget_iface.lpVtbl;
+}
+
+HRESULT EventTarget_QI(EventTarget *event_target, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(riid, &IID_IEventTarget)) {
+        if(use_event_quirks(event_target)) {
+            WARN("IEventTarget queried, but not supported by in document mode\n");
+            *ppv = NULL;
+            return E_NOINTERFACE;
+        }
+        IEventTarget_AddRef(&event_target->IEventTarget_iface);
+        *ppv = &event_target->IEventTarget_iface;
+        return S_OK;
+    }
+
+    if(dispex_query_interface(&event_target->dispex, riid, ppv))
+        return *ppv ? S_OK : E_NOINTERFACE;
+
+    WARN("(%p)->(%s %p)\n", event_target, debugstr_mshtml_guid(riid), ppv);
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
 static int event_id_cmp(const void *key, const struct wine_rb_entry *entry)
 {
     return (INT_PTR)key - WINE_RB_ENTRY_VALUE(entry, handler_vector_t, entry)->event_id;
 }
 
-void init_event_target(EventTarget *event_target)
+void EventTarget_Init(EventTarget *event_target, IUnknown *outer, dispex_static_data_t *dispex_data,
+                      compat_mode_t compat_mode)
 {
+    init_dispex_with_compat_mode(&event_target->dispex, outer, dispex_data, compat_mode);
     wine_rb_init(&event_target->handler_map, event_id_cmp);
+
+    /*
+     * IEventTarget is supported by the object or not depending on compatibility mode.
+     * We use NULL vtbl for objects in compatibility mode not supporting the interface.
+     * For targets that don't know compatibility mode at creation time, we set vtbl
+     * to special DELAY_INIT_VTBL value so that vtbl will be set to proper value
+     * when it's needed.
+     */
+    if(compat_mode == COMPAT_MODE_QUIRKS && dispex_data->vtbl && dispex_data->vtbl->get_compat_mode)
+        event_target->IEventTarget_iface.lpVtbl = DELAY_INIT_VTBL;
+    else if(compat_mode < COMPAT_MODE_IE9)
+        event_target->IEventTarget_iface.lpVtbl = NULL;
+    else
+        event_target->IEventTarget_iface.lpVtbl = &EventTargetVtbl;
 }
 
 void release_event_target(EventTarget *event_target)

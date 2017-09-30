@@ -1281,6 +1281,11 @@ static void dump_init_process_done_request( const struct init_process_done_reque
     dump_uint64( ", entry=", &req->entry );
 }
 
+static void dump_init_process_done_reply( const struct init_process_done_reply *req )
+{
+    fprintf( stderr, " suspend=%d", req->suspend );
+}
+
 static void dump_init_thread_request( const struct init_thread_request *req )
 {
     fprintf( stderr, " unix_pid=%d", req->unix_pid );
@@ -1417,7 +1422,6 @@ static void dump_get_dll_info_request( const struct get_dll_info_request *req )
 static void dump_get_dll_info_reply( const struct get_dll_info_reply *req )
 {
     dump_uint64( " entry_point=", &req->entry_point );
-    fprintf( stderr, ", size=%u", req->size );
     fprintf( stderr, ", filename_len=%u", req->filename_len );
     dump_varargs_unicode_str( ", filename=", cur_size );
 }
@@ -1444,12 +1448,10 @@ static void dump_resume_thread_reply( const struct resume_thread_reply *req )
 
 static void dump_load_dll_request( const struct load_dll_request *req )
 {
-    fprintf( stderr, " mapping=%04x", req->mapping );
+    fprintf( stderr, " dbg_offset=%u", req->dbg_offset );
     dump_uint64( ", base=", &req->base );
     dump_uint64( ", name=", &req->name );
-    fprintf( stderr, ", size=%u", req->size );
-    fprintf( stderr, ", dbg_offset=%d", req->dbg_offset );
-    fprintf( stderr, ", dbg_size=%d", req->dbg_size );
+    fprintf( stderr, ", dbg_size=%u", req->dbg_size );
     dump_varargs_unicode_str( ", filename=", cur_size );
 }
 
@@ -2233,14 +2235,27 @@ static void dump_get_mapping_info_reply( const struct get_mapping_info_reply *re
 {
     dump_uint64( " size=", &req->size );
     fprintf( stderr, ", flags=%08x", req->flags );
-    fprintf( stderr, ", mapping=%04x", req->mapping );
     fprintf( stderr, ", shared_file=%04x", req->shared_file );
     dump_varargs_pe_image_info( ", image=", cur_size );
 }
 
+static void dump_map_view_request( const struct map_view_request *req )
+{
+    fprintf( stderr, " mapping=%04x", req->mapping );
+    fprintf( stderr, ", access=%08x", req->access );
+    dump_uint64( ", base=", &req->base );
+    dump_uint64( ", size=", &req->size );
+    dump_uint64( ", start=", &req->start );
+}
+
+static void dump_unmap_view_request( const struct unmap_view_request *req )
+{
+    dump_uint64( " base=", &req->base );
+}
+
 static void dump_get_mapping_committed_range_request( const struct get_mapping_committed_range_request *req )
 {
-    fprintf( stderr, " handle=%04x", req->handle );
+    dump_uint64( " base=", &req->base );
     dump_uint64( ", offset=", &req->offset );
 }
 
@@ -2252,9 +2267,15 @@ static void dump_get_mapping_committed_range_reply( const struct get_mapping_com
 
 static void dump_add_mapping_committed_range_request( const struct add_mapping_committed_range_request *req )
 {
-    fprintf( stderr, " handle=%04x", req->handle );
+    dump_uint64( " base=", &req->base );
     dump_uint64( ", offset=", &req->offset );
     dump_uint64( ", size=", &req->size );
+}
+
+static void dump_is_same_mapping_request( const struct is_same_mapping_request *req )
+{
+    dump_uint64( " base1=", &req->base1 );
+    dump_uint64( ", base2=", &req->base2 );
 }
 
 static void dump_create_snapshot_request( const struct create_snapshot_request *req )
@@ -4548,8 +4569,11 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_create_mapping_request,
     (dump_func)dump_open_mapping_request,
     (dump_func)dump_get_mapping_info_request,
+    (dump_func)dump_map_view_request,
+    (dump_func)dump_unmap_view_request,
     (dump_func)dump_get_mapping_committed_range_request,
     (dump_func)dump_add_mapping_committed_range_request,
+    (dump_func)dump_is_same_mapping_request,
     (dump_func)dump_create_snapshot_request,
     (dump_func)dump_next_process_request,
     (dump_func)dump_next_thread_request,
@@ -4755,7 +4779,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_new_process_info_reply,
     (dump_func)dump_new_thread_reply,
     (dump_func)dump_get_startup_info_reply,
-    NULL,
+    (dump_func)dump_init_process_done_reply,
     (dump_func)dump_init_thread_reply,
     (dump_func)dump_terminate_process_reply,
     (dump_func)dump_terminate_thread_reply,
@@ -4835,7 +4859,10 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_create_mapping_reply,
     (dump_func)dump_open_mapping_reply,
     (dump_func)dump_get_mapping_info_reply,
+    NULL,
+    NULL,
     (dump_func)dump_get_mapping_committed_range_reply,
+    NULL,
     NULL,
     (dump_func)dump_create_snapshot_reply,
     (dump_func)dump_next_process_reply,
@@ -5122,8 +5149,11 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "create_mapping",
     "open_mapping",
     "get_mapping_info",
+    "map_view",
+    "unmap_view",
     "get_mapping_committed_range",
     "add_mapping_committed_range",
+    "is_same_mapping",
     "create_snapshot",
     "next_process",
     "next_thread",
@@ -5402,7 +5432,9 @@ static const struct
     { "NOT_A_DIRECTORY",             STATUS_NOT_A_DIRECTORY },
     { "NOT_FOUND",                   STATUS_NOT_FOUND },
     { "NOT_IMPLEMENTED",             STATUS_NOT_IMPLEMENTED },
+    { "NOT_MAPPED_VIEW",             STATUS_NOT_MAPPED_VIEW },
     { "NOT_REGISTRY_FILE",           STATUS_NOT_REGISTRY_FILE },
+    { "NOT_SAME_DEVICE",             STATUS_NOT_SAME_DEVICE },
     { "NOT_SUPPORTED",               STATUS_NOT_SUPPORTED },
     { "NO_DATA_DETECTED",            STATUS_NO_DATA_DETECTED },
     { "NO_IMPERSONATION_TOKEN",      STATUS_NO_IMPERSONATION_TOKEN },

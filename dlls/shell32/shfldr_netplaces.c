@@ -73,9 +73,10 @@ static inline IGenericSFImpl *impl_from_IPersistFolder2(IPersistFolder2 *iface)
 }
 
 
-static const shvheader networkplaces_header[] = {
-    {IDS_SHV_COLUMN1, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 15},
-    {IDS_SHV_COLUMN9, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10}
+static const shvheader networkplaces_header[] =
+{
+    { NULL, 0, IDS_SHV_COLUMN1, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 15 },
+    { NULL, 0, IDS_SHV_COLUMN9, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10 },
 };
 
 #define NETWORKPLACESSHELLVIEWCOLUMNS sizeof(networkplaces_header)/sizeof(shvheader)
@@ -500,12 +501,10 @@ static HRESULT WINAPI ISF_NetworkPlaces_fnSetNameOf (IShellFolder2 * iface,
     return E_FAIL;
 }
 
-static HRESULT WINAPI ISF_NetworkPlaces_fnGetDefaultSearchGUID (
-               IShellFolder2 * iface, GUID * pguid)
+static HRESULT WINAPI ISF_NetworkPlaces_fnGetDefaultSearchGUID(IShellFolder2 *iface, GUID *guid)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
-
-    FIXME ("(%p)\n", This);
+    TRACE("(%p)->(%p)\n", This, guid);
     return E_NOTIMPL;
 }
 
@@ -518,19 +517,14 @@ static HRESULT WINAPI ISF_NetworkPlaces_fnEnumSearches (IShellFolder2 * iface,
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ISF_NetworkPlaces_fnGetDefaultColumn (IShellFolder2 * iface,
-               DWORD dwRes, ULONG * pSort, ULONG * pDisplay)
+static HRESULT WINAPI ISF_NetworkPlaces_fnGetDefaultColumn(IShellFolder2 *iface, DWORD reserved,
+        ULONG *sort, ULONG *display)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)\n", This);
+    TRACE("(%p)->(%#x, %p, %p)\n", This, reserved, sort, display);
 
-    if (pSort)
-        *pSort = 0;
-    if (pDisplay)
-        *pDisplay = 0;
-
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ISF_NetworkPlaces_fnGetDefaultColumnState (
@@ -567,14 +561,16 @@ static HRESULT WINAPI ISF_NetworkPlaces_fnGetDetailsOf (IShellFolder2 * iface,
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ISF_NetworkPlaces_fnMapColumnToSCID (IShellFolder2 * iface,
-               UINT column, SHCOLUMNID * pscid)
+static HRESULT WINAPI ISF_NetworkPlaces_fnMapColumnToSCID (IShellFolder2 *iface, UINT column, SHCOLUMNID *scid)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    FIXME ("(%p)\n", This);
+    TRACE("(%p)->(%u %p)\n", This, column, scid);
 
-    return E_NOTIMPL;
+    if (column >= NETWORKPLACESSHELLVIEWCOLUMNS)
+        return E_INVALIDARG;
+
+    return shellfolder_map_column_to_scid(networkplaces_header, column, scid);
 }
 
 static const IShellFolder2Vtbl vt_ShellFolder2 = {

@@ -198,9 +198,7 @@ static HRESULT WINAPI HTMLWindow2_QueryInterface(IHTMLWindow2 *iface, REFIID rii
         assert(!*ppv);
         return E_NOINTERFACE;
     }else {
-        *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-        return E_NOINTERFACE;
+        return EventTarget_QI(&This->inner_window->event_target, riid, ppv);
     }
 
     IUnknown_AddRef((IUnknown*)*ppv);
@@ -3078,8 +3076,8 @@ static HRESULT create_inner_window(HTMLOuterWindow *outer_window, IMoniker *mon,
     window->base.outer_window = outer_window;
     window->base.inner_window = window;
 
-    init_event_target(&window->event_target);
-    init_dispex(&window->event_target.dispex, (IUnknown*)&window->base.IHTMLWindow2_iface, &HTMLWindow_dispex);
+    EventTarget_Init(&window->event_target, (IUnknown*)&window->base.IHTMLWindow2_iface,
+                     &HTMLWindow_dispex, COMPAT_MODE_NONE);
 
     window->task_magic = get_task_target_magic();
 

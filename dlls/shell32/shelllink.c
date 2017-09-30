@@ -1254,6 +1254,7 @@ static HRESULT WINAPI IShellLinkA_fnGetPath(IShellLinkA *iface, LPSTR pszFile, I
         WIN32_FIND_DATAA *pfd, DWORD fFlags)
 {
     IShellLinkImpl *This = impl_from_IShellLinkA(iface);
+    HRESULT res = S_OK;
 
     TRACE("(%p)->(pfile=%p len=%u find_data=%p flags=%u)(%s)\n",
           This, pszFile, cchMaxPath, pfd, fFlags, debugstr_w(This->sPath));
@@ -1263,13 +1264,47 @@ static HRESULT WINAPI IShellLinkA_fnGetPath(IShellLinkA *iface, LPSTR pszFile, I
 
     if (cchMaxPath)
         pszFile[0] = 0;
-    if (This->sPath)
+    if (This->sPath && This->sPath[0])
         WideCharToMultiByte( CP_ACP, 0, This->sPath, -1,
                              pszFile, cchMaxPath, NULL, NULL);
+    else
+        res = S_FALSE;
 
-    if (pfd) FIXME("(%p): WIN32_FIND_DATA is not yet filled.\n", This);
+    if (pfd)
+    {
+        memset(pfd, 0, sizeof(*pfd));
 
-    return S_OK;
+        if (res == S_OK)
+        {
+            char path[MAX_PATH];
+            WIN32_FILE_ATTRIBUTE_DATA fad;
+
+            WideCharToMultiByte(CP_ACP, 0, This->sPath, -1, path, MAX_PATH, NULL, NULL);
+
+            if (GetFileAttributesExW(This->sPath, GetFileExInfoStandard, &fad))
+            {
+                pfd->dwFileAttributes = fad.dwFileAttributes;
+                pfd->ftCreationTime = fad.ftCreationTime;
+                pfd->ftLastAccessTime = fad.ftLastAccessTime;
+                pfd->ftLastWriteTime = fad.ftLastWriteTime;
+                pfd->nFileSizeHigh = fad.nFileSizeHigh;
+                pfd->nFileSizeLow = fad.nFileSizeLow;
+            }
+
+            lstrcpyA(pfd->cFileName, PathFindFileNameA(path));
+
+            if (GetShortPathNameA(path, path, MAX_PATH))
+            {
+                lstrcpyA(pfd->cAlternateFileName, PathFindFileNameA(path));
+            }
+        }
+
+        TRACE("attr 0x%08x size 0x%08x%08x name %s shortname %s\n", pfd->dwFileAttributes,
+            pfd->nFileSizeHigh, pfd->nFileSizeLow, wine_dbgstr_a(pfd->cFileName),
+            wine_dbgstr_a(pfd->cAlternateFileName));
+    }
+
+    return res;
 }
 
 static HRESULT WINAPI IShellLinkA_fnGetIDList(IShellLinkA *iface, LPITEMIDLIST *ppidl)
@@ -1639,6 +1674,7 @@ static ULONG WINAPI IShellLinkW_fnRelease(IShellLinkW * iface)
 static HRESULT WINAPI IShellLinkW_fnGetPath(IShellLinkW * iface, LPWSTR pszFile,INT cchMaxPath, WIN32_FIND_DATAW *pfd, DWORD fFlags)
 {
     IShellLinkImpl *This = impl_from_IShellLinkW(iface);
+    HRESULT res = S_OK;
 
     TRACE("(%p)->(pfile=%p len=%u find_data=%p flags=%u)(%s)\n",
           This, pszFile, cchMaxPath, pfd, fFlags, debugstr_w(This->sPath));
@@ -1650,10 +1686,42 @@ static HRESULT WINAPI IShellLinkW_fnGetPath(IShellLinkW * iface, LPWSTR pszFile,
         pszFile[0] = 0;
     if (This->sPath)
         lstrcpynW( pszFile, This->sPath, cchMaxPath );
+    else
+        res = S_FALSE;
 
-    if (pfd) FIXME("(%p): WIN32_FIND_DATA is not yet filled.\n", This);
+    if (pfd)
+    {
+        memset(pfd, 0, sizeof(*pfd));
 
-    return S_OK;
+        if (res == S_OK)
+        {
+            WCHAR path[MAX_PATH];
+            WIN32_FILE_ATTRIBUTE_DATA fad;
+
+            if (GetFileAttributesExW(This->sPath, GetFileExInfoStandard, &fad))
+            {
+                pfd->dwFileAttributes = fad.dwFileAttributes;
+                pfd->ftCreationTime = fad.ftCreationTime;
+                pfd->ftLastAccessTime = fad.ftLastAccessTime;
+                pfd->ftLastWriteTime = fad.ftLastWriteTime;
+                pfd->nFileSizeHigh = fad.nFileSizeHigh;
+                pfd->nFileSizeLow = fad.nFileSizeLow;
+            }
+
+            lstrcpyW(pfd->cFileName, PathFindFileNameW(This->sPath));
+
+            if (GetShortPathNameW(This->sPath, path, MAX_PATH))
+            {
+                lstrcpyW(pfd->cAlternateFileName, PathFindFileNameW(path));
+            }
+        }
+
+        TRACE("attr 0x%08x size 0x%08x%08x name %s shortname %s\n", pfd->dwFileAttributes,
+            pfd->nFileSizeHigh, pfd->nFileSizeLow, wine_dbgstr_w(pfd->cFileName),
+            wine_dbgstr_w(pfd->cAlternateFileName));
+    }
+
+    return res;
 }
 
 static HRESULT WINAPI IShellLinkW_fnGetIDList(IShellLinkW * iface, LPITEMIDLIST * ppidl)
@@ -1674,6 +1742,7 @@ static HRESULT WINAPI IShellLinkW_fnGetIDList(IShellLinkW * iface, LPITEMIDLIST 
 static HRESULT WINAPI IShellLinkW_fnSetIDList(IShellLinkW * iface, LPCITEMIDLIST pidl)
 {
     IShellLinkImpl *This = impl_from_IShellLinkW(iface);
+    WCHAR path[MAX_PATH];
 
     TRACE("(%p)->(pidl=%p)\n",This, pidl);
 
@@ -1682,6 +1751,18 @@ static HRESULT WINAPI IShellLinkW_fnSetIDList(IShellLinkW * iface, LPCITEMIDLIST
     This->pPidl = ILClone( pidl );
     if( !This->pPidl )
         return E_FAIL;
+
+    HeapFree( GetProcessHeap(), 0, This->sPath );
+    This->sPath = NULL;
+
+    if ( SHGetPathFromIDListW( pidl, path ) )
+    {
+        This->sPath = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(path)+1)*sizeof(WCHAR));
+        if (!This->sPath)
+            return E_OUTOFMEMORY;
+
+        lstrcpyW(This->sPath, path);
+    }
 
     This->bDirty = TRUE;
 

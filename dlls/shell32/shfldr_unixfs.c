@@ -1140,7 +1140,7 @@ static HRESULT WINAPI ShellFolder2_GetAttributesOf(IShellFolder2* iface, UINT ci
         UINT i;
 
         *attrs = SFGAO_CANCOPY | SFGAO_CANMOVE | SFGAO_CANLINK | SFGAO_CANRENAME | SFGAO_CANDELETE |
-            SFGAO_HASPROPSHEET | SFGAO_DROPTARGET | SFGAO_FILESYSTEM;
+            SFGAO_HASPROPSHEET | SFGAO_DROPTARGET | SFGAO_FILESYSTEM | SFGAO_LINK;
         lstrcpyA(szAbsolutePath, This->m_pszPath);
         pszRelativePath = szAbsolutePath + lstrlenA(szAbsolutePath);
         for (i=0; i<cidl; i++) {
@@ -1158,6 +1158,13 @@ static HRESULT WINAPI ShellFolder2_GetAttributesOf(IShellFolder2* iface, UINT ci
                     SFGAO_STORAGEANCESTOR | SFGAO_STORAGE;
             else
                 *attrs |= SFGAO_STREAM;
+            if ((*attrs & SFGAO_LINK))
+            {
+                char ext[MAX_PATH];
+
+                if (!_ILGetExtension(apidl[i], ext, MAX_PATH) || lstrcmpiA(ext, "lnk"))
+                    *attrs &= ~SFGAO_LINK;
+            }
         }
     }
 
@@ -1430,19 +1437,13 @@ static HRESULT WINAPI ShellFolder2_EnumSearches(IShellFolder2* iface, IEnumExtra
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ShellFolder2_GetDefaultColumn(IShellFolder2* iface,
-    DWORD dwReserved, ULONG *pSort, ULONG *pDisplay)
+static HRESULT WINAPI ShellFolder2_GetDefaultColumn(IShellFolder2* iface, DWORD reserved, ULONG *sort, ULONG *display)
 {
     UnixFolder *This = impl_from_IShellFolder2(iface);
 
-    TRACE("(%p)->(0x%x %p %p)\n", This, dwReserved, pSort, pDisplay);
+    TRACE("(%p)->(%#x, %p, %p)\n", This, reserved, sort, display);
 
-    if (pSort)
-        *pSort = 0;
-    if (pDisplay)
-        *pDisplay = 0;
-
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ShellFolder2_GetDefaultColumnState(IShellFolder2* iface,
@@ -1453,11 +1454,10 @@ static HRESULT WINAPI ShellFolder2_GetDefaultColumnState(IShellFolder2* iface,
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ShellFolder2_GetDefaultSearchGUID(IShellFolder2* iface,
-    GUID *guid)
+static HRESULT WINAPI ShellFolder2_GetDefaultSearchGUID(IShellFolder2* iface, GUID *guid)
 {
     UnixFolder *This = impl_from_IShellFolder2(iface);
-    FIXME("(%p)->(%p): stub\n", This, guid);
+    TRACE("(%p)->(%p)\n", This, guid);
     return E_NOTIMPL;
 }
 
@@ -1470,6 +1470,15 @@ static HRESULT WINAPI ShellFolder2_GetDetailsEx(IShellFolder2* iface,
 }
 
 #define SHELLVIEWCOLUMNS 7 
+static const shvheader unixfs_header[SHELLVIEWCOLUMNS] = {
+    { &FMTID_Storage, PID_STG_NAME, IDS_SHV_COLUMN1,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 15 },
+    { &FMTID_Storage, PID_STG_SIZE, IDS_SHV_COLUMN2,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10 },
+    { &FMTID_Storage, PID_STG_STORAGETYPE, IDS_SHV_COLUMN3,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10 },
+    { &FMTID_Storage, PID_STG_WRITETIME, IDS_SHV_COLUMN4,  SHCOLSTATE_TYPE_DATE | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 12 },
+    { NULL, 0, IDS_SHV_COLUMN5,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 9  },
+    { NULL, 0, IDS_SHV_COLUMN10, SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 7  },
+    { NULL, 0, IDS_SHV_COLUMN11, SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 7  },
+};
 
 static HRESULT WINAPI ShellFolder2_GetDetailsOf(IShellFolder2* iface,
     LPCITEMIDLIST pidl, UINT iColumn, SHELLDETAILS *psd)
@@ -1479,16 +1488,6 @@ static HRESULT WINAPI ShellFolder2_GetDetailsOf(IShellFolder2* iface,
     struct group *pGroup;
     struct stat statItem;
     HRESULT hr = S_OK;
-
-    static const shvheader unixfs_header[SHELLVIEWCOLUMNS] = {
-        {IDS_SHV_COLUMN1,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 15},
-        {IDS_SHV_COLUMN2,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10},
-        {IDS_SHV_COLUMN3,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 10},
-        {IDS_SHV_COLUMN4,  SHCOLSTATE_TYPE_DATE | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 12},
-        {IDS_SHV_COLUMN5,  SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 9},
-        {IDS_SHV_COLUMN10, SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 7},
-        {IDS_SHV_COLUMN11, SHCOLSTATE_TYPE_STR  | SHCOLSTATE_ONBYDEFAULT, LVCFMT_RIGHT, 7}
-    };
 
     TRACE("(%p)->(%p %d %p)\n", This, pidl, iColumn, psd);
     
@@ -1549,12 +1548,16 @@ static HRESULT WINAPI ShellFolder2_GetDetailsOf(IShellFolder2* iface,
     return hr;
 }
 
-static HRESULT WINAPI ShellFolder2_MapColumnToSCID(IShellFolder2* iface, UINT column,
-    SHCOLUMNID *pscid)
+static HRESULT WINAPI ShellFolder2_MapColumnToSCID(IShellFolder2* iface, UINT column, SHCOLUMNID *scid)
 {
     UnixFolder *This = impl_from_IShellFolder2(iface);
-    FIXME("(%p)->(%u %p): stub\n", This, column, pscid);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%u %p)\n", This, column, scid);
+
+    if (column >= SHELLVIEWCOLUMNS)
+        return E_INVALIDARG;
+
+    return shellfolder_map_column_to_scid(unixfs_header, column, scid);
 }
 
 static const IShellFolder2Vtbl ShellFolder2Vtbl = {

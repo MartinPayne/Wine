@@ -1832,6 +1832,18 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
 
             break;
         }
+        case EmfPlusRecordTypeSetPixelOffsetMode:
+        {
+            return GdipSetPixelOffsetMode(real_metafile->playback_graphics, (flags >> 8) & 0xf);
+        }
+        case EmfPlusRecordTypeSetCompositingQuality:
+        {
+            return GdipSetCompositingQuality(real_metafile->playback_graphics, (flags >> 8) & 0xf);
+        }
+        case EmfPlusRecordTypeSetInterpolationMode:
+        {
+            return GdipSetInterpolationMode(real_metafile->playback_graphics, (flags >> 8) & 0xf);
+        }
         default:
             FIXME("Not implemented for record type %x\n", recordType);
             return NotImplemented;

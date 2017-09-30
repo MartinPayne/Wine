@@ -57,7 +57,7 @@
   59 stdcall -ordinal RestartDialog(long wstr long)
   60 stdcall -noname ExitWindowsDialog(long)
   61 stdcall -noname RunFileDlg(long long str str str long) RunFileDlgAW
-  62 stdcall -ordinal PickIconDlg(long ptr long ptr)
+  62 stdcall -ordinal PickIconDlg(long wstr long ptr)
   63 stdcall -ordinal GetFileNameFromBrowse(long ptr long str str str str) GetFileNameFromBrowseAW
   64 stdcall -ordinal DriveType(long)
   65 stdcall -noname InvalidateDriveType(long)
@@ -440,9 +440,9 @@
 @ stub SheShortenPathW
 @ stdcall ShellAboutA(long str str long)
 @ stdcall ShellAboutW(long wstr wstr long)
-@ stub ShellExec_RunDLL
-@ stub ShellExec_RunDLLA
-@ stub ShellExec_RunDLLW
+@ stdcall ShellExec_RunDLL(long long str long) ShellExec_RunDLLA
+@ stdcall ShellExec_RunDLLA(long long str long)
+@ stdcall ShellExec_RunDLLW(long long wstr long)
 @ stdcall ShellExecuteA(long str str str str long)
 @ stdcall ShellExecuteEx (long) ShellExecuteExA
 @ stdcall ShellExecuteExA (long)

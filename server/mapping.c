@@ -46,13 +46,51 @@
 /* list of memory ranges, used to store committed info */
 struct ranges
 {
-    unsigned int count;
-    unsigned int max;
+    struct object   obj;             /* object header */
+    unsigned int    count;           /* number of used ranges */
+    unsigned int    max;             /* number of allocated ranges */
     struct range
     {
         file_pos_t  start;
         file_pos_t  end;
-    } ranges[1];
+    } *ranges;
+};
+
+static void ranges_dump( struct object *obj, int verbose );
+static void ranges_destroy( struct object *obj );
+
+static const struct object_ops ranges_ops =
+{
+    sizeof(struct ranges),     /* size */
+    ranges_dump,               /* dump */
+    no_get_type,               /* get_type */
+    no_add_queue,              /* add_queue */
+    NULL,                      /* remove_queue */
+    NULL,                      /* signaled */
+    NULL,                      /* satisfied */
+    no_signal,                 /* signal */
+    no_get_fd,                 /* get_fd */
+    no_map_access,             /* map_access */
+    default_get_sd,            /* get_sd */
+    default_set_sd,            /* set_sd */
+    no_lookup_name,            /* lookup_name */
+    no_link_name,              /* link_name */
+    NULL,                      /* unlink_name */
+    no_open_file,              /* open_file */
+    no_close_handle,           /* close_handle */
+    ranges_destroy             /* destroy */
+};
+
+/* memory view mapped in client address space */
+struct memory_view
+{
+    struct list     entry;           /* entry in per-process view list */
+    struct fd      *fd;              /* fd for mapped file */
+    struct ranges  *committed;       /* list of committed ranges in this mapping */
+    unsigned int    flags;           /* SEC_* flags */
+    client_ptr_t    base;            /* view base address (in process addr space) */
+    mem_size_t      size;            /* view size */
+    file_pos_t      start;           /* start offset in mapping */
 };
 
 struct mapping
@@ -116,6 +154,18 @@ static size_t page_mask;
 
 #define ROUND_SIZE(size)  (((size) + page_mask) & ~page_mask)
 
+
+static void ranges_dump( struct object *obj, int verbose )
+{
+    struct ranges *ranges = (struct ranges *)obj;
+    fprintf( stderr, "Memory ranges count=%u\n", ranges->count );
+}
+
+static void ranges_destroy( struct object *obj )
+{
+    struct ranges *ranges = (struct ranges *)obj;
+    free( ranges->ranges );
+}
 
 /* extend a file beyond the current end of file */
 static int grow_file( int unix_fd, file_pos_t new_size )
@@ -196,6 +246,35 @@ static int create_temp_file( file_pos_t size )
     return fd;
 }
 
+/* find a memory view from its base address */
+static struct memory_view *find_mapped_view( struct process *process, client_ptr_t base )
+{
+    struct memory_view *view;
+
+    LIST_FOR_EACH_ENTRY( view, &process->views, struct memory_view, entry )
+        if (view->base == base) return view;
+
+    set_error( STATUS_NOT_MAPPED_VIEW );
+    return NULL;
+}
+
+static void free_memory_view( struct memory_view *view )
+{
+    if (view->fd) release_object( view->fd );
+    if (view->committed) release_object( view->committed );
+    list_remove( &view->entry );
+    free( view );
+}
+
+/* free all mapped views at process exit */
+void free_mapped_views( struct process *process )
+{
+    struct list *ptr;
+
+    while ((ptr = list_head( &process->views )))
+        free_memory_view( LIST_ENTRY( ptr, struct memory_view, entry ));
+}
+
 /* find the shared PE mapping for a given mapping */
 static struct file *get_shared_file( struct mapping *mapping )
 {
@@ -222,29 +301,41 @@ static inline void get_section_sizes( const IMAGE_SECTION_HEADER *sec, size_t *m
 }
 
 /* add a range to the committed list */
-static void add_committed_range( struct mapping *mapping, file_pos_t start, file_pos_t end )
+static void add_committed_range( struct memory_view *view, file_pos_t start, file_pos_t end )
 {
     unsigned int i, j;
+    struct ranges *committed = view->committed;
     struct range *ranges;
 
-    if (!mapping->committed) return;  /* everything committed already */
+    if ((start & page_mask) || (end & page_mask) ||
+        start >= view->size || end >= view->size ||
+        start >= end)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
 
-    for (i = 0, ranges = mapping->committed->ranges; i < mapping->committed->count; i++)
+    if (!committed) return;  /* everything committed already */
+
+    start += view->start;
+    end += view->start;
+
+    for (i = 0, ranges = committed->ranges; i < committed->count; i++)
     {
         if (ranges[i].start > end) break;
         if (ranges[i].end < start) continue;
         if (ranges[i].start > start) ranges[i].start = start;   /* extend downwards */
         if (ranges[i].end < end)  /* extend upwards and maybe merge with next */
         {
-            for (j = i + 1; j < mapping->committed->count; j++)
+            for (j = i + 1; j < committed->count; j++)
             {
                 if (ranges[j].start > end) break;
                 if (ranges[j].end > end) end = ranges[j].end;
             }
             if (j > i + 1)
             {
-                memmove( &ranges[i + 1], &ranges[j], (mapping->committed->count - j) * sizeof(*ranges) );
-                mapping->committed->count -= j - (i + 1);
+                memmove( &ranges[i + 1], &ranges[j], (committed->count - j) * sizeof(*ranges) );
+                committed->count -= j - (i + 1);
             }
             ranges[i].end = end;
         }
@@ -253,46 +344,51 @@ static void add_committed_range( struct mapping *mapping, file_pos_t start, file
 
     /* now add a new range */
 
-    if (mapping->committed->count == mapping->committed->max)
+    if (committed->count == committed->max)
     {
-        unsigned int new_size = mapping->committed->max * 2;
-        struct ranges *new_ptr = realloc( mapping->committed, offsetof( struct ranges, ranges[new_size] ));
+        unsigned int new_size = committed->max * 2;
+        struct range *new_ptr = realloc( committed->ranges, new_size * sizeof(*new_ptr) );
         if (!new_ptr) return;
-        new_ptr->max = new_size;
-        ranges = new_ptr->ranges;
-        mapping->committed = new_ptr;
+        committed->max = new_size;
+        committed->ranges = new_ptr;
     }
-    memmove( &ranges[i + 1], &ranges[i], (mapping->committed->count - i) * sizeof(*ranges) );
+    memmove( &ranges[i + 1], &ranges[i], (committed->count - i) * sizeof(*ranges) );
     ranges[i].start = start;
     ranges[i].end = end;
-    mapping->committed->count++;
+    committed->count++;
 }
 
 /* find the range containing start and return whether it's committed */
-static int find_committed_range( struct mapping *mapping, file_pos_t start, mem_size_t *size )
+static int find_committed_range( struct memory_view *view, file_pos_t start, mem_size_t *size )
 {
     unsigned int i;
+    struct ranges *committed = view->committed;
     struct range *ranges;
 
-    if (!mapping->committed)  /* everything is committed */
+    if ((start & page_mask) || start >= view->size)
     {
-        *size = mapping->size - start;
+        set_error( STATUS_INVALID_PARAMETER );
+        return 0;
+    }
+    if (!committed)  /* everything is committed */
+    {
+        *size = view->size - start;
         return 1;
     }
-    for (i = 0, ranges = mapping->committed->ranges; i < mapping->committed->count; i++)
+    for (i = 0, ranges = committed->ranges; i < committed->count; i++)
     {
-        if (ranges[i].start > start)
+        if (ranges[i].start > view->start + start)
         {
-            *size = ranges[i].start - start;
+            *size = min( ranges[i].start, view->start + view->size ) - (view->start + start);
             return 0;
         }
-        if (ranges[i].end > start)
+        if (ranges[i].end > view->start + start)
         {
-            *size = ranges[i].end - start;
+            *size = min( ranges[i].end, view->start + view->size ) - (view->start + start);
             return 1;
         }
     }
-    *size = mapping->size - start;
+    *size = view->size - start;
     return 0;
 }
 
@@ -496,6 +592,21 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     return STATUS_INVALID_FILE_FOR_SECTION;
 }
 
+static struct ranges *create_ranges(void)
+{
+    struct ranges *ranges = alloc_object( &ranges_ops );
+
+    if (!ranges) return NULL;
+    ranges->count = 0;
+    ranges->max   = 8;
+    if (!(ranges->ranges = mem_alloc( ranges->max * sizeof(ranges->ranges) )))
+    {
+        release_object( ranges );
+        return NULL;
+    }
+    return ranges;
+}
+
 static unsigned int get_mapping_flags( obj_handle_t handle, unsigned int flags )
 {
     switch (flags & (SEC_IMAGE | SEC_RESERVE | SEC_COMMIT | SEC_FILE))
@@ -602,12 +713,7 @@ static struct object *create_mapping( struct object *root, const struct unicode_
             set_error( STATUS_INVALID_PARAMETER );
             goto error;
         }
-        if (flags & SEC_RESERVE)
-        {
-            if (!(mapping->committed = mem_alloc( offsetof(struct ranges, ranges[8]) ))) goto error;
-            mapping->committed->count = 0;
-            mapping->committed->max   = 8;
-        }
+        if ((flags & SEC_RESERVE) && !(mapping->committed = create_ranges())) goto error;
         mapping->size = (mapping->size + page_mask) & ~((mem_size_t)page_mask);
         if ((unix_fd = create_temp_file( mapping->size )) == -1) goto error;
         if (!(mapping->fd = create_anonymous_fd( &mapping_fd_ops, unix_fd, &mapping->obj,
@@ -627,22 +733,18 @@ struct mapping *get_mapping_obj( struct process *process, obj_handle_t handle, u
 }
 
 /* open a new file handle to the file backing the mapping */
-obj_handle_t open_mapping_file( struct process *process, struct mapping *mapping,
+obj_handle_t open_mapping_file( struct process *process, client_ptr_t base,
                                 unsigned int access, unsigned int sharing )
 {
     obj_handle_t handle;
-    struct file *file = create_file_for_fd_obj( mapping->fd, access, sharing );
+    struct memory_view *view = find_mapped_view( process, base );
+    struct file *file;
 
-    if (!file) return 0;
+    if (!view || !view->fd) return 0;
+    if (!(file = create_file_for_fd_obj( view->fd, access, sharing ))) return 0;
     handle = alloc_handle( process, file, access, 0 );
     release_object( file );
     return handle;
-}
-
-struct mapping *grab_mapping_unless_removable( struct mapping *mapping )
-{
-    if (is_fd_removable( mapping->fd )) return NULL;
-    return (struct mapping *)grab_object( mapping );
 }
 
 static void mapping_dump( struct object *obj, int verbose )
@@ -681,12 +783,12 @@ static void mapping_destroy( struct object *obj )
     struct mapping *mapping = (struct mapping *)obj;
     assert( obj->ops == &mapping_ops );
     if (mapping->fd) release_object( mapping->fd );
+    if (mapping->committed) release_object( mapping->committed );
     if (mapping->shared_file)
     {
         release_object( mapping->shared_file );
         list_remove( &mapping->shared_entry );
     }
-    free( mapping->committed );
 }
 
 static enum server_fd_type mapping_get_fd_type( struct fd *fd )
@@ -737,7 +839,6 @@ DECL_HANDLER(open_mapping)
 DECL_HANDLER(get_mapping_info)
 {
     struct mapping *mapping;
-    struct fd *fd;
 
     if (!(mapping = get_mapping_obj( current->process, req->handle, req->access ))) return;
 
@@ -760,54 +861,99 @@ DECL_HANDLER(get_mapping_info)
         return;
     }
 
-    if ((fd = get_obj_fd( &mapping->obj )))
-    {
-        if (!is_fd_removable(fd)) reply->mapping = alloc_handle( current->process, mapping, 0, 0 );
-        release_object( fd );
-    }
     if (mapping->shared_file)
+        reply->shared_file = alloc_handle( current->process, mapping->shared_file,
+                                           GENERIC_READ|GENERIC_WRITE, 0 );
+    release_object( mapping );
+}
+
+/* add a memory view in the current process */
+DECL_HANDLER(map_view)
+{
+    struct mapping *mapping = NULL;
+    struct memory_view *view;
+
+    if (!req->size || (req->base & page_mask) || req->base + req->size < req->base)  /* overflow */
     {
-        if (!(reply->shared_file = alloc_handle( current->process, mapping->shared_file,
-                                                 GENERIC_READ|GENERIC_WRITE, 0 )))
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    /* make sure we don't already have an overlapping view */
+    LIST_FOR_EACH_ENTRY( view, &current->process->views, struct memory_view, entry )
+    {
+        if (view->base + view->size <= req->base) continue;
+        if (view->base >= req->base + req->size) continue;
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if (!(mapping = get_mapping_obj( current->process, req->mapping, req->access ))) return;
+
+    if (mapping->flags & SEC_IMAGE)
+    {
+        if (req->start || req->size > mapping->image.map_size)
         {
-            if (reply->mapping) close_handle( current->process, reply->mapping );
+            set_error( STATUS_INVALID_PARAMETER );
+            goto done;
         }
     }
+    else if (req->start >= mapping->size ||
+             req->start + req->size < req->start ||
+             req->start + req->size > ((mapping->size + page_mask) & ~(mem_size_t)page_mask))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        goto done;
+    }
+
+    if ((view = mem_alloc( sizeof(*view) )))
+    {
+        view->base      = req->base;
+        view->size      = req->size;
+        view->start     = req->start;
+        view->flags     = mapping->flags;
+        view->fd        = !is_fd_removable( mapping->fd ) ? (struct fd *)grab_object( mapping->fd ) : NULL;
+        view->committed = mapping->committed ? (struct ranges *)grab_object( mapping->committed ) : NULL;
+        list_add_tail( &current->process->views, &view->entry );
+    }
+
+done:
     release_object( mapping );
+}
+
+/* unmap a memory view from the current process */
+DECL_HANDLER(unmap_view)
+{
+    struct memory_view *view = find_mapped_view( current->process, req->base );
+
+    if (view) free_memory_view( view );
 }
 
 /* get a range of committed pages in a file mapping */
 DECL_HANDLER(get_mapping_committed_range)
 {
-    struct mapping *mapping;
+    struct memory_view *view = find_mapped_view( current->process, req->base );
 
-    if ((mapping = get_mapping_obj( current->process, req->handle, 0 )))
-    {
-        if (!(req->offset & page_mask) && req->offset < mapping->size)
-            reply->committed = find_committed_range( mapping, req->offset, &reply->size );
-        else
-            set_error( STATUS_INVALID_PARAMETER );
-
-        release_object( mapping );
-    }
+    if (view) reply->committed = find_committed_range( view, req->offset, &reply->size );
 }
 
 /* add a range to the committed pages in a file mapping */
 DECL_HANDLER(add_mapping_committed_range)
 {
-    struct mapping *mapping;
+    struct memory_view *view = find_mapped_view( current->process, req->base );
 
-    if ((mapping = get_mapping_obj( current->process, req->handle, 0 )))
-    {
-        if (!(req->size & page_mask) &&
-            !(req->offset & page_mask) &&
-            req->offset < mapping->size &&
-            req->size > 0 &&
-            req->size <= mapping->size - req->offset)
-            add_committed_range( mapping, req->offset, req->offset + req->size );
-        else
-            set_error( STATUS_INVALID_PARAMETER );
+    if (view) add_committed_range( view, req->offset, req->offset + req->size );
+}
 
-        release_object( mapping );
-    }
+/* check if two memory maps are for the same file */
+DECL_HANDLER(is_same_mapping)
+{
+    struct memory_view *view1 = find_mapped_view( current->process, req->base1 );
+    struct memory_view *view2 = find_mapped_view( current->process, req->base2 );
+
+    if (!view1 || !view2) return;
+    if (!view1->fd || !view2->fd ||
+        !(view1->flags & SEC_IMAGE) || !(view2->flags & SEC_IMAGE) ||
+        !is_same_file_fd( view1->fd, view2->fd ))
+        set_error( STATUS_NOT_SAME_DEVICE );
 }

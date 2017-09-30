@@ -1808,7 +1808,7 @@
 @ stub _vcwprintf_p_l
 @ stub _vcwprintf_s
 @ stub _vcwprintf_s_l
-@ stub _vfprintf_l
+@ cdecl _vfprintf_l(ptr str ptr ptr) MSVCRT__vfprintf_l
 @ stub _vfprintf_p
 @ stub _vfprintf_p_l
 @ stub _vfprintf_s_l
@@ -2079,7 +2079,7 @@
 @ stub cimagf
 @ stub cimagl
 @ cdecl clearerr(ptr) MSVCRT_clearerr
-@ stub clearerr_s
+@ cdecl clearerr_s(ptr) MSVCRT_clearerr_s
 @ cdecl clock() MSVCRT_clock
 @ stub clog
 @ stub clog10
@@ -2436,10 +2436,10 @@
 @ stub vscanf_s
 @ cdecl vsprintf(ptr str ptr) MSVCRT_vsprintf
 @ cdecl vsprintf_s(ptr long str ptr) MSVCRT_vsprintf_s
-@ stub vsscanf
+@ cdecl vsscanf(ptr str ptr) MSVCRT_vsscanf
 @ stub vsscanf_s
 @ cdecl vswprintf_s(ptr long wstr ptr) MSVCRT_vswprintf_s
-@ stub vswscanf
+@ cdecl vswscanf(ptr wstr ptr) MSVCRT_vswscanf
 @ stub vswscanf_s
 @ cdecl vwprintf(wstr ptr) MSVCRT_vwprintf
 @ cdecl vwprintf_s(wstr ptr) MSVCRT_vwprintf_s

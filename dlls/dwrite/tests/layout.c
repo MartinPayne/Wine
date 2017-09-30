@@ -4655,8 +4655,8 @@ static void test_FontFallbackBuilder(void)
 {
     static const WCHAR localeW[] = {'l','o','c','a','l','e',0};
     static const WCHAR strW[] = {'A',0};
+    IDWriteFontFallback *fallback, *fallback2;
     IDWriteFontFallbackBuilder *builder;
-    IDWriteFontFallback *fallback;
     DWRITE_UNICODE_RANGE range;
     IDWriteFactory2 *factory2;
     IDWriteFactory *factory;
@@ -4665,22 +4665,42 @@ static void test_FontFallbackBuilder(void)
     IDWriteFont *font;
     FLOAT scale;
     HRESULT hr;
+    ULONG ref;
 
     factory = create_factory();
 
     hr = IDWriteFactory_QueryInterface(factory, &IID_IDWriteFactory2, (void**)&factory2);
     IDWriteFactory_Release(factory);
 
-    if (factory2)
-        hr = IDWriteFactory2_CreateFontFallbackBuilder(factory2, &builder);
-
     if (hr != S_OK) {
-        skip("IDWriteFontFallbackBuilder is not supported\n");
+        win_skip("IDWriteFontFallbackBuilder is not supported\n");
         return;
     }
 
+    EXPECT_REF(factory2, 1);
+    hr = IDWriteFactory2_CreateFontFallbackBuilder(factory2, &builder);
+    EXPECT_REF(factory2, 2);
+
+    fallback = NULL;
+    EXPECT_REF(factory2, 2);
+    EXPECT_REF(builder, 1);
     hr = IDWriteFontFallbackBuilder_CreateFontFallback(builder, &fallback);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+    EXPECT_REF(factory2, 3);
+    EXPECT_REF(fallback, 1);
+    EXPECT_REF(builder, 1);
+
+    IDWriteFontFallback_AddRef(fallback);
+    EXPECT_REF(builder, 1);
+    EXPECT_REF(fallback, 2);
+    EXPECT_REF(factory2, 3);
+    IDWriteFontFallback_Release(fallback);
+
+    /* New instance is created every time, even if mappings have not changed. */
+    hr = IDWriteFontFallbackBuilder_CreateFontFallback(builder, &fallback2);
+    ok(hr == S_OK, "Failed to create fallback object, hr %#x.\n", hr);
+    ok(fallback != fallback2, "Unexpected fallback instance.\n");
+    IDWriteFontFallback_Release(fallback2);
 
     hr = IDWriteFontFallbackBuilder_AddMapping(builder, NULL, 0, NULL, 0, NULL, NULL, NULL, 0.0f);
     ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
@@ -4693,11 +4713,20 @@ static void test_FontFallbackBuilder(void)
     hr = IDWriteFontFallbackBuilder_AddMapping(builder, &range, 0, NULL, 0, NULL, NULL, NULL, 1.0f);
     ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
 
+    hr = IDWriteFontFallbackBuilder_AddMapping(builder, &range, 0, &familyW, 1, NULL, NULL, NULL, 1.0f);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = IDWriteFontFallbackBuilder_AddMapping(builder, NULL, 0, &familyW, 1, NULL, NULL, NULL, 1.0f);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
     /* negative scaling factor */
     range.first = range.last = 0;
     familyW = g_blahfontW;
     hr = IDWriteFontFallbackBuilder_AddMapping(builder, &range, 1, &familyW, 1, NULL, NULL, NULL, -1.0f);
     ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = IDWriteFontFallbackBuilder_AddMapping(builder, &range, 1, &familyW, 1, NULL, NULL, NULL, 0.0f);
+    ok(hr == S_OK, "Unexected hr %#x.\n", hr);
 
     /* empty range */
     range.first = range.last = 0;
@@ -4718,6 +4747,8 @@ static void test_FontFallbackBuilder(void)
     hr = IDWriteFontFallbackBuilder_AddMapping(builder, &range, 1, &familyW, 1, NULL, NULL, NULL, 4.0f);
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
+    IDWriteFontFallback_Release(fallback);
+
     if (0) /* crashes on native */
         hr = IDWriteFontFallbackBuilder_CreateFontFallback(builder, NULL);
 
@@ -4731,11 +4762,12 @@ static void test_FontFallbackBuilder(void)
     font = (void*)0xdeadbeef;
     hr = IDWriteFontFallback_MapCharacters(fallback, &analysissource, 0, 1, NULL, NULL, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, &mappedlength, &font, &scale);
+todo_wine {
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(mappedlength == 1, "got %u\n", mappedlength);
     ok(scale == 1.0f, "got %f\n", scale);
     ok(font == NULL, "got %p\n", font);
-
+}
     IDWriteFontFallback_Release(fallback);
 
     /* remap with custom collection */
@@ -4752,11 +4784,14 @@ static void test_FontFallbackBuilder(void)
     font = NULL;
     hr = IDWriteFontFallback_MapCharacters(fallback, &analysissource, 0, 1, NULL, NULL, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, &mappedlength, &font, &scale);
+todo_wine {
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(mappedlength == 1, "got %u\n", mappedlength);
     ok(scale == 5.0f, "got %f\n", scale);
     ok(font != NULL, "got %p\n", font);
-    IDWriteFont_Release(font);
+}
+    if (font)
+        IDWriteFont_Release(font);
 
     IDWriteFontFallback_Release(fallback);
 
@@ -4774,11 +4809,14 @@ static void test_FontFallbackBuilder(void)
     font = NULL;
     hr = IDWriteFontFallback_MapCharacters(fallback, &analysissource, 0, 1, NULL, NULL, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, &mappedlength, &font, &scale);
+todo_wine {
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(mappedlength == 1, "got %u\n", mappedlength);
     ok(scale == 5.0f, "got %f\n", scale);
     ok(font != NULL, "got %p\n", font);
-    IDWriteFont_Release(font);
+}
+    if (font)
+        IDWriteFont_Release(font);
 
     IDWriteFontFallback_Release(fallback);
 
@@ -4797,14 +4835,20 @@ static void test_FontFallbackBuilder(void)
     font = NULL;
     hr = IDWriteFontFallback_MapCharacters(fallback, &analysissource, 0, 1, NULL, NULL, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, &mappedlength, &font, &scale);
+todo_wine {
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(mappedlength == 1, "got %u\n", mappedlength);
     ok(scale == 5.0f, "got %f\n", scale);
     ok(font != NULL, "got %p\n", font);
-    IDWriteFont_Release(font);
+}
+    if (font)
+        IDWriteFont_Release(font);
+
+    IDWriteFontFallback_Release(fallback);
 
     IDWriteFontFallbackBuilder_Release(builder);
-    IDWriteFactory2_Release(factory2);
+    ref = IDWriteFactory2_Release(factory2);
+    ok(ref == 0, "Factory is not released, ref %u.\n", ref);
 }
 
 static void test_SetTypography(void)

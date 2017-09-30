@@ -70,7 +70,6 @@ struct file_view
     struct wine_rb_entry entry;  /* entry in global view tree */
     void         *base;          /* base address */
     size_t        size;          /* size in bytes */
-    HANDLE        mapping;       /* handle to the file mapping */
     unsigned int  protect;       /* protection for all pages at allocation time and SEC_* flags */
 };
 
@@ -183,6 +182,7 @@ static BYTE get_page_vprot( const void *addr )
     size_t idx = (size_t)addr >> page_shift;
 
 #ifdef _WIN64
+    if (!pages_vprot[idx >> pages_vprot_shift]) return 0;
     return pages_vprot[idx >> pages_vprot_shift][idx & pages_vprot_mask];
 #else
     return pages_vprot[idx];
@@ -327,11 +327,11 @@ static void VIRTUAL_DumpView( struct file_view *view )
     if (view->protect & VPROT_SYSTEM)
         TRACE( " (builtin image)\n" );
     else if (view->protect & SEC_IMAGE)
-        TRACE( " (image) %p\n", view->mapping );
+        TRACE( " (image)\n" );
     else if (view->protect & SEC_FILE)
-        TRACE( " (file) %p\n", view->mapping );
+        TRACE( " (file)\n" );
     else if (view->protect & (SEC_RESERVE | SEC_COMMIT))
-        TRACE( " (anonymous) %p\n", view->mapping );
+        TRACE( " (anonymous)\n" );
     else
         TRACE( " (valloc)\n");
 
@@ -411,6 +411,16 @@ static inline UINT_PTR get_mask( ULONG zero_bits )
     if (zero_bits < page_shift) zero_bits = page_shift;
     if (zero_bits > 21) return 0;
     return (1 << zero_bits) - 1;
+}
+
+
+/***********************************************************************
+ *           is_write_watch_range
+ */
+static inline BOOL is_write_watch_range( const void *addr, size_t size )
+{
+    struct file_view *view = VIRTUAL_FindView( addr, size );
+    return view && (view->protect & VPROT_WRITEWATCH);
 }
 
 
@@ -671,8 +681,8 @@ static struct file_view *alloc_view(void)
 static void delete_view( struct file_view *view ) /* [in] View */
 {
     if (!(view->protect & VPROT_SYSTEM)) unmap_area( view->base, view->size );
+    set_page_vprot( view->base, view->size, 0 );
     wine_rb_remove( &views_tree, &view->entry );
-    if (view->mapping) close_handle( view->mapping );
     *(struct file_view **)view = next_free_view;
     next_free_view = view;
 }
@@ -715,7 +725,6 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
 
     view->base    = base;
     view->size    = size;
-    view->mapping = 0;
     view->protect = vprot;
     set_page_vprot( base, size, vprot );
 
@@ -804,7 +813,7 @@ static NTSTATUS get_vprot_flags( DWORD protect, unsigned int *vprot, BOOL image 
  *
  * Wrapper for mprotect, adds PROT_EXEC if forced by force_exec_prot
  */
-static inline int mprotect_exec( void *base, size_t size, int unix_prot, unsigned int view_protect )
+static inline int mprotect_exec( void *base, size_t size, int unix_prot )
 {
     if (force_exec_prot && (unix_prot & PROT_READ) && !(unix_prot & PROT_EXEC))
     {
@@ -823,23 +832,24 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot, unsigne
  *
  * Call mprotect on a page range, applying the protections from the per-page byte.
  */
-static void mprotect_range( struct file_view *view, void *base, size_t size, BYTE set, BYTE clear )
+static void mprotect_range( void *base, size_t size, BYTE set, BYTE clear )
 {
     size_t i, count;
-    char *addr = base;
+    char *addr = ROUND_ADDR( base, page_mask );
     int prot, next;
 
+    size = ROUND_SIZE( base, size );
     prot = VIRTUAL_GetUnixProt( (get_page_vprot( addr ) & ~clear ) | set );
     for (count = i = 1; i < size >> page_shift; i++, count++)
     {
         next = VIRTUAL_GetUnixProt( (get_page_vprot( addr + (count << page_shift) ) & ~clear) | set );
         if (next == prot) continue;
-        mprotect_exec( addr, count << page_shift, prot, view->protect );
+        mprotect_exec( addr, count << page_shift, prot );
         addr += count << page_shift;
         prot = next;
         count = 0;
     }
-    if (count) mprotect_exec( addr, count << page_shift, prot, view->protect );
+    if (count) mprotect_exec( addr, count << page_shift, prot );
 }
 
 
@@ -863,7 +873,7 @@ static BOOL VIRTUAL_SetProt( struct file_view *view, /* [in] Pointer to view */
     {
         /* each page may need different protections depending on write watch flag */
         set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~VPROT_WRITEWATCH );
-        mprotect_range( view, base, size, 0, 0 );
+        mprotect_range( base, size, 0, 0 );
         return TRUE;
     }
 
@@ -878,7 +888,7 @@ static BOOL VIRTUAL_SetProt( struct file_view *view, /* [in] Pointer to view */
         return TRUE;
     }
 
-    if (mprotect_exec( base, size, unix_prot, view->protect )) /* FIXME: last error */
+    if (mprotect_exec( base, size, unix_prot )) /* FIXME: last error */
         return FALSE;
 
     set_page_vprot( base, size, vprot );
@@ -913,14 +923,27 @@ static NTSTATUS set_protection( struct file_view *view, void *base, SIZE_T size,
 
 
 /***********************************************************************
+ *           update_write_watches
+ */
+static void update_write_watches( void *base, size_t size, size_t accessed_size )
+{
+    TRACE( "updating watch %p-%p-%p\n", base, (char *)base + accessed_size, (char *)base + size );
+    /* clear write watch flag on accessed pages */
+    set_page_vprot_bits( base, accessed_size, 0, VPROT_WRITEWATCH );
+    /* restore page protections on the entire range */
+    mprotect_range( base, size, 0, 0 );
+}
+
+
+/***********************************************************************
  *           reset_write_watches
  *
  * Reset write watches in a memory range.
  */
-static void reset_write_watches( struct file_view *view, void *base, SIZE_T size )
+static void reset_write_watches( void *base, SIZE_T size )
 {
     set_page_vprot_bits( base, size, VPROT_WRITEWATCH, 0 );
-    mprotect_range( view, base, size, 0, 0 );
+    mprotect_range( base, size, 0, 0 );
 }
 
 
@@ -1182,7 +1205,7 @@ static SIZE_T get_committed_size( struct file_view *view, void *base, BYTE *vpro
         SIZE_T ret = 0;
         SERVER_START_REQ( get_mapping_committed_range )
         {
-            req->handle = wine_server_obj_handle( view->mapping );
+            req->base   = wine_server_client_ptr( view->base );
             req->offset = start << page_shift;
             if (!wine_server_call( req ))
             {
@@ -1280,31 +1303,12 @@ static NTSTATUS allocate_dos_memory( struct file_view **view, unsigned int vprot
 
 
 /***********************************************************************
- *           stat_mapping_file
- *
- * Stat the underlying file for a memory view.
- */
-static NTSTATUS stat_mapping_file( struct file_view *view, struct stat *st )
-{
-    NTSTATUS status;
-    int unix_fd, needs_close;
-
-    if (!view->mapping) return STATUS_NOT_MAPPED_VIEW;
-    if (!(status = server_get_unix_fd( view->mapping, 0, &unix_fd, &needs_close, NULL, NULL )))
-    {
-        if (fstat( unix_fd, st ) == -1) status = FILE_GetNtStatus();
-        if (needs_close) close( unix_fd );
-    }
-    return status;
-}
-
-/***********************************************************************
  *           map_image
  *
  * Map an executable (PE format) image into memory.
  */
-static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_size, SIZE_T mask,
-                           SIZE_T header_size, int shared_fd, HANDLE dup_mapping, PVOID *addr_ptr )
+static NTSTATUS map_image( HANDLE hmapping, ACCESS_MASK access, int fd, char *base, SIZE_T total_size,
+                           SIZE_T mask, SIZE_T header_size, int shared_fd, BOOL removable, PVOID *addr_ptr )
 {
     IMAGE_DOS_HEADER *dos;
     IMAGE_NT_HEADERS *nt;
@@ -1347,7 +1351,7 @@ static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_siz
     if (!st.st_size) goto error;
     header_size = min( header_size, st.st_size );
     if (map_file_into_view( view, fd, 0, header_size, 0, VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY,
-                            !dup_mapping ) != STATUS_SUCCESS) goto error;
+                            removable ) != STATUS_SUCCESS) goto error;
     dos = (IMAGE_DOS_HEADER *)ptr;
     nt = (IMAGE_NT_HEADERS *)(ptr + dos->e_lfanew);
     header_end = ptr + ROUND_SIZE( 0, header_size );
@@ -1372,7 +1376,7 @@ static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_siz
         /* in that case Windows simply maps in the whole file */
 
         if (map_file_into_view( view, fd, 0, total_size, 0, VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY,
-                                !dup_mapping ) != STATUS_SUCCESS) goto error;
+                                removable ) != STATUS_SUCCESS) goto error;
 
         /* check that all sections are loaded at the right offset */
         if (nt->OptionalHeader.FileAlignment != nt->OptionalHeader.SectionAlignment) goto error;
@@ -1463,7 +1467,7 @@ static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_siz
             end < file_start ||
             map_file_into_view( view, fd, sec->VirtualAddress, file_size, file_start,
                                 VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY,
-                                !dup_mapping ) != STATUS_SUCCESS)
+                                removable ) != STATUS_SUCCESS)
         {
             ERR_(module)( "Could not map section %.8s, file probably truncated\n", sec->Name );
             goto error;
@@ -1510,7 +1514,19 @@ static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_siz
     }
 
  done:
-    view->mapping = dup_mapping;
+
+    SERVER_START_REQ( map_view )
+    {
+        req->mapping = wine_server_obj_handle( hmapping );
+        req->access  = access;
+        req->base    = wine_server_client_ptr( view->base );
+        req->size    = view->size;
+        req->start   = 0;
+        status = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    if (status) goto error;
+
     VIRTUAL_DEBUG_DUMP_VIEW( view );
     server_leave_uninterrupted_section( &csVirtual, &sigset );
 
@@ -1524,7 +1540,6 @@ static NTSTATUS map_image( HANDLE hmapping, int fd, char *base, SIZE_T total_siz
  error:
     if (view) delete_view( view );
     server_leave_uninterrupted_section( &csVirtual, &sigset );
-    if (dup_mapping) close_handle( dup_mapping );
     return status;
 }
 
@@ -1578,6 +1593,8 @@ void virtual_init(void)
         {
             preload_reserve_start = (void *)start;
             preload_reserve_end = (void *)end;
+            /* some apps start inside the DOS area */
+            address_space_start = min( address_space_start, preload_reserve_start );
         }
     }
 
@@ -1720,9 +1737,10 @@ NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commi
 #endif
 
     /* setup no access guard page */
-    VIRTUAL_SetProt( view, view->base, page_size, VPROT_COMMITTED );
-    VIRTUAL_SetProt( view, (char *)view->base + page_size, page_size,
-                     VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
+    set_page_vprot( view->base, page_size, VPROT_COMMITTED );
+    set_page_vprot( (char *)view->base + page_size, page_size,
+                    VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
+    mprotect_range( view->base, 2 * page_size, 0, 0 );
     VIRTUAL_DEBUG_DUMP_VIEW( view );
 
     /* note: limit is lower than base since the stack grows down */
@@ -1745,8 +1763,8 @@ void virtual_clear_thread_stack(void)
     void *stack = NtCurrentTeb()->Tib.StackLimit;
     size_t size = (char *)NtCurrentTeb()->Tib.StackBase - (char *)NtCurrentTeb()->Tib.StackLimit;
 
-    wine_anon_mmap( stack, size, PROT_READ | PROT_WRITE, MAP_FIXED );
-    if (force_exec_prot) mprotect( stack, size, PROT_READ | PROT_WRITE | PROT_EXEC );
+    wine_anon_mmap( stack, size - page_size, PROT_READ | PROT_WRITE, MAP_FIXED );
+    if (force_exec_prot) mprotect( stack, size - page_size, PROT_READ | PROT_WRITE | PROT_EXEC );
 }
 
 
@@ -1755,33 +1773,133 @@ void virtual_clear_thread_stack(void)
  */
 NTSTATUS virtual_handle_fault( LPCVOID addr, DWORD err, BOOL on_signal_stack )
 {
-    struct file_view *view;
     NTSTATUS ret = STATUS_ACCESS_VIOLATION;
+    void *page = ROUND_ADDR( addr, page_mask );
     sigset_t sigset;
+    BYTE vprot;
 
     server_enter_uninterrupted_section( &csVirtual, &sigset );
-    if ((view = VIRTUAL_FindView( addr, 0 )))
+    vprot = get_page_vprot( page );
+    if (!on_signal_stack && (vprot & VPROT_GUARD))
     {
-        void *page = ROUND_ADDR( addr, page_mask );
-        BYTE vprot = get_page_vprot( page );
-        if ((err & EXCEPTION_WRITE_FAULT) && (view->protect & VPROT_WRITEWATCH))
+        set_page_vprot_bits( page, page_size, 0, VPROT_GUARD );
+        mprotect_range( page, page_size, 0, 0 );
+        ret = STATUS_GUARD_PAGE_VIOLATION;
+    }
+    else if (err & EXCEPTION_WRITE_FAULT)
+    {
+        if (vprot & VPROT_WRITEWATCH)
         {
-            if (vprot & VPROT_WRITEWATCH)
-            {
-                set_page_vprot_bits( page, page_size, 0, VPROT_WRITEWATCH );
-                mprotect_range( view, page, page_size, 0, 0 );
-            }
-            /* ignore fault if page is writable now */
-            if (VIRTUAL_GetUnixProt( get_page_vprot( page )) & PROT_WRITE) ret = STATUS_SUCCESS;
+            set_page_vprot_bits( page, page_size, 0, VPROT_WRITEWATCH );
+            mprotect_range( page, page_size, 0, 0 );
         }
-        if (!on_signal_stack && (vprot & VPROT_GUARD))
+        /* ignore fault if page is writable now */
+        if (VIRTUAL_GetUnixProt( get_page_vprot( page )) & PROT_WRITE)
         {
-            set_page_vprot_bits( page, page_size, 0, VPROT_GUARD );
-            mprotect_range( view, page, page_size, 0, 0 );
-            ret = STATUS_GUARD_PAGE_VIOLATION;
+            if ((vprot & VPROT_WRITEWATCH) || is_write_watch_range( page, page_size ))
+                ret = STATUS_SUCCESS;
         }
     }
     server_leave_uninterrupted_section( &csVirtual, &sigset );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           check_write_access
+ *
+ * Check if the memory range is writable, temporarily disabling write watches if necessary.
+ */
+static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_watch )
+{
+    size_t i;
+    char *addr = ROUND_ADDR( base, page_mask );
+
+    size = ROUND_SIZE( base, size );
+    for (i = 0; i < size; i += page_size)
+    {
+        BYTE vprot = get_page_vprot( addr + i );
+        if (vprot & VPROT_WRITEWATCH) *has_write_watch = TRUE;
+        if (!(VIRTUAL_GetUnixProt( vprot & ~VPROT_WRITEWATCH ) & PROT_WRITE))
+            return STATUS_INVALID_USER_BUFFER;
+    }
+    if (*has_write_watch)
+        mprotect_range( addr, size, 0, VPROT_WRITEWATCH );  /* temporarily enable write access */
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *           virtual_locked_server_call
+ */
+unsigned int virtual_locked_server_call( void *req_ptr )
+{
+    struct __server_request_info * const req = req_ptr;
+    sigset_t sigset;
+    void *addr = req->reply_data;
+    data_size_t size = req->u.req.request_header.reply_size;
+    BOOL has_write_watch = FALSE;
+    unsigned int ret = STATUS_ACCESS_VIOLATION;
+
+    if (!size) return wine_server_call( req_ptr );
+
+    server_enter_uninterrupted_section( &csVirtual, &sigset );
+    if (!(ret = check_write_access( addr, size, &has_write_watch )))
+    {
+        ret = server_call_unlocked( req );
+        if (has_write_watch) update_write_watches( addr, size, wine_server_reply_size( req ));
+    }
+    server_leave_uninterrupted_section( &csVirtual, &sigset );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           virtual_locked_read
+ */
+ssize_t virtual_locked_read( int fd, void *addr, size_t size )
+{
+    sigset_t sigset;
+    BOOL has_write_watch = FALSE;
+    int err = EFAULT;
+
+    ssize_t ret = read( fd, addr, size );
+    if (ret != -1 || errno != EFAULT) return ret;
+
+    server_enter_uninterrupted_section( &csVirtual, &sigset );
+    if (!check_write_access( addr, size, &has_write_watch ))
+    {
+        ret = read( fd, addr, size );
+        err = errno;
+        if (has_write_watch) update_write_watches( addr, size, max( 0, ret ));
+    }
+    server_leave_uninterrupted_section( &csVirtual, &sigset );
+    errno = err;
+    return ret;
+}
+
+
+/***********************************************************************
+ *           virtual_locked_pread
+ */
+ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset )
+{
+    sigset_t sigset;
+    BOOL has_write_watch = FALSE;
+    int err = EFAULT;
+
+    ssize_t ret = pread( fd, addr, size, offset );
+    if (ret != -1 || errno != EFAULT) return ret;
+
+    server_enter_uninterrupted_section( &csVirtual, &sigset );
+    if (!check_write_access( addr, size, &has_write_watch ))
+    {
+        ret = pread( fd, addr, size, offset );
+        err = errno;
+        if (has_write_watch) update_write_watches( addr, size, max( 0, ret ));
+    }
+    server_leave_uninterrupted_section( &csVirtual, &sigset );
+    errno = err;
     return ret;
 }
 
@@ -1812,25 +1930,22 @@ BOOL virtual_is_valid_code_address( const void *addr, SIZE_T size )
  */
 BOOL virtual_handle_stack_fault( void *addr )
 {
-    struct file_view *view;
     BOOL ret = FALSE;
 
     RtlEnterCriticalSection( &csVirtual );  /* no need for signal masking inside signal handler */
-    if ((view = VIRTUAL_FindView( addr, 0 )))
+    if (get_page_vprot( addr ) & VPROT_GUARD)
     {
-        void *page = ROUND_ADDR( addr, page_mask );
-        BYTE vprot = get_page_vprot( page );
-        if (vprot & VPROT_GUARD)
+        char *page = ROUND_ADDR( addr, page_mask );
+        set_page_vprot_bits( page, page_size, 0, VPROT_GUARD );
+        mprotect_range( page, page_size, 0, 0 );
+        NtCurrentTeb()->Tib.StackLimit = page;
+        if (page >= (char *)NtCurrentTeb()->DeallocationStack + 2*page_size)
         {
-            VIRTUAL_SetProt( view, page, page_size, vprot & ~VPROT_GUARD );
-            NtCurrentTeb()->Tib.StackLimit = page;
-            if ((char *)page >= (char *)NtCurrentTeb()->DeallocationStack + 2*page_size)
-            {
-                vprot = get_page_vprot( (char *)page - page_size );
-                VIRTUAL_SetProt( view, (char *)page - page_size, page_size, vprot | VPROT_COMMITTED | VPROT_GUARD );
-            }
-            ret = TRUE;
+            page -= page_size;
+            set_page_vprot_bits( page, page_size, VPROT_COMMITTED | VPROT_GUARD, 0 );
+            mprotect_range( page, page_size, 0, 0 );
         }
+        ret = TRUE;
     }
     RtlLeaveCriticalSection( &csVirtual );
     return ret;
@@ -1952,32 +2067,18 @@ SIZE_T virtual_uninterrupted_read_memory( const void *addr, void *buffer, SIZE_T
  */
 NTSTATUS virtual_uninterrupted_write_memory( void *addr, const void *buffer, SIZE_T size )
 {
-    struct file_view *view;
+    BOOL has_write_watch = FALSE;
     sigset_t sigset;
-    NTSTATUS ret = STATUS_ACCESS_VIOLATION;
+    NTSTATUS ret;
 
     if (!size) return STATUS_SUCCESS;
 
     server_enter_uninterrupted_section( &csVirtual, &sigset );
-    if ((view = VIRTUAL_FindView( addr, size )) && !(view->protect & VPROT_SYSTEM))
+    if (!(ret = check_write_access( addr, size, &has_write_watch )))
     {
-        char *page = ROUND_ADDR( addr, page_mask );
-        size_t i, total = ROUND_SIZE( addr, size );
-
-        for (i = 0; i < total; i += page_size)
-        {
-            int prot = VIRTUAL_GetUnixProt( get_page_vprot( page + i ) & ~VPROT_WRITEWATCH );
-            if (!(prot & PROT_WRITE)) goto done;
-        }
-        if (view->protect & VPROT_WRITEWATCH)  /* enable write access by clearing write watches */
-        {
-            set_page_vprot_bits( addr, size, 0, VPROT_WRITEWATCH );
-            mprotect_range( view, addr, size, 0, 0 );
-        }
         memcpy( addr, buffer, size );
-        ret = STATUS_SUCCESS;
+        if (has_write_watch) update_write_watches( addr, size, size );
     }
-done:
     server_leave_uninterrupted_section( &csVirtual, &sigset );
     return ret;
 }
@@ -2003,7 +2104,7 @@ void VIRTUAL_SetForceExec( BOOL enable )
             /* file mappings are always accessible */
             BYTE commit = is_view_valloc( view ) ? 0 : VPROT_COMMITTED;
 
-            mprotect_range( view, view->base, view->size, commit, 0 );
+            mprotect_range( view->base, view->size, commit, 0 );
         }
     }
     server_leave_uninterrupted_section( &csVirtual, &sigset );
@@ -2197,7 +2298,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG zero_
         {
             SERVER_START_REQ( add_mapping_committed_range )
             {
-                req->handle = wine_server_obj_handle( view->mapping );
+                req->base   = wine_server_client_ptr( view->base );
                 req->offset = (char *)base - (char *)view->base;
                 req->size   = size;
                 wine_server_call( req );
@@ -2712,7 +2813,7 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     unsigned int vprot, sec_flags;
     struct file_view *view;
     pe_image_info_t image_info;
-    HANDLE dup_mapping, shared_file;
+    HANDLE shared_file;
     LARGE_INTEGER offset;
     sigset_t sigset;
 
@@ -2793,7 +2894,6 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
         res = wine_server_call( req );
         sec_flags   = reply->flags;
         full_size   = reply->size;
-        dup_mapping = wine_server_ptr_handle( reply->mapping );
         shared_file = wine_server_ptr_handle( reply->shared_file );
     }
     SERVER_END_REQ;
@@ -2820,15 +2920,15 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
 
             if ((res = server_get_unix_fd( shared_file, FILE_READ_DATA|FILE_WRITE_DATA,
                                            &shared_fd, &shared_needs_close, NULL, NULL ))) goto done;
-            res = map_image( handle, unix_handle, base, size, mask, image_info.header_size,
-                             shared_fd, dup_mapping, addr_ptr );
+            res = map_image( handle, access, unix_handle, base, size, mask, image_info.header_size,
+                             shared_fd, needs_close, addr_ptr );
             if (shared_needs_close) close( shared_fd );
             close_handle( shared_file );
         }
         else
         {
-            res = map_image( handle, unix_handle, base, size, mask, image_info.header_size,
-                             -1, dup_mapping, addr_ptr );
+            res = map_image( handle, access, unix_handle, base, size, mask, image_info.header_size,
+                             -1, needs_close, addr_ptr );
         }
         if (needs_close) close( unix_handle );
         if (res >= 0) *size_ptr = size;
@@ -2877,13 +2977,25 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     TRACE("handle=%p size=%lx offset=%x%08x\n",
           handle, size, offset.u.HighPart, offset.u.LowPart );
 
-    res = map_file_into_view( view, unix_handle, 0, size, offset.QuadPart, vprot, !dup_mapping );
+    res = map_file_into_view( view, unix_handle, 0, size, offset.QuadPart, vprot, needs_close );
+    if (res == STATUS_SUCCESS)
+    {
+        SERVER_START_REQ( map_view )
+        {
+            req->mapping = wine_server_obj_handle( handle );
+            req->access  = access;
+            req->base    = wine_server_client_ptr( view->base );
+            req->size    = size;
+            req->start   = offset.QuadPart;
+            res = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+    }
+
     if (res == STATUS_SUCCESS)
     {
         *addr_ptr = view->base;
         *size_ptr = size;
-        view->mapping = dup_mapping;
-        dup_mapping = 0;  /* don't close it */
         VIRTUAL_DEBUG_DUMP_VIEW( view );
     }
     else
@@ -2896,7 +3008,6 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     server_leave_uninterrupted_section( &csVirtual, &sigset );
 
 done:
-    if (dup_mapping) close_handle( dup_mapping );
     if (needs_close) close( unix_handle );
     return res;
 }
@@ -2929,8 +3040,13 @@ NTSTATUS WINAPI NtUnmapViewOfSection( HANDLE process, PVOID addr )
     server_enter_uninterrupted_section( &csVirtual, &sigset );
     if ((view = VIRTUAL_FindView( addr, 0 )) && !is_view_valloc( view ))
     {
-        delete_view( view );
-        status = STATUS_SUCCESS;
+        SERVER_START_REQ( unmap_view )
+        {
+            req->base = wine_server_client_ptr( view->base );
+            status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        if (!status) delete_view( view );
     }
     server_leave_uninterrupted_section( &csVirtual, &sigset );
     return status;
@@ -3061,7 +3177,6 @@ NTSTATUS WINAPI NtFlushVirtualMemory( HANDLE process, LPCVOID *addr_ptr,
 NTSTATUS WINAPI NtGetWriteWatch( HANDLE process, ULONG flags, PVOID base, SIZE_T size, PVOID *addresses,
                                  ULONG_PTR *count, ULONG *granularity )
 {
-    struct file_view *view;
     NTSTATUS status = STATUS_SUCCESS;
     sigset_t sigset;
 
@@ -3079,7 +3194,7 @@ NTSTATUS WINAPI NtGetWriteWatch( HANDLE process, ULONG flags, PVOID base, SIZE_T
 
     server_enter_uninterrupted_section( &csVirtual, &sigset );
 
-    if ((view = VIRTUAL_FindView( base, size )) && (view->protect & VPROT_WRITEWATCH))
+    if (is_write_watch_range( base, size ))
     {
         ULONG_PTR pos = 0;
         char *addr = base;
@@ -3090,7 +3205,7 @@ NTSTATUS WINAPI NtGetWriteWatch( HANDLE process, ULONG flags, PVOID base, SIZE_T
             if (!(get_page_vprot( addr ) & VPROT_WRITEWATCH)) addresses[pos++] = addr;
             addr += page_size;
         }
-        if (flags & WRITE_WATCH_FLAG_RESET) reset_write_watches( view, base, addr - (char *)base );
+        if (flags & WRITE_WATCH_FLAG_RESET) reset_write_watches( base, addr - (char *)base );
         *count = pos;
         *granularity = page_size;
     }
@@ -3107,7 +3222,6 @@ NTSTATUS WINAPI NtGetWriteWatch( HANDLE process, ULONG flags, PVOID base, SIZE_T
  */
 NTSTATUS WINAPI NtResetWriteWatch( HANDLE process, PVOID base, SIZE_T size )
 {
-    struct file_view *view;
     NTSTATUS status = STATUS_SUCCESS;
     sigset_t sigset;
 
@@ -3120,8 +3234,8 @@ NTSTATUS WINAPI NtResetWriteWatch( HANDLE process, PVOID base, SIZE_T size )
 
     server_enter_uninterrupted_section( &csVirtual, &sigset );
 
-    if ((view = VIRTUAL_FindView( base, size )) && (view->protect & VPROT_WRITEWATCH))
-        reset_write_watches( view, base, size );
+    if (is_write_watch_range( base, size ))
+        reset_write_watches( base, size );
     else
         status = STATUS_INVALID_PARAMETER;
 
@@ -3197,7 +3311,6 @@ NTSTATUS WINAPI NtWriteVirtualMemory( HANDLE process, void *addr, const void *bu
 NTSTATUS WINAPI NtAreMappedFilesTheSame(PVOID addr1, PVOID addr2)
 {
     struct file_view *view1, *view2;
-    struct stat st1, st2;
     NTSTATUS status;
     sigset_t sigset;
 
@@ -3214,13 +3327,18 @@ NTSTATUS WINAPI NtAreMappedFilesTheSame(PVOID addr1, PVOID addr2)
         status = STATUS_CONFLICTING_ADDRESSES;
     else if (view1 == view2)
         status = STATUS_SUCCESS;
-    else if (!(view1->protect & SEC_IMAGE) || !(view2->protect & SEC_IMAGE))
+    else if ((view1->protect & VPROT_SYSTEM) || (view2->protect & VPROT_SYSTEM))
         status = STATUS_NOT_SAME_DEVICE;
-    else if (!stat_mapping_file( view1, &st1 ) && !stat_mapping_file( view2, &st2 ) &&
-             st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino)
-        status = STATUS_SUCCESS;
     else
-        status = STATUS_NOT_SAME_DEVICE;
+    {
+        SERVER_START_REQ( is_same_mapping )
+        {
+            req->base1 = wine_server_client_ptr( view1->base );
+            req->base2 = wine_server_client_ptr( view2->base );
+            status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+    }
 
     server_leave_uninterrupted_section( &csVirtual, &sigset );
     return status;
