@@ -572,6 +572,7 @@ struct HTMLDocument {
     IHTMLDocument6              IHTMLDocument6_iface;
     IHTMLDocument7              IHTMLDocument7_iface;
     IDocumentSelector           IDocumentSelector_iface;
+    IDocumentEvent              IDocumentEvent_iface;
     IPersistMoniker             IPersistMoniker_iface;
     IPersistFile                IPersistFile_iface;
     IPersistHistory             IPersistHistory_iface;
@@ -714,7 +715,6 @@ typedef struct {
     HRESULT (*handle_event)(HTMLDOMNode*,DWORD,nsIDOMEvent*,BOOL*);
     HRESULT (*get_attr_col)(HTMLDOMNode*,HTMLAttributeCollection**);
     EventTarget *(*get_event_target)(HTMLDOMNode*);
-    HRESULT (*fire_event)(HTMLDOMNode*,DWORD,BOOL*);
     HRESULT (*put_disabled)(HTMLDOMNode*,VARIANT_BOOL);
     HRESULT (*get_disabled)(HTMLDOMNode*,VARIANT_BOOL*);
     HRESULT (*get_document)(HTMLDOMNode*,IDispatch**);

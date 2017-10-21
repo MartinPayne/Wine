@@ -688,10 +688,10 @@
 # stub _mbbtombc_l(long ptr)
 @ cdecl _mbbtype(long long)
 # extern _mbcasemap
-@ cdecl _mbccpy(ptr str)
-# stub _mbccpy_l(ptr str ptr)
-# stub _mbccpy_s(ptr long ptr str)
-# stub _mbccpy_s_l(ptr long ptr str ptr)
+@ cdecl _mbccpy(ptr ptr)
+@ cdecl _mbccpy_l(ptr ptr ptr)
+@ cdecl _mbccpy_s(ptr long ptr ptr)
+@ cdecl _mbccpy_s_l(ptr long ptr ptr ptr)
 @ cdecl _mbcjistojms (long)
 # stub _mbcjistojms_l(long ptr)
 @ cdecl _mbcjmstojis(long)
@@ -737,7 +737,7 @@
 @ cdecl _mbsinc(str)
 # stub _mbsinc_l(str ptr)
 @ cdecl _mbslen(str)
-# stub _mbslen_l(str ptr)
+@ cdecl _mbslen_l(str ptr)
 @ cdecl _mbslwr(str)
 # stub _mbslwr_l(str ptr)
 @ cdecl _mbslwr_s(str long)
@@ -786,8 +786,8 @@
 # stub _mbsnicoll_l(str str long ptr)
 @ cdecl _mbsninc(str long)
 # stub _mbsninc_l(str long ptr)
-# stub _mbsnlen(str long)
-# stub _mbsnlen_l(str long ptr)
+@ cdecl _mbsnlen(str long)
+@ cdecl _mbsnlen_l(str long ptr)
 @ cdecl _mbsnset(ptr long long)
 # stub _mbsnset_l(ptr long long ptr)
 # stub _mbsnset_s(ptr long long long)
@@ -1047,11 +1047,11 @@
 @ cdecl _vfprintf_l(ptr str ptr ptr) MSVCRT__vfprintf_l
 # stub _vfprintf_p(ptr str ptr)
 # stub _vfprintf_p_l(ptr str ptr ptr)
-# stub _vfprintf_s_l(ptr str ptr ptr)
+@ cdecl _vfprintf_s_l(ptr str ptr ptr) MSVCRT__vfprintf_s_l
 @ cdecl _vfwprintf_l(ptr wstr ptr ptr) MSVCRT__vfwprintf_l
 # stub _vfwprintf_p(ptr wstr ptr)
 # stub _vfwprintf_p_l(ptr wstr ptr ptr)
-# stub _vfwprintf_s_l(ptr wstr ptr ptr)
+@ cdecl _vfwprintf_s_l(ptr wstr ptr ptr) MSVCRT__vfwprintf_s_l
 # stub _vprintf_l(str ptr ptr)
 # stub _vprintf_p(str ptr)
 # stub _vprintf_p_l(str ptr ptr)

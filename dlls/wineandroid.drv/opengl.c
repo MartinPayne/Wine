@@ -42,7 +42,6 @@
 #include "wine/wgl.h"
 #undef GLAPIENTRY
 #include "wine/wgl_driver.h"
-#include "wine/wglext.h"
 #include "wine/library.h"
 #include "wine/debug.h"
 
@@ -439,13 +438,13 @@ static struct wgl_context *android_wglCreateContext( HDC hdc )
 /***********************************************************************
  *		android_wglDeleteContext
  */
-static void android_wglDeleteContext( struct wgl_context *ctx )
+static BOOL android_wglDeleteContext( struct wgl_context *ctx )
 {
     EnterCriticalSection( &drawable_section );
     list_remove( &ctx->entry );
     LeaveCriticalSection( &drawable_section );
     p_eglDestroyContext( display, ctx->context );
-    HeapFree( GetProcessHeap(), 0, ctx );
+    return HeapFree( GetProcessHeap(), 0, ctx );
 }
 
 /***********************************************************************

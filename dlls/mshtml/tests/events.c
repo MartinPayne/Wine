@@ -159,7 +159,7 @@ static BOOL iface_cmp(IUnknown *iface1, IUnknown *iface2)
 
     IUnknown_QueryInterface(iface1, &IID_IUnknown, (void**)&unk1);
     IUnknown_Release(unk1);
-    IUnknown_QueryInterface(iface1, &IID_IUnknown, (void**)&unk2);
+    IUnknown_QueryInterface(iface2, &IID_IUnknown, (void**)&unk2);
     IUnknown_Release(unk2);
 
     return unk1 == unk2;
@@ -407,7 +407,8 @@ static void _test_attached_event_args(unsigned line, DISPID id, WORD wFlags, DIS
     ok(V_DISPATCH(pdp->rgvarg) != NULL, "V_DISPATCH(pdp->rgvarg) = %p\n", V_DISPATCH(pdp->rgvarg));
 
     event = _get_event_obj(line);
-    ok(iface_cmp((IUnknown*)event, (IUnknown*)V_DISPATCH(pdp->rgvarg)), "event != arg0\n");
+    todo_wine
+    ok(!iface_cmp((IUnknown*)event, (IUnknown*)V_DISPATCH(pdp->rgvarg)), "event != arg0\n");
     IHTMLEventObj_Release(event);
 }
 
@@ -1376,7 +1377,8 @@ static void _test_cp_eventarg(unsigned line, REFIID riid, WORD flags, DISPPARAMS
     ok(V_DISPATCH(dp->rgvarg) != NULL, "V_DISPATCH(dp->rgvarg) = %p\n", V_DISPATCH(dp->rgvarg));
 
     event = _get_event_obj(line);
-    ok(iface_cmp((IUnknown*)event, (IUnknown*)V_DISPATCH(dp->rgvarg)), "event != arg0\n");
+    todo_wine
+    ok(!iface_cmp((IUnknown*)event, (IUnknown*)V_DISPATCH(dp->rgvarg)), "event != arg0\n");
     IHTMLEventObj_Release(event);
 }
 
@@ -2528,6 +2530,19 @@ static void test_iframe_connections(IHTMLDocument2 *doc)
     IHTMLDocument2_Release(iframes_doc);
 }
 
+static void test_create_event(IHTMLDocument2 *doc)
+{
+    IDocumentEvent *doc_event;
+    HRESULT hres;
+
+    trace("createEvent tests...\n");
+
+    hres = IHTMLDocument2_QueryInterface(doc, &IID_IDocumentEvent, (void**)&doc_event);
+    ok(hres == S_OK, "Could not get IDocumentEvent iface: %08x\n", hres);
+
+    IDocumentEvent_Release(doc_event);
+}
+
 static HRESULT QueryInterface(REFIID,void**);
 
 static HRESULT WINAPI InPlaceFrame_QueryInterface(IOleInPlaceFrame *iface, REFIID riid, void **ppv)
@@ -3199,6 +3214,8 @@ START_TEST(events)
         run_test(empty_doc_str, test_submit);
         run_test(empty_doc_ie9_str, test_submit);
         run_test(iframe_doc_str, test_iframe_connections);
+        if(is_ie9plus)
+            run_test(empty_doc_ie9_str, test_create_event);
 
         test_empty_document();
 

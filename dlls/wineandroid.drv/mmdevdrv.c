@@ -649,23 +649,36 @@ static HRESULT get_audio_session(const GUID *sessionguid,
 
 static HRESULT waveformat_to_pcm(ACImpl *This, const WAVEFORMATEX *fmt, SLAndroidDataFormat_PCM_EX *pcm)
 {
-    /* only support non-float PCM */
-    if(fmt->wFormatTag != WAVE_FORMAT_PCM &&
-            !(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-                IsEqualGUID(&((WAVEFORMATEXTENSIBLE*)fmt)->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM)))
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-
-    /* TODO: does android only support 16-bit PCM? */
-
     if(fmt->nSamplesPerSec < 8000 || fmt->nSamplesPerSec > 48000)
         return AUDCLNT_E_UNSUPPORTED_FORMAT;
 
     pcm->formatType = SL_ANDROID_DATAFORMAT_PCM_EX;
-    pcm->numChannels = fmt->nChannels;
+
     pcm->sampleRate = fmt->nSamplesPerSec * 1000; /* sampleRate is in milli-Hz */
     pcm->bitsPerSample = fmt->wBitsPerSample;
     pcm->containerSize = fmt->wBitsPerSample;
+
+    if(fmt->wFormatTag == WAVE_FORMAT_PCM ||
+            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+             IsEqualGUID(&((WAVEFORMATEXTENSIBLE*)fmt)->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))){
+        if(pcm->bitsPerSample == 8)
+            pcm->representation = SL_ANDROID_PCM_REPRESENTATION_UNSIGNED_INT;
+        else if(pcm->bitsPerSample == 16)
+            pcm->representation = SL_ANDROID_PCM_REPRESENTATION_SIGNED_INT;
+        else
+            return AUDCLNT_E_UNSUPPORTED_FORMAT;
+    }else if(fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+                (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                 IsEqualGUID(&((WAVEFORMATEXTENSIBLE*)fmt)->SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))){
+        if(pcm->bitsPerSample == 32)
+            pcm->representation = SL_ANDROID_PCM_REPRESENTATION_FLOAT;
+        else
+            return AUDCLNT_E_UNSUPPORTED_FORMAT;
+    }else
+        return AUDCLNT_E_UNSUPPORTED_FORMAT;
+
     /* only up to stereo */
+    pcm->numChannels = fmt->nChannels;
     if(pcm->numChannels == 1)
         pcm->channelMask = SL_SPEAKER_FRONT_CENTER;
     else if(This->dataflow == eRender && pcm->numChannels == 2)
@@ -675,10 +688,101 @@ static HRESULT waveformat_to_pcm(ACImpl *This, const WAVEFORMATEX *fmt, SLAndroi
 
     pcm->endianness = SL_BYTEORDER_LITTLEENDIAN;
 
-    if(pcm->bitsPerSample == 8)
-        pcm->representation = SL_ANDROID_PCM_REPRESENTATION_UNSIGNED_INT;
+    return S_OK;
+}
+
+static HRESULT try_open_render_device(SLAndroidDataFormat_PCM_EX *pcm, unsigned int num_buffers, SLObjectItf *out)
+{
+    SLresult sr;
+    SLDataSource source;
+    SLDataSink sink;
+    SLDataLocator_OutputMix loc_outmix;
+    SLboolean required[2];
+    SLInterfaceID iids[2];
+    SLDataLocator_AndroidSimpleBufferQueue loc_bq;
+    SLObjectItf player;
+
+    loc_bq.locatorType = SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE;
+    loc_bq.numBuffers = num_buffers;
+    source.pLocator = &loc_bq;
+    source.pFormat = pcm;
+
+    loc_outmix.locatorType = SL_DATALOCATOR_OUTPUTMIX;
+    loc_outmix.outputMix = outputmix;
+    sink.pLocator = &loc_outmix;
+    sink.pFormat = NULL;
+
+    required[0] = SL_BOOLEAN_TRUE;
+    iids[0] = *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE;
+    required[1] = SL_BOOLEAN_TRUE;
+    iids[1] = *pSL_IID_PLAYBACKRATE;
+
+    sr = SLCALL(engine, CreateAudioPlayer, &player, &source, &sink,
+            2, iids, required);
+    if(sr != SL_RESULT_SUCCESS){
+        WARN("CreateAudioPlayer failed: 0x%x\n", sr);
+        return E_FAIL;
+    }
+
+    sr = SLCALL(player, Realize, SL_BOOLEAN_FALSE);
+    if(sr != SL_RESULT_SUCCESS){
+        SLCALL_N(player, Destroy);
+        WARN("Player Realize failed: 0x%x\n", sr);
+        return E_FAIL;
+    }
+
+    if(out)
+        *out = player;
     else
-        pcm->representation = SL_ANDROID_PCM_REPRESENTATION_SIGNED_INT;
+        SLCALL_N(player, Destroy);
+
+    return S_OK;
+}
+
+static HRESULT try_open_capture_device(SLAndroidDataFormat_PCM_EX *pcm, unsigned int num_buffers, SLObjectItf *out)
+{
+    SLresult sr;
+    SLDataSource source;
+    SLDataSink sink;
+    SLDataLocator_IODevice loc_mic;
+    SLboolean required[1];
+    SLInterfaceID iids[1];
+    SLDataLocator_AndroidSimpleBufferQueue loc_bq;
+    SLObjectItf recorder;
+
+    loc_mic.locatorType = SL_DATALOCATOR_IODEVICE;
+    loc_mic.deviceType = SL_IODEVICE_AUDIOINPUT;
+    loc_mic.deviceID = SL_DEFAULTDEVICEID_AUDIOINPUT;
+    loc_mic.device = NULL;
+    source.pLocator = &loc_mic;
+    source.pFormat = NULL;
+
+    loc_bq.locatorType = SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE;
+    loc_bq.numBuffers = num_buffers;
+    sink.pLocator = &loc_bq;
+    sink.pFormat = pcm;
+
+    required[0] = SL_BOOLEAN_TRUE;
+    iids[0] = *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE;
+
+    sr = SLCALL(engine, CreateAudioRecorder, &recorder, &source, &sink,
+            1, iids, required);
+    if(sr != SL_RESULT_SUCCESS){
+        WARN("CreateAudioRecorder failed: 0x%x\n", sr);
+        return E_FAIL;
+    }
+
+    sr = SLCALL(recorder, Realize, SL_BOOLEAN_FALSE);
+    if(sr != SL_RESULT_SUCCESS){
+        SLCALL_N(recorder, Destroy);
+        WARN("Recorder Realize failed: 0x%x\n", sr);
+        return E_FAIL;
+    }
+
+    if(out)
+        *out = recorder;
+    else
+        SLCALL_N(recorder, Destroy);
 
     return S_OK;
 }
@@ -689,11 +793,10 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         const GUID *sessionguid)
 {
     ACImpl *This = impl_from_IAudioClient(iface);
-    int i;
+    int i, num_buffers;
     HRESULT hr;
     SLresult sr;
     SLAndroidDataFormat_PCM_EX pcm;
-    SLDataLocator_AndroidSimpleBufferQueue loc_bq;
 
     TRACE("(%p)->(%x, %x, %s, %s, %p, %s)\n", This, mode, flags,
           wine_dbgstr_longlong(duration), wine_dbgstr_longlong(period), fmt, debugstr_guid(sessionguid));
@@ -763,43 +866,13 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         return hr;
     }
 
+    num_buffers = This->bufsize_frames / This->period_frames;
+
     if(This->dataflow == eRender){
-        SLDataSource source;
-        SLDataSink sink;
-        SLDataLocator_OutputMix loc_outmix;
-        SLboolean required[2];
-        SLInterfaceID iids[2];
-
-        loc_bq.locatorType = SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE;
-        loc_bq.numBuffers = This->bufsize_frames / This->period_frames;
-        source.pLocator = &loc_bq;
-        source.pFormat = &pcm;
-
-        loc_outmix.locatorType = SL_DATALOCATOR_OUTPUTMIX;
-        loc_outmix.outputMix = outputmix;
-        sink.pLocator = &loc_outmix;
-        sink.pFormat = NULL;
-
-        required[0] = SL_BOOLEAN_TRUE;
-        iids[0] = *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE;
-        required[1] = SL_BOOLEAN_TRUE;
-        iids[1] = *pSL_IID_PLAYBACKRATE;
-
-        sr = SLCALL(engine, CreateAudioPlayer, &This->player, &source, &sink,
-                2, iids, required);
-        if(sr != SL_RESULT_SUCCESS){
-            WARN("CreateAudioPlayer failed: 0x%x\n", sr);
+        hr = try_open_render_device(&pcm, num_buffers, &This->player);
+        if(FAILED(hr)){
             LeaveCriticalSection(&This->lock);
-            return E_FAIL;
-        }
-
-        sr = SLCALL(This->player, Realize, SL_BOOLEAN_FALSE);
-        if(sr != SL_RESULT_SUCCESS){
-            SLCALL_N(This->player, Destroy);
-            This->player = NULL;
-            WARN("Player Realize failed: 0x%x\n", sr);
-            LeaveCriticalSection(&This->lock);
-            return E_FAIL;
+            return hr;
         }
 
         sr = SLCALL(This->player, GetInterface, *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE, &This->bufq);
@@ -820,42 +893,10 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
             return E_FAIL;
         }
     }else{
-        SLDataSource source;
-        SLDataSink sink;
-        SLDataLocator_IODevice loc_mic;
-        SLboolean required[1];
-        SLInterfaceID iids[1];
-
-        loc_mic.locatorType = SL_DATALOCATOR_IODEVICE;
-        loc_mic.deviceType = SL_IODEVICE_AUDIOINPUT;
-        loc_mic.deviceID = SL_DEFAULTDEVICEID_AUDIOINPUT;
-        loc_mic.device = NULL;
-        source.pLocator = &loc_mic;
-        source.pFormat = NULL;
-
-        loc_bq.locatorType = SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE;
-        loc_bq.numBuffers = This->bufsize_frames / This->period_frames;
-        sink.pLocator = &loc_bq;
-        sink.pFormat = &pcm;
-
-        required[0] = SL_BOOLEAN_TRUE;
-        iids[0] = *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE;
-
-        sr = SLCALL(engine, CreateAudioRecorder, &This->recorder, &source, &sink,
-                1, iids, required);
-        if(sr != SL_RESULT_SUCCESS){
-            WARN("CreateAudioRecorder failed: 0x%x\n", sr);
+        hr = try_open_capture_device(&pcm, num_buffers, &This->recorder);
+        if(FAILED(hr)){
             LeaveCriticalSection(&This->lock);
-            return E_FAIL;
-        }
-
-        sr = SLCALL(This->recorder, Realize, SL_BOOLEAN_FALSE);
-        if(sr != SL_RESULT_SUCCESS){
-            SLCALL_N(This->recorder, Destroy);
-            This->recorder = NULL;
-            WARN("Recorder Realize failed: 0x%x\n", sr);
-            LeaveCriticalSection(&This->lock);
-            return E_FAIL;
+            return hr;
         }
 
         sr = SLCALL(This->recorder, GetInterface, *pSL_IID_ANDROIDSIMPLEBUFFERQUEUE, &This->bufq);
@@ -971,7 +1012,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
 
     This->initted = TRUE;
 
-    TRACE("numBuffers: %u, bufsize: %u, period: %u\n", loc_bq.numBuffers,
+    TRACE("numBuffers: %u, bufsize: %u, period: %u\n", num_buffers,
             This->bufsize_frames, This->period_frames);
 
     LeaveCriticalSection(&This->lock);
@@ -1079,14 +1120,31 @@ static HRESULT WINAPI AudioClient_IsFormatSupported(IAudioClient *iface,
 
     dump_fmt(pwfx);
 
-    if(outpwfx){
+    if(outpwfx)
         *outpwfx = NULL;
-        if(mode != AUDCLNT_SHAREMODE_SHARED)
-            outpwfx = NULL;
-    }
 
     hr = waveformat_to_pcm(This, pwfx, &pcm);
+    if(SUCCEEDED(hr)){
+        if(This->dataflow == eRender){
+            hr = try_open_render_device(&pcm, 10, NULL);
+        }else{
+            hr = try_open_capture_device(&pcm, 10, NULL);
+        }
+    }
+
+    if(FAILED(hr)){
+        if(outpwfx){
+            hr = IAudioClient_GetMixFormat(iface, outpwfx);
+            if(FAILED(hr))
+                return hr;
+            return S_FALSE;
+        }
+
+        hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
+    }
+
     TRACE("returning: %08x\n", hr);
+
     return hr;
 }
 

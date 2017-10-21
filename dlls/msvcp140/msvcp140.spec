@@ -3667,7 +3667,7 @@
 @ stub _LSinh
 @ extern _LSnan _LSnan
 @ stub _Last_write_time
-@ stub _Link
+@ cdecl _Link(wstr wstr) tr2_sys__Link_wchar
 @ cdecl _Lock_shared_ptr_spin_lock()
 @ cdecl _Lstat(wstr ptr)
 @ cdecl _Make_dir(wstr) tr2_sys__Make_dir_wchar
@@ -3693,7 +3693,7 @@
 @ cdecl -ret64 _Query_perf_counter()
 @ cdecl -ret64 _Query_perf_frequency()
 @ cdecl _Read_dir(ptr ptr ptr) tr2_sys__Read_dir_wchar
-@ stub _Remove_dir
+@ cdecl _Remove_dir(wstr) tr2_sys__Remove_dir_wchar
 @ stub _Rename
 @ stub _Resize
 @ stub _Set_last_write_time
@@ -3716,7 +3716,7 @@
 @ cdecl _Stoulx(ptr ptr long ptr) _Stoulx
 @ cdecl _Strcoll(ptr ptr ptr ptr ptr) _Strcoll
 @ stub _Strxfrm
-@ stub _Symlink
+@ cdecl _Symlink(wstr wstr) tr2_sys__Symlink_wchar
 @ stub _Symlink_get
 @ stub _Temp_get
 @ stub _Thrd_abort
@@ -3737,7 +3737,7 @@
 @ cdecl _Toupper(long ptr) _Toupper
 @ cdecl _Towlower(long ptr) _Towlower
 @ cdecl _Towupper(long ptr) _Towupper
-@ stub _Unlink
+@ cdecl _Unlink(wstr) tr2_sys__Unlink_wchar
 @ cdecl _Unlock_shared_ptr_spin_lock()
 @ stub _WStod
 @ stub _WStodx

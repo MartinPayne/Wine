@@ -209,6 +209,11 @@ static void test_CreateNamedPipe(int pipemode)
     ok(hnp != INVALID_HANDLE_VALUE, "CreateNamedPipe failed\n");
     test_signaled(hnp);
 
+    ret = PeekNamedPipe(hnp, NULL, 0, NULL, &readden, NULL);
+    todo_wine
+    ok(!ret && GetLastError() == ERROR_BAD_PIPE, "PeekNamedPipe returned %x (%u)\n",
+       ret, GetLastError());
+
     ret = WaitNamedPipeA(PIPENAME, 2000);
     ok(ret, "WaitNamedPipe failed (%d)\n", GetLastError());
 
@@ -218,6 +223,12 @@ static void test_CreateNamedPipe(int pipemode)
     ok(!WaitNamedPipeA(PIPENAME, 100), "WaitNamedPipe succeeded\n");
 
     ok(GetLastError() == ERROR_SEM_TIMEOUT, "wrong error %u\n", GetLastError());
+
+    /* Test ConnectNamedPipe() in both directions */
+    ok(!ConnectNamedPipe(hnp, NULL), "ConnectNamedPipe(server) succeeded\n");
+    ok(GetLastError() == ERROR_PIPE_CONNECTED, "expected ERROR_PIPE_CONNECTED, got %u\n", GetLastError());
+    ok(!ConnectNamedPipe(hFile, NULL), "ConnectNamedPipe(client) succeeded\n");
+    ok(GetLastError() == ERROR_INVALID_FUNCTION, "expected ERROR_INVALID_FUNCTION, got %u\n", GetLastError());
 
     /* don't try to do i/o if one side couldn't be opened, as it hangs */
     if (hFile != INVALID_HANDLE_VALUE) {
@@ -351,9 +362,7 @@ static void test_CreateNamedPipe(int pipemode)
         ok(avail == sizeof(obuf) + sizeof(obuf2), "peek3 got %d bytes available\n", avail);
         ok(PeekNamedPipe(hFile, ibuf, sizeof(ibuf), &readden, &avail, &left), "Peek3\n");
         if (pipemode == PIPE_TYPE_BYTE) {
-            /* currently the Wine behavior depends on the kernel version */
-            /* ok(readden == sizeof(obuf) + sizeof(obuf2), "peek3 got %d bytes\n", readden); */
-            if (readden != sizeof(obuf) + sizeof(obuf2)) todo_wine ok(0, "peek3 got %d bytes\n", readden);
+            ok(readden == sizeof(obuf) + sizeof(obuf2), "peek3 got %d bytes\n", readden);
             ok(left == (DWORD) -(sizeof(obuf) + sizeof(obuf2)), "peek3 got %d bytes left\n", left);
         }
         else
@@ -390,9 +399,7 @@ static void test_CreateNamedPipe(int pipemode)
         ok(avail == sizeof(obuf) + sizeof(obuf2), "peek3 got %d bytes available\n", avail);
         ok(PeekNamedPipe(hnp, ibuf, sizeof(ibuf), &readden, &avail, &left), "Peek4\n");
         if (pipemode == PIPE_TYPE_BYTE) {
-            /* currently the Wine behavior depends on the kernel version */
-            /* ok(readden == sizeof(obuf) + sizeof(obuf2), "peek4 got %d bytes\n", readden); */
-            if (readden != sizeof(obuf) + sizeof(obuf2)) todo_wine ok(0, "peek4 got %d bytes\n", readden);
+            ok(readden == sizeof(obuf) + sizeof(obuf2), "peek4 got %d bytes\n", readden);
             ok(left == (DWORD) -(sizeof(obuf) + sizeof(obuf2)), "peek4 got %d bytes left\n", left);
         }
         else
@@ -1387,10 +1394,20 @@ static int test_DisconnectNamedPipe(void)
         ok(ReadFile(hnp, ibuf, sizeof(ibuf), &readden, NULL) == 0
             && GetLastError() == ERROR_PIPE_NOT_CONNECTED,
             "ReadFile from disconnected pipe with bytes waiting\n");
+
         ok(!DisconnectNamedPipe(hnp) && GetLastError() == ERROR_PIPE_NOT_CONNECTED,
            "DisconnectNamedPipe worked twice\n");
         ret = WaitForSingleObject(hFile, 0);
         ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %X\n", ret);
+
+        ret = PeekNamedPipe(hFile, NULL, 0, NULL, &readden, NULL);
+        todo_wine
+        ok(!ret && GetLastError() == ERROR_PIPE_NOT_CONNECTED, "PeekNamedPipe returned %x (%u)\n",
+           ret, GetLastError());
+        ret = PeekNamedPipe(hnp, NULL, 0, NULL, &readden, NULL);
+        todo_wine
+        ok(!ret && GetLastError() == ERROR_BAD_PIPE, "PeekNamedPipe returned %x (%u)\n",
+           ret, GetLastError());
         ok(CloseHandle(hFile), "CloseHandle\n");
     }
 
@@ -1502,6 +1519,11 @@ static void test_CloseHandle(void)
     ok(numbytes == 0, "expected 0, got %u\n", numbytes);
 
     numbytes = 0xdeadbeef;
+    ret = PeekNamedPipe(hfile, NULL, 0, NULL, &numbytes, NULL);
+    ok(ret, "PeekNamedPipe failed with %u\n", GetLastError());
+    ok(numbytes == sizeof(testdata), "expected sizeof(testdata), got %u\n", numbytes);
+
+    numbytes = 0xdeadbeef;
     memset(buffer, 0, sizeof(buffer));
     ret = ReadFile(hfile, buffer, sizeof(buffer), &numbytes, NULL);
     ok(ret, "ReadFile failed with %u\n", GetLastError());
@@ -1517,6 +1539,12 @@ static void test_CloseHandle(void)
     ret = ReadFile(hfile, buffer, 0, &numbytes, NULL);
     ok(!ret, "ReadFile unexpectedly succeeded\n");
     ok(GetLastError() == ERROR_BROKEN_PIPE, "expected ERROR_BROKEN_PIPE, got %u\n", GetLastError());
+
+    numbytes = 0xdeadbeef;
+    ret = PeekNamedPipe(hfile, NULL, 0, NULL, &numbytes, NULL);
+    ok(!ret && GetLastError() == ERROR_BROKEN_PIPE, "PeekNamedPipe returned %x (%u)\n",
+       ret, GetLastError());
+    ok(numbytes == 0xdeadbeef, "numbytes = %u\n", numbytes);
 
     SetLastError(0xdeadbeef);
     ret = WriteFile(hfile, testdata, sizeof(testdata), &numbytes, NULL);
@@ -1601,6 +1629,11 @@ static void test_CloseHandle(void)
     ok(numbytes == 0, "expected 0, got %u\n", numbytes);
 
     numbytes = 0xdeadbeef;
+    ret = PeekNamedPipe(hpipe, NULL, 0, NULL, &numbytes, NULL);
+    ok(ret, "PeekNamedPipe failed with %u\n", GetLastError());
+    ok(numbytes == sizeof(testdata), "expected sizeof(testdata), got %u\n", numbytes);
+
+    numbytes = 0xdeadbeef;
     memset(buffer, 0, sizeof(buffer));
     ret = ReadFile(hpipe, buffer, sizeof(buffer), &numbytes, NULL);
     ok(ret, "ReadFile failed with %u\n", GetLastError());
@@ -1616,6 +1649,12 @@ static void test_CloseHandle(void)
     ret = ReadFile(hpipe, buffer, 0, &numbytes, NULL);
     ok(!ret, "ReadFile unexpectedly succeeded\n");
     ok(GetLastError() == ERROR_BROKEN_PIPE, "expected ERROR_BROKEN_PIPE, got %u\n", GetLastError());
+
+    numbytes = 0xdeadbeef;
+    ret = PeekNamedPipe(hpipe, NULL, 0, NULL, &numbytes, NULL);
+    ok(!ret && GetLastError() == ERROR_BROKEN_PIPE, "PeekNamedPipe returned %x (%u)\n",
+       ret, GetLastError());
+    ok(numbytes == 0xdeadbeef, "numbytes = %u\n", numbytes);
 
     SetLastError(0xdeadbeef);
     ret = WriteFile(hpipe, testdata, sizeof(testdata), &numbytes, NULL);
@@ -2539,7 +2578,6 @@ static void test_readfileex_pending(void)
     SetLastError(0xdeadbeef);
     ret = ReadFile(server, read_buf, 0, &num_bytes, &overlapped);
     ok(!ret, "ReadFile should fail\n");
-todo_wine
     ok(GetLastError() == ERROR_IO_PENDING, "expected ERROR_IO_PENDING, got %d\n", GetLastError());
     ok(num_bytes == 0, "bytes %u\n", num_bytes);
     ok((NTSTATUS)overlapped.Internal == STATUS_PENDING, "expected STATUS_PENDING, got %#lx\n", overlapped.Internal);
@@ -2555,11 +2593,9 @@ todo_wine
     ok(num_bytes == 1, "bytes %u\n", num_bytes);
 
     wait = WaitForSingleObject(event, 100);
-todo_wine
     ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %x\n", wait);
 
     ok(num_bytes == 1, "bytes %u\n", num_bytes);
-todo_wine
     ok((NTSTATUS)overlapped.Internal == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %#lx\n", overlapped.Internal);
     ok(overlapped.InternalHigh == 0, "expected 0, got %lu\n", overlapped.InternalHigh);
 
@@ -3095,6 +3131,5 @@ START_TEST(pipe)
     test_readfileex_pending();
     test_overlapped_transport(TRUE, FALSE);
     test_overlapped_transport(TRUE, TRUE);
-    if (broken(1)) /* FIXME: Remove once Wine is ready. */
-        test_overlapped_transport(FALSE, FALSE);
+    test_overlapped_transport(FALSE, FALSE);
 }

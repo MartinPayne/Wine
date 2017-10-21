@@ -1533,8 +1533,8 @@
 @ cdecl -arch=win64 ?_Launch@_Pad@std@@QEAAXPEAU_Thrd_imp_t@@@Z(ptr ptr) _Pad__Launch
 @ cdecl -arch=win32 ?_Link@sys@tr2@std@@YAHPBD0@Z(str str) tr2_sys__Link
 @ cdecl -arch=win64 ?_Link@sys@tr2@std@@YAHPEBD0@Z(str str) tr2_sys__Link
-@ stub -arch=win32 ?_Link@sys@tr2@std@@YAHPB_W0@Z
-@ stub -arch=win64 ?_Link@sys@tr2@std@@YAHPEB_W0@Z
+@ cdecl -arch=win32 ?_Link@sys@tr2@std@@YAHPB_W0@Z(wstr wstr) tr2_sys__Link_wchar
+@ cdecl -arch=win64 ?_Link@sys@tr2@std@@YAHPEB_W0@Z(wstr wstr) tr2_sys__Link_wchar
 @ cdecl -arch=win32 ?_Locimp_Addfac@_Locimp@locale@std@@CAXPAV123@PAVfacet@23@I@Z(ptr ptr long) locale__Locimp__Locimp_Addfac
 @ cdecl -arch=win64 ?_Locimp_Addfac@_Locimp@locale@std@@CAXPEAV123@PEAVfacet@23@_K@Z(ptr ptr long) locale__Locimp__Locimp_Addfac
 @ cdecl -arch=win32 ?_Locimp_ctor@_Locimp@locale@std@@CAXPAV123@ABV123@@Z(ptr ptr) locale__Locimp__Locimp_ctor
@@ -1696,8 +1696,8 @@
 @ stub ?_Rethrow_future_exception@std@@YAXVexception_ptr@1@@Z
 @ stub -arch=win32 ?_Rng_abort@std@@YAXPBD@Z
 @ stub -arch=win64 ?_Rng_abort@std@@YAXPEBD@Z
-@ stub -arch=win32 ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KAII@Z
-@ stub -arch=win64 ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KA_K_K@Z
+@ cdecl -arch=win32 ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KAII@Z(long) _vector_base_v4__Segment_index_of
+@ cdecl -arch=win64 ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KA_K_K@Z(long) _vector_base_v4__Segment_index_of
 @ cdecl -arch=win32 ?_Setgloballocale@locale@std@@CAXPAX@Z(ptr) locale__Setgloballocale
 @ cdecl -arch=win64 ?_Setgloballocale@locale@std@@CAXPEAX@Z(ptr) locale__Setgloballocale
 @ stub -arch=win32 ?_Src@?1??_Getffldx@?$num_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@ABAHPADAAV?$istreambuf_iterator@DU?$char_traits@D@std@@@3@1AAVios_base@3@PAH@Z@4QBDB
@@ -1734,8 +1734,8 @@
 @ cdecl -arch=win64 ?_Swap_all@_Container_base12@std@@QEAAXAEAU12@@Z(ptr ptr) _Container_base12__Swap_all
 @ cdecl -arch=win32 ?_Symlink@sys@tr2@std@@YAHPBD0@Z(str str) tr2_sys__Symlink
 @ cdecl -arch=win64 ?_Symlink@sys@tr2@std@@YAHPEBD0@Z(str str) tr2_sys__Symlink
-@ stub -arch=win32 ?_Symlink@sys@tr2@std@@YAHPB_W0@Z
-@ stub -arch=win64 ?_Symlink@sys@tr2@std@@YAHPEB_W0@Z
+@ cdecl -arch=win32 ?_Symlink@sys@tr2@std@@YAHPB_W0@Z(wstr wstr) tr2_sys__Symlink_wchar
+@ cdecl -arch=win64 ?_Symlink@sys@tr2@std@@YAHPEB_W0@Z(wstr wstr) tr2_sys__Symlink_wchar
 @ extern ?_Sync@ios_base@std@@0_NA ios_base_Sync
 @ stub -arch=win32 ?_Syserror_map@std@@YAPBDH@Z
 @ stub -arch=win64 ?_Syserror_map@std@@YAPEBDH@Z
@@ -1768,8 +1768,8 @@
 @ cdecl -arch=win64 ?_Tidy@ios_base@std@@AEAAXXZ(ptr) ios_base_Tidy
 @ cdecl -arch=win32 ?_Unlink@sys@tr2@std@@YAHPBD@Z(str) tr2_sys__Unlink
 @ cdecl -arch=win64 ?_Unlink@sys@tr2@std@@YAHPEBD@Z(str) tr2_sys__Unlink
-@ stub -arch=win32 ?_Unlink@sys@tr2@std@@YAHPB_W@Z
-@ stub -arch=win64 ?_Unlink@sys@tr2@std@@YAHPEB_W@Z
+@ cdecl -arch=win32 ?_Unlink@sys@tr2@std@@YAHPB_W@Z(wstr) tr2_sys__Unlink_wchar
+@ cdecl -arch=win64 ?_Unlink@sys@tr2@std@@YAHPEB_W@Z(wstr) tr2_sys__Unlink_wchar
 @ cdecl -arch=arm ?_Unlock@?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAAXXZ(ptr) basic_streambuf_char__Unlock
 @ thiscall -arch=i386 ?_Unlock@?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAEXXZ(ptr) basic_streambuf_char__Unlock
 @ cdecl -arch=win64 ?_Unlock@?$basic_streambuf@DU?$char_traits@D@std@@@std@@UEAAXXZ(ptr) basic_streambuf_char__Unlock

@@ -31,7 +31,6 @@
 #include "wine/debug.h"
 #include "wine/wgl.h"
 #include "wine/wgl_driver.h"
-#include "wine/wglext.h"
 
 #define __gl_h_
 #define __gltypes_h_
@@ -4434,7 +4433,7 @@ static struct wgl_context *macdrv_wglCreateContext(HDC hdc)
 /***********************************************************************
  *              macdrv_wglDeleteContext
  */
-static void macdrv_wglDeleteContext(struct wgl_context *context)
+static BOOL macdrv_wglDeleteContext(struct wgl_context *context)
 {
     TRACE("deleting context %p/%p/%p\n", context, context->context, context->cglcontext);
 
@@ -4443,7 +4442,7 @@ static void macdrv_wglDeleteContext(struct wgl_context *context)
     LeaveCriticalSection(&context_section);
 
     macdrv_dispose_opengl_context(context->context);
-    HeapFree(GetProcessHeap(), 0, context);
+    return HeapFree(GetProcessHeap(), 0, context);
 }
 
 /***********************************************************************

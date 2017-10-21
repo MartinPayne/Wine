@@ -1585,19 +1585,19 @@ WINE_NOTICE_WITH(capi,[test "x$ac_cv_lib_soname_capi20" = "x"],
                  [libcapi20 ${notice_platform}development files not found, ISDN won't be supported.])
 
 dnl **** Check for cups ****
-AC_SUBST(CUPS_CFLAGS,"")
 if test "x$with_cups" != "xno"
 then
-    ac_save_CPPFLAGS="$CPPFLAGS"
-    ac_cups_cflags=`${CUPS_CONFIG:-cups-config} --cflags 2>/dev/null`
-    ac_cups_libs=`${CUPS_CONFIG:-cups-config} --ldflags 2>/dev/null`
-    CPPFLAGS="$CPPFLAGS $ac_cups_cflags"
-    AC_CHECK_HEADERS(cups/cups.h,
-            [WINE_CHECK_SONAME(cups,cupsGetDefault,
-                       [CUPS_CFLAGS="$ac_cups_cflags"],,
-                       [$ac_cups_libs])
-             AC_CHECK_HEADERS(cups/ppd.h)])
-    CPPFLAGS="$ac_save_CPPFLAGS"
+    WINE_PACKAGE_FLAGS(CUPS,[cups],[-lcups],
+                       [`${CUPS_CONFIG:-cups-config} --cflags 2>/dev/null`],
+                       [`${CUPS_CONFIG:-cups-config} --libs 2>/dev/null`],
+                       [AC_CHECK_HEADERS(cups/cups.h cups/ppd.h)
+                        if test "$ac_cv_header_cups_cups_h" = "yes"
+                        then
+                            WINE_CHECK_SONAME(cups,cupsGetDefault,,[CUPS_LIBS=""],[$CUPS_LIBS])
+                        else
+                            CUPS_CFLAGS=""
+                            CUPS_LIBS=""
+                        fi])
 fi
 WINE_NOTICE_WITH(cups,[test "x$ac_cv_lib_soname_cups" = "x"],
                  [libcups ${notice_platform}development files not found, CUPS won't be supported.])
@@ -1684,7 +1684,7 @@ then
 fi
 WINE_NOTICE_WITH(mpg123,[test "x$ac_cv_lib_mpg123_mpg123_feed" != xyes -a x"$ac_cv_header_CoreAudio_CoreAudio_h" != xyes],
                  [libmpg123 ${notice_platform}development files not found (or too old), mp3 codec won't be supported.],
-                 [enable_winemp3_acm])
+                 [enable_l3codeca_acm])
 
 dnl **** Check for OpenAL 1.1 ****
 if test "$ac_cv_header_AL_al_h" = "yes"
@@ -2734,6 +2734,7 @@ WINE_CONFIG_DLL(amstream,,[clean])
 WINE_CONFIG_TEST(dlls/amstream/tests)
 WINE_CONFIG_DLL(api-ms-win-appmodel-identity-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-appmodel-runtime-l1-1-1)
+WINE_CONFIG_DLL(api-ms-win-appmodel-runtime-l1-1-2)
 WINE_CONFIG_DLL(api-ms-win-core-apiquery-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-appcompat-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-core-appinit-l1-1-0)
@@ -3219,6 +3220,7 @@ WINE_CONFIG_DLL(keyboard.drv16,enable_win16)
 WINE_CONFIG_DLL(krnl386.exe16,enable_win16,[implib],[kernel])
 WINE_CONFIG_DLL(ksuser)
 WINE_CONFIG_DLL(ktmw32)
+WINE_CONFIG_DLL(l3codeca.acm)
 WINE_CONFIG_DLL(loadperf,,[implib])
 WINE_CONFIG_DLL(localspl,,[clean])
 WINE_CONFIG_TEST(dlls/localspl/tests)
@@ -3589,7 +3591,6 @@ WINE_CONFIG_DLL(winehid.sys)
 WINE_CONFIG_DLL(winejoystick.drv)
 WINE_CONFIG_DLL(winemac.drv,,[clean])
 WINE_CONFIG_DLL(winemapi)
-WINE_CONFIG_DLL(winemp3.acm)
 WINE_CONFIG_DLL(wineoss.drv)
 WINE_CONFIG_DLL(wineps.drv,,[clean])
 WINE_CONFIG_DLL(wineps16.drv16,enable_win16)

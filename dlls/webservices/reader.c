@@ -3061,7 +3061,7 @@ static HRESULT skip_node( struct reader *reader )
 
     for (;;)
     {
-        if ((hr = read_node( reader ) != S_OK) || !parent) break;
+        if ((hr = read_node( reader )) != S_OK || !parent) break;
         if (node_type( reader->current ) != WS_XML_NODE_TYPE_END_ELEMENT) continue;
         if (reader->current->parent == parent) return read_node( reader );
     }
@@ -6216,7 +6216,7 @@ static HRESULT read_type_text( struct reader *reader, const WS_FIELD_DESCRIPTION
     if (reader->current == reader->last)
     {
         BOOL found;
-        if ((hr = read_to_startelement( reader, &found )) != S_OK) return S_OK;
+        if ((hr = read_to_startelement( reader, &found )) != S_OK) return hr;
         if (!found) return WS_E_INVALID_FORMAT;
     }
     if ((hr = read_next_node( reader )) != S_OK) return hr;
@@ -7311,28 +7311,8 @@ HRESULT get_param_desc( const WS_STRUCT_DESCRIPTION *desc, USHORT index, const W
 
 static ULONG get_field_size( const WS_FIELD_DESCRIPTION *desc )
 {
-    WS_READ_OPTION option;
-    ULONG size;
-
-    switch ((option = get_field_read_option( desc->type, desc->options )))
-    {
-    case WS_READ_REQUIRED_POINTER:
-    case WS_READ_OPTIONAL_POINTER:
-    case WS_READ_NILLABLE_POINTER:
-        size = sizeof(void *);
-        break;
-
-    case WS_READ_REQUIRED_VALUE:
-    case WS_READ_NILLABLE_VALUE:
-        size = get_type_size( desc->type, desc->typeDescription );
-        break;
-
-    default:
-        WARN( "unhandled option %u\n", option );
-        return 0;
-    }
-
-    return size;
+    if (desc->options & WS_FIELD_POINTER) return sizeof(void *);
+    return get_type_size( desc->type, desc->typeDescription );
 }
 
 static HRESULT read_param( struct reader *reader, const WS_FIELD_DESCRIPTION *desc, WS_HEAP *heap, void *ret )

@@ -1523,6 +1523,8 @@ static LRESULT CALLBACK create_test_wndproc(HWND hwnd, UINT uMsg, WPARAM wParam,
 
 static void test_create(void)
 {
+    static const WCHAR testtextW[] = {'t','e','s','t',' ','t','e','x','t',0};
+    char buff[16];
     HWND hList;
     HWND hHeader;
     LONG_PTR ret;
@@ -1543,15 +1545,6 @@ static void test_create(void)
     hList = CreateWindowA("MyListView32", "Test", WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, GetModuleHandleA(NULL), 0);
     ok((HIMAGELIST)SendMessageA(hList, LVM_GETIMAGELIST, 0, 0) == test_create_imagelist, "Image list not obtained\n");
     hHeader = (HWND)SendMessageA(hList, LVM_GETHEADER, 0, 0);
-
-    if (!IsWindow(hHeader))
-    {
-        /* version 4.0 */
-        win_skip("LVM_GETHEADER not implemented. Skipping.\n");
-        DestroyWindow(hList);
-        return;
-    }
-
     ok(IsWindow(hHeader) && IsWindowVisible(hHeader), "Listview not in report mode\n");
     ok(hHeader == GetDlgItem(hList, 0), "Expected header as dialog item\n");
     DestroyWindow(hList);
@@ -1733,6 +1726,23 @@ static void test_create(void)
     hList = create_listview_control(LVS_OWNERDRAWFIXED | LVS_REPORT);
     ok_sequence(sequences, PARENT_SEQ_INDEX, create_ownerdrawfixed_parent_seq,
                 "created with LVS_OWNERDRAWFIXED|LVS_REPORT - parent seq", FALSE);
+    DestroyWindow(hList);
+
+    /* Test that window text is preserved. */
+    hList = CreateWindowExA(0, WC_LISTVIEWA, "test text", WS_CHILD | WS_BORDER | WS_VISIBLE,
+        0, 0, 100, 100, hwndparent, NULL, GetModuleHandleA(NULL), NULL);
+    ok(hList != NULL, "Failed to create ListView window.\n");
+    *buff = 0;
+    GetWindowTextA(hList, buff, sizeof(buff));
+    ok(!strcmp(buff, "test text"), "Unexpected window text %s.\n", buff);
+    DestroyWindow(hList);
+
+    hList = CreateWindowExW(0, WC_LISTVIEWW, testtextW, WS_CHILD | WS_BORDER | WS_VISIBLE,
+        0, 0, 100, 100, hwndparent, NULL, GetModuleHandleA(NULL), NULL);
+    ok(hList != NULL, "Failed to create ListView window.\n");
+    *buff = 0;
+    GetWindowTextA(hList, buff, sizeof(buff));
+    ok(!strcmp(buff, "test text"), "Unexpected window text %s.\n", buff);
     DestroyWindow(hList);
 }
 
@@ -1920,13 +1930,6 @@ static void test_icon_spacing(void)
        "Expected %d, got %d\n", MAKELONG(w, h), r);
 
     r = SendMessageA(hwnd, LVM_SETICONSPACING, 0, MAKELPARAM(25, 35));
-    if (r == 0)
-    {
-        /* version 4.0 */
-        win_skip("LVM_SETICONSPACING unimplemented. Skipping.\n");
-        DestroyWindow(hwnd);
-        return;
-    }
     expect(MAKELONG(20,30), r);
 
     r = SendMessageA(hwnd, LVM_SETICONSPACING, 0, MAKELPARAM(-1,-1));
@@ -4375,19 +4378,11 @@ static void test_notifyformat(void)
     r = SendMessageA(hwnd, LVM_SETUNICODEFORMAT, 1, 0);
     expect(0, r);
     r = SendMessageA(hwnd, LVM_GETUNICODEFORMAT, 0, 0);
-    if (r == 1)
-    {
-        r = SendMessageA(hwnd, LVM_SETUNICODEFORMAT, 0, 0);
-        expect(1, r);
-        r = SendMessageA(hwnd, LVM_GETUNICODEFORMAT, 0, 0);
-        expect(0, r);
-    }
-    else
-    {
-        win_skip("LVM_GETUNICODEFORMAT is unsupported\n");
-        DestroyWindow(hwnd);
-        return;
-    }
+    ok(r == 1, "Unexpected return value %d.\n", r);
+    r = SendMessageA(hwnd, LVM_SETUNICODEFORMAT, 0, 0);
+    expect(1, r);
+    r = SendMessageA(hwnd, LVM_GETUNICODEFORMAT, 0, 0);
+    expect(0, r);
 
     DestroyWindow(hwnd);
 
@@ -4967,13 +4962,18 @@ static void test_LVS_EX_TRANSPARENTBKGND(void)
 
 static void test_approximate_viewrect(void)
 {
-    HWND hwnd;
-    DWORD ret;
-    HIMAGELIST himl;
-    HBITMAP hbmp;
-    LVITEMA itema;
     static CHAR test[] = "abracadabra, a very long item label";
+    DWORD item_width, item_height, header_height;
+    static CHAR column_header[] = "Header";
+    unsigned const column_width = 100;
+    DWORD ret, item_count;
+    HIMAGELIST himl;
+    LVITEMA itema;
+    LVCOLUMNA col;
+    HBITMAP hbmp;
+    HWND hwnd;
 
+    /* LVS_ICON */
     hwnd = create_listview_control(LVS_ICON);
     himl = ImageList_Create(40, 40, 0, 4, 4);
     ok(himl != NULL, "failed to create imagelist\n");
@@ -4992,12 +4992,7 @@ static void test_approximate_viewrect(void)
     expect(0, ret);
 
     ret = SendMessageA(hwnd, LVM_SETICONSPACING, 0, MAKELPARAM(75, 75));
-    if (ret == 0)
-    {
-        /* version 4.0 */
-        win_skip("LVM_SETICONSPACING unimplemented. Skipping.\n");
-        return;
-    }
+    ok(ret != 0, "Unexpected return value %#x.\n", ret);
 
     ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 11, MAKELPARAM(100,100));
     expect(MAKELONG(77,827), ret);
@@ -5035,6 +5030,129 @@ static void test_approximate_viewrect(void)
     expect(MAKELONG(152,152), ret);
 
     DestroyWindow(hwnd);
+
+    /* LVS_REPORT */
+    hwnd = create_listview_control(LVS_REPORT);
+
+    /* Empty control without columns */
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 0, MAKELPARAM(100, 100));
+todo_wine
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) != 0, "Unexpected height %d.\n", HIWORD(ret));
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 0, 0);
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+todo_wine
+    ok(HIWORD(ret) != 0, "Unexpected height %d.\n", HIWORD(ret));
+
+    header_height = HIWORD(ret);
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 1, 0);
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+todo_wine
+    ok(HIWORD(ret) > header_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    item_height = HIWORD(ret) - header_height;
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -2, 0);
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == (header_height - 2 * item_height), "Unexpected height %d.\n", HIWORD(ret)) ;
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -1, 0);
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == header_height, "Unexpected height.\n");
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 2, 0);
+    ok(LOWORD(ret) == 0, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == header_height + 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    /* Insert column */
+    col.mask = LVCF_TEXT | LVCF_WIDTH;
+    col.pszText = column_header;
+    col.cx = column_width;
+    ret = SendMessageA(hwnd, LVM_INSERTCOLUMNA, 0, (LPARAM)&col);
+    ok(ret == 0, "Unexpected return value %d.\n", ret);
+
+    /* Empty control with column */
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 0, 0);
+todo_wine {
+    ok(LOWORD(ret) >= column_width, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) != 0, "Unexpected height %d.\n", HIWORD(ret));
+}
+    header_height = HIWORD(ret);
+    item_width = LOWORD(ret);
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 1, 0);
+    ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+todo_wine
+    ok(HIWORD(ret) > header_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    item_height = HIWORD(ret) - header_height;
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -2, 0);
+    ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == header_height - 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -1, 0);
+    ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == header_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 2, 0);
+    ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    ok(HIWORD(ret) == header_height + 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+    for (item_count = 1; item_count <= 2; ++item_count)
+    {
+        itema.mask = LVIF_TEXT;
+        itema.iItem = 0;
+        itema.iSubItem = 0;
+        itema.pszText = test;
+        ret = SendMessageA(hwnd, LVM_INSERTITEMA, 0, (LPARAM)&itema);
+        ok(ret == 0, "Unexpected return value %d.\n", ret);
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 0, 0);
+        ok(LOWORD(ret) >= column_width, "Unexpected width %d.\n", LOWORD(ret));
+    todo_wine
+        ok(HIWORD(ret) != 0, "Unexpected height %d.\n", HIWORD(ret));
+
+        header_height = HIWORD(ret);
+        item_width = LOWORD(ret);
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 1, 0);
+        ok(LOWORD(ret) == item_width, "Unexpected width %d, item %d\n", LOWORD(ret), item_count - 1);
+        ok(HIWORD(ret) > header_height, "Unexpected height %d. item %d.\n", HIWORD(ret),  item_count - 1);
+
+        item_height = HIWORD(ret) - header_height;
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -2, 0);
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    todo_wine
+        ok(HIWORD(ret) == header_height - 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -1, 0);
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+        ok(HIWORD(ret) == header_height + item_count * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 2, 0);
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+        ok(HIWORD(ret) == header_height + 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, 2, MAKELONG(item_width * 2, header_height + 3 * item_height));
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+        ok(HIWORD(ret) == header_height + 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -2, MAKELONG(item_width * 2, 0));
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    todo_wine
+        ok(HIWORD(ret) == header_height - 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+
+        ret = SendMessageA(hwnd, LVM_APPROXIMATEVIEWRECT, -2, MAKELONG(-1, -1));
+        ok(LOWORD(ret) == item_width, "Unexpected width %d.\n", LOWORD(ret));
+    todo_wine
+        ok(HIWORD(ret) == header_height - 2 * item_height, "Unexpected height %d.\n", HIWORD(ret));
+    }
+
+    DestroyWindow(hwnd);
+
 }
 
 static void test_finditem(void)
@@ -5091,12 +5209,6 @@ static void test_finditem(void)
     fi.flags = LVFI_SUBSTRING;
     fi.psz = f;
     r = SendMessageA(hwnd, LVM_FINDITEMA, -1, (LPARAM)&fi);
-    if (r == -1)
-    {
-        win_skip("LVFI_SUBSTRING not supported\n");
-        DestroyWindow(hwnd);
-        return;
-    }
     expect(0, r);
     strcpy(f, "f");
     fi.flags = LVFI_SUBSTRING;

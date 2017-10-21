@@ -2515,6 +2515,7 @@ static void test_ScriptGetFontProperties(HDC hdc)
     hr = ScriptGetFontProperties(hdc,&psc,&sfp);
     ok( hr == E_INVALIDARG, "(hdc,&psc,&sfp) invalid, expected E_INVALIDARG, got %08x\n", hr);
     ok( psc != NULL, "Expected a pointer in psc, got NULL\n");
+    ok( sfp.cBytes == sizeof(SCRIPT_FONTPROPERTIES) - 1, "Unexpected cBytes.\n");
     ScriptFreeCache(&psc);
     ok( psc == NULL, "Expected psc to be NULL, got %p\n", psc);
 
@@ -3172,7 +3173,7 @@ static void test_ScriptString(HDC hdc)
  * This set of tests are for the string functions of uniscribe.  The ScriptStringAnalyse
  * function allocates memory pointed to by the SCRIPT_STRING_ANALYSIS ssa pointer.  This
  * memory is freed by ScriptStringFree.  There needs to be a valid hdc for this as
- * ScriptStringAnalyse calls ScriptSItemize, ScriptShape and ScriptPlace which require it.
+ * ScriptStringAnalyse calls ScriptItemize, ScriptShape and ScriptPlace which require it.
  *
  */
 
@@ -3440,11 +3441,27 @@ static void test_ScriptStringXtoCP_CPtoX(HDC hdc)
     }
 }
 
+static HWND create_test_window(void)
+{
+    HWND hwnd = CreateWindowExA(0, "Static", "", WS_POPUP, 0, 0, 100, 100, 0, 0, 0, NULL);
+    ok(hwnd != NULL, "Failed to create test window.\n");
+
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    return hwnd;
+}
+
 static void test_ScriptCacheGetHeight(HDC hdc)
 {
-    HRESULT hr;
+    HFONT hfont, prev_hfont;
     SCRIPT_CACHE sc = NULL;
-    LONG height;
+    LONG height, height2;
+    TEXTMETRICW tm;
+    LOGFONTA lf;
+    HRESULT hr;
+    HWND hwnd;
+    HDC hdc2;
 
     hr = ScriptCacheGetHeight(NULL, NULL, NULL);
     ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got 0x%08x\n", hr);
@@ -3455,11 +3472,54 @@ static void test_ScriptCacheGetHeight(HDC hdc)
     hr = ScriptCacheGetHeight(NULL, &sc, &height);
     ok(hr == E_PENDING, "expected E_PENDING, got 0x%08x\n", hr);
 
-    height = 0;
+    height = 123;
+    hr = ScriptCacheGetHeight(hdc, NULL, &height);
+    ok(hr == E_INVALIDARG, "Uexpected hr %#x.\n", hr);
+    ok(height == 123, "Unexpected height.\n");
 
+    memset(&tm, 0, sizeof(tm));
+    GetTextMetricsW(hdc, &tm);
+    ok(tm.tmHeight > 0, "Unexpected tmHeight %u.\n", tm.tmHeight);
+
+    height = 0;
     hr = ScriptCacheGetHeight(hdc, &sc, &height);
     ok(hr == S_OK, "expected S_OK, got 0x%08x\n", hr);
-    ok(height > 0, "expected height > 0\n");
+    ok(height == tm.tmHeight, "expected height > 0\n");
+
+    /* Try again with NULL dc. */
+    height2 = 0;
+    hr = ScriptCacheGetHeight(NULL, &sc, &height2);
+    ok(hr == S_OK, "Failed to get cached height, hr %#x.\n", hr);
+    ok(height2 == height, "Unexpected height %u.\n", height2);
+
+    hwnd = create_test_window();
+
+    hdc2 = GetDC(hwnd);
+    ok(hdc2 != NULL, "Failed to get window dc.\n");
+
+    memset(&lf, 0, sizeof(LOGFONTA));
+    lstrcpyA(lf.lfFaceName, "Tahoma");
+    lf.lfHeight = -32;
+
+    hfont = CreateFontIndirectA(&lf);
+    ok(hfont != NULL, "Failed to create font.\n");
+
+    prev_hfont = SelectObject(hdc2, hfont);
+
+    memset(&tm, 0, sizeof(tm));
+    GetTextMetricsW(hdc2, &tm);
+    ok(tm.tmHeight > height, "Unexpected tmHeight %u.\n", tm.tmHeight);
+
+    height2 = 0;
+    hr = ScriptCacheGetHeight(hdc2, &sc, &height2);
+    ok(hr == S_OK, "Failed to get cached height, hr %#x.\n", hr);
+    ok(height2 == height, "Unexpected height.\n");
+
+    SelectObject(hdc2, prev_hfont);
+    DeleteObject(hfont);
+
+    ReleaseDC(hwnd, hdc2);
+    DestroyWindow(hwnd);
 
     ScriptFreeCache(&sc);
 }
@@ -3988,6 +4048,36 @@ static void test_ScriptIsComplex(void)
     ok(hr == S_FALSE, "got 0x%08x\n", hr);
 }
 
+static void test_ScriptString_pSize(HDC hdc)
+{
+    static const WCHAR textW[] = {'A',0};
+    SCRIPT_STRING_ANALYSIS ssa;
+    const SIZE *size;
+    TEXTMETRICW tm;
+    HRESULT hr;
+    ABC abc;
+
+    hr = ScriptStringAnalyse(hdc, textW, 1, 16, -1, SSA_GLYPHS, 0, NULL, NULL, NULL, NULL, NULL, &ssa);
+    ok(hr == S_OK, "ScriptStringAnalyse failed, hr %#x.\n", hr);
+
+    size = ScriptString_pSize(NULL);
+    ok(size == NULL || broken(size != NULL) /* <win7 */, "Unexpected size pointer.\n");
+
+    GetCharABCWidthsW(hdc, textW[0], textW[0], &abc);
+
+    memset(&tm, 0, sizeof(tm));
+    GetTextMetricsW(hdc, &tm);
+    ok(tm.tmHeight > 0, "Unexpected tmHeight.\n");
+
+    size = ScriptString_pSize(ssa);
+    ok(size != NULL, "Unexpected size pointer.\n");
+    ok(size->cx == abc.abcA + abc.abcB + abc.abcC, "Unexpected cx size %d.\n", size->cx);
+    ok(size->cy == tm.tmHeight, "Unexpected cy size %d.\n", size->cy);
+
+    hr = ScriptStringFree(&ssa);
+    ok(hr == S_OK, "Failed to free ssa, hr %#x.\n", hr);
+}
+
 static void init_tests(void)
 {
     HMODULE module = GetModuleHandleA("usp10.dll");
@@ -4049,6 +4139,7 @@ START_TEST(usp10)
     test_ScriptXtoX();
     test_ScriptString(hdc);
     test_ScriptStringXtoCP_CPtoX(hdc);
+    test_ScriptString_pSize(hdc);
 
     test_ScriptLayout();
     test_digit_substitution();

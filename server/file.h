@@ -62,6 +62,8 @@ struct fd_ops
     int (*write)(struct fd *, struct async *, file_pos_t );
     /* flush the object buffers */
     int (*flush)(struct fd *, struct async *);
+    /* query volume info */
+    void (*get_volume_info)( struct fd *, unsigned int );
     /* perform an ioctl on the file */
     int (*ioctl)(struct fd *fd, ioctl_code_t code, struct async *async );
     /* queue an async operation */
@@ -108,6 +110,7 @@ extern void fd_reselect_async( struct fd *fd, struct async_queue *queue );
 extern int no_fd_read( struct fd *fd, struct async *async, file_pos_t pos );
 extern int no_fd_write( struct fd *fd, struct async *async, file_pos_t pos );
 extern int no_fd_flush( struct fd *fd, struct async *async );
+extern void no_fd_get_volume_info( struct fd *fd, unsigned int info_class );
 extern int no_fd_ioctl( struct fd *fd, ioctl_code_t code, struct async *async );
 extern int default_fd_ioctl( struct fd *fd, ioctl_code_t code, struct async *async );
 extern void no_fd_queue_async( struct fd *fd, struct async *async, int type, int count );
@@ -146,8 +149,8 @@ extern mode_t sd_to_mode( const struct security_descriptor *sd, const SID *owner
 
 extern struct mapping *get_mapping_obj( struct process *process, obj_handle_t handle,
                                         unsigned int access );
-extern obj_handle_t open_mapping_file( struct process *process, client_ptr_t base,
-                                       unsigned int access, unsigned int sharing );
+extern struct file *get_mapping_file( struct process *process, client_ptr_t base,
+                                      unsigned int access, unsigned int sharing );
 extern void free_mapped_views( struct process *process );
 extern int get_page_size(void);
 

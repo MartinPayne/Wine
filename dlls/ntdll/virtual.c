@@ -32,6 +32,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#ifdef HAVE_SYS_SOCKET_H
+# include <sys/socket.h>
+#endif
 #ifdef HAVE_SYS_STAT_H
 # include <sys/stat.h>
 #endif
@@ -1593,6 +1596,9 @@ void virtual_init(void)
         {
             preload_reserve_start = (void *)start;
             preload_reserve_end = (void *)end;
+            /* some apps start inside the DOS area */
+            if (preload_reserve_start)
+                address_space_start = min( address_space_start, preload_reserve_start );
         }
     }
 
@@ -1901,6 +1907,36 @@ ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset )
     return ret;
 }
 
+
+/***********************************************************************
+ *           __wine_locked_recvmsg
+ */
+ssize_t CDECL __wine_locked_recvmsg( int fd, struct msghdr *hdr, int flags )
+{
+    sigset_t sigset;
+    size_t i;
+    BOOL has_write_watch = FALSE;
+    int err = EFAULT;
+
+    ssize_t ret = recvmsg( fd, hdr, flags );
+    if (ret != -1 || errno != EFAULT) return ret;
+
+    server_enter_uninterrupted_section( &csVirtual, &sigset );
+    for (i = 0; i < hdr->msg_iovlen; i++)
+        if (check_write_access( hdr->msg_iov[i].iov_base, hdr->msg_iov[i].iov_len, &has_write_watch ))
+            break;
+    if (i == hdr->msg_iovlen)
+    {
+        ret = recvmsg( fd, hdr, flags );
+        err = errno;
+    }
+    if (has_write_watch)
+        while (i--) update_write_watches( hdr->msg_iov[i].iov_base, hdr->msg_iov[i].iov_len, 0 );
+
+    server_leave_uninterrupted_section( &csVirtual, &sigset );
+    errno = err;
+    return ret;
+}
 
 
 /***********************************************************************
@@ -3038,13 +3074,18 @@ NTSTATUS WINAPI NtUnmapViewOfSection( HANDLE process, PVOID addr )
     server_enter_uninterrupted_section( &csVirtual, &sigset );
     if ((view = VIRTUAL_FindView( addr, 0 )) && !is_view_valloc( view ))
     {
-        SERVER_START_REQ( unmap_view )
+        if (!(view->protect & VPROT_SYSTEM))
         {
-            req->base = wine_server_client_ptr( view->base );
-            status = wine_server_call( req );
+            SERVER_START_REQ( unmap_view )
+            {
+                req->base = wine_server_client_ptr( view->base );
+                status = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+            if (!status) delete_view( view );
+            else FIXME( "failed to unmap %p %x\n", view->base, status );
         }
-        SERVER_END_REQ;
-        if (!status) delete_view( view );
+        else delete_view( view );
     }
     server_leave_uninterrupted_section( &csVirtual, &sigset );
     return status;

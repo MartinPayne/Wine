@@ -121,6 +121,7 @@ extern GpStatus METAFILE_DrawImagePointsRect(GpMetafile* metafile, GpImage *imag
 extern GpStatus METAFILE_AddSimpleProperty(GpMetafile *metafile, SHORT prop, SHORT val) DECLSPEC_HIDDEN;
 extern GpStatus METAFILE_DrawPath(GpMetafile *metafile, GpPen *pen, GpPath *path) DECLSPEC_HIDDEN;
 extern GpStatus METAFILE_FillPath(GpMetafile *metafile, GpBrush *brush, GpPath *path) DECLSPEC_HIDDEN;
+extern void METAFILE_Free(GpMetafile *metafile) DECLSPEC_HIDDEN;
 
 extern void calc_curve_bezier(const GpPointF *pts, REAL tension, REAL *x1,
     REAL *y1, REAL *x2, REAL *y2) DECLSPEC_HIDDEN;
@@ -262,6 +263,7 @@ struct GpGraphics{
     INT origin_x, origin_y;
     INT gdi_transform_acquire_count, gdi_transform_save;
     GpMatrix gdi_transform;
+    HRGN gdi_clip;
     /* For giving the caller an HDC when we technically can't: */
     HBITMAP temp_hbitmap;
     int temp_hbitmap_width;
@@ -370,6 +372,33 @@ struct GpImage{
     LONG busy;
 };
 
+#define EmfPlusObjectTableSize 64
+
+typedef enum EmfPlusObjectType
+{
+    ObjectTypeInvalid,
+    ObjectTypeBrush,
+    ObjectTypePen,
+    ObjectTypePath,
+    ObjectTypeRegion,
+    ObjectTypeImage,
+    ObjectTypeFont,
+    ObjectTypeStringFormat,
+    ObjectTypeImageAttributes,
+    ObjectTypeCustomLineCap,
+    ObjectTypeMax = ObjectTypeCustomLineCap,
+} EmfPlusObjectType;
+
+/* Deserialized EmfPlusObject record. */
+struct emfplus_object {
+    EmfPlusObjectType type;
+    union {
+        GpBrush *brush;
+        GpImageAttributes *image_attributes;
+        void *object;
+    } u;
+};
+
 struct GpMetafile{
     GpImage image;
     GpRectF bounds;
@@ -403,6 +432,7 @@ struct GpMetafile{
     GpRegion *base_clip; /* clip region in device space for all metafile output */
     GpRegion *clip; /* clip region within the metafile */
     struct list containers;
+    struct emfplus_object objtable[EmfPlusObjectTableSize];
 };
 
 struct GpBitmap{

@@ -50,7 +50,6 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 #include "wine/wgl.h"
 #include "wine/wgl_driver.h"
-#include "wine/wglext.h"
 
 typedef struct __GLXcontextRec *GLXContext;
 typedef struct __GLXFBConfigRec *GLXFBConfig;
@@ -1841,7 +1840,7 @@ static struct wgl_context *glxdrv_wglCreateContext( HDC hdc )
 /***********************************************************************
  *		glxdrv_wglDeleteContext
  */
-static void glxdrv_wglDeleteContext(struct wgl_context *ctx)
+static BOOL glxdrv_wglDeleteContext(struct wgl_context *ctx)
 {
     struct wgl_pbuffer *pb;
 
@@ -1860,7 +1859,7 @@ static void glxdrv_wglDeleteContext(struct wgl_context *ctx)
 
     if (ctx->ctx) pglXDestroyContext( gdi_display, ctx->ctx );
     if (ctx->vis) XFree( ctx->vis );
-    HeapFree( GetProcessHeap(), 0, ctx );
+    return HeapFree( GetProcessHeap(), 0, ctx );
 }
 
 /***********************************************************************

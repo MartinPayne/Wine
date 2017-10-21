@@ -669,7 +669,7 @@
 # @ stub RtlGetSecurityDescriptorRMControl
 # @ stub RtlGetSetBootStatusData
 @ stdcall RtlGetThreadErrorMode()
-# @ stub RtlGetUnloadEventTrace
+@ stdcall RtlGetUnloadEventTrace()
 @ stub RtlGetUserInfoHeap
 @ stdcall RtlGetVersion(ptr)
 @ stub RtlGuidToPropertySetName
@@ -1479,6 +1479,9 @@
 @ cdecl wine_server_release_fd(long long)
 @ cdecl wine_server_send_fd(long)
 @ cdecl __wine_make_process_system()
+
+# Virtual memory
+@ cdecl __wine_locked_recvmsg(long ptr long)
 
 # Version
 @ cdecl wine_get_version() NTDLL_wine_get_version

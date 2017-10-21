@@ -157,7 +157,7 @@
 @ cdecl __stdio_common_vsnprintf_s(int64 ptr long long str ptr ptr) MSVCRT__stdio_common_vsnprintf_s
 @ cdecl __stdio_common_vsnwprintf_s(int64 ptr long long wstr ptr ptr) MSVCRT__stdio_common_vsnwprintf_s
 @ cdecl __stdio_common_vsprintf(int64 ptr long str ptr ptr) MSVCRT__stdio_common_vsprintf
-@ stub __stdio_common_vsprintf_p
+@ cdecl __stdio_common_vsprintf_p(int64 ptr long str ptr ptr) MSVCRT__stdio_common_vsprintf_p
 @ cdecl __stdio_common_vsprintf_s(int64 ptr long str ptr ptr) MSVCRT__stdio_common_vsprintf_s
 @ cdecl __stdio_common_vsscanf(int64 ptr long str ptr ptr) MSVCRT__stdio_common_vsscanf
 @ cdecl __stdio_common_vswprintf(int64 ptr long wstr ptr ptr) MSVCRT__stdio_common_vswprintf
@@ -586,10 +586,10 @@
 @ cdecl _mbbtype(long long)
 @ stub _mbbtype_l
 @ stub _mbcasemap
-@ cdecl _mbccpy(ptr str)
-@ stub _mbccpy_l
-@ stub _mbccpy_s
-@ stub _mbccpy_s_l
+@ cdecl _mbccpy(ptr ptr)
+@ cdecl _mbccpy_l(ptr ptr ptr)
+@ cdecl _mbccpy_s(ptr long ptr ptr)
+@ cdecl _mbccpy_s_l(ptr long ptr ptr ptr)
 @ cdecl _mbcjistojms(long)
 @ stub _mbcjistojms_l
 @ cdecl _mbcjmstojis(long)
@@ -631,7 +631,7 @@
 @ cdecl _mbsinc(str)
 @ stub _mbsinc_l
 @ cdecl _mbslen(str)
-@ stub _mbslen_l
+@ cdecl _mbslen_l(str ptr)
 @ cdecl _mbslwr(str)
 @ stub _mbslwr_l
 @ cdecl _mbslwr_s(str long)
@@ -680,8 +680,8 @@
 @ stub _mbsnicoll_l
 @ cdecl _mbsninc(str long)
 @ stub _mbsninc_l
-@ stub _mbsnlen
-@ stub _mbsnlen_l
+@ cdecl _mbsnlen(str long)
+@ cdecl _mbsnlen_l(str long ptr)
 @ cdecl _mbsnset(ptr long long)
 @ stub _mbsnset_l
 @ stub _mbsnset_s

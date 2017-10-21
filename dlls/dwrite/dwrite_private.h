@@ -210,6 +210,7 @@ extern HRESULT create_gdiinterop(IDWriteFactory5*,IDWriteGdiInterop1**) DECLSPEC
 extern void fontface_detach_from_cache(IDWriteFontFace4*) DECLSPEC_HIDDEN;
 extern void factory_lock(IDWriteFactory5*) DECLSPEC_HIDDEN;
 extern void factory_unlock(IDWriteFactory5*) DECLSPEC_HIDDEN;
+extern HRESULT create_inmemory_fileloader(IDWriteFontFileLoader**) DECLSPEC_HIDDEN;
 
 /* Opentype font table functions */
 struct dwrite_font_props {
@@ -242,6 +243,7 @@ extern UINT32 opentype_get_cpal_paletteentrycount(const void*) DECLSPEC_HIDDEN;
 extern HRESULT opentype_get_cpal_entries(const void*,UINT32,UINT32,UINT32,DWRITE_COLOR_F*) DECLSPEC_HIDDEN;
 extern BOOL opentype_has_vertical_variants(IDWriteFontFace4*) DECLSPEC_HIDDEN;
 extern UINT32 opentype_get_glyph_image_formats(IDWriteFontFace4*) DECLSPEC_HIDDEN;
+extern DWRITE_CONTAINER_TYPE opentype_analyze_container_type(void const *, UINT32) DECLSPEC_HIDDEN;
 
 struct dwrite_colorglyph {
     USHORT layer; /* [0, num_layers) index indicating current layer */
