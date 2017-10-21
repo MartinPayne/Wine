@@ -462,6 +462,60 @@ static void free_module_icons( HINSTANCE16 inst )
     }
 }
 
+/* Old Windows 1.x / 2.x bitmap */
+struct old_win16_bitmap
+{
+    BYTE type;         /* 2 = bitmap */
+    BYTE format;       /* 0 = non-discardable, 0x80 = discardable */
+    WORD unused1;      /* Unused / unknown */
+    WORD width;        /* Width in pixels */
+    WORD height;       /* Height in pixels */
+    WORD widthBytes;   /* Width in bytes */
+    BYTE planes;       /* Number of color planes */
+    BYTE bitsPerPixel; /* Bits per pixel */
+    DWORD unused2;     /* Unused / unknown */
+    BYTE bits[];       /* Bitmap bits */
+};
+
+/* Load an old Windows 1.x / 2.x bitmap */
+static HBITMAP16 load_old_bitmap(HMODULE16 hModule, LPCSTR name)
+{
+    HRSRC16 hRsrc;
+    DWORD resSize;
+    HGLOBAL16 hmem;
+    struct old_win16_bitmap* bmp;
+    HBITMAP16 hBitmap = 0;
+
+    /* Find and load the bitmap resource */
+    hRsrc = FindResource16(hModule, name, MAKEINTRESOURCEA(RT_BITMAP));
+
+    if (!hRsrc)
+        return 0;
+
+    hmem = LoadResource16(hModule, hRsrc);
+
+    if (!hmem)
+        return 0;
+
+    bmp = (struct old_win16_bitmap*)LockResource16(hmem);
+
+    resSize = SizeofResource16(hModule, hRsrc);
+
+    /* Ensure resource is at least as large as old_win16_bitmap struct */
+    if (resSize >= sizeof(struct old_win16_bitmap))
+    {
+        DWORD expectedSize = sizeof(struct old_win16_bitmap) + (bmp->height * bmp->widthBytes);
+
+        /* Load the bitmap if type is 2 and size is correct */
+        if ((bmp->type == 2) && (resSize == expectedSize))
+            hBitmap = HBITMAP_16(CreateBitmap(bmp->width, bmp->height, bmp->planes, bmp->bitsPerPixel, bmp->bits));
+    }
+
+    FreeResource16(hmem);
+
+    return hBitmap;
+}
+
 /**********************************************************************
  * Management of the 16-bit clipboard formats
  */
@@ -2150,6 +2204,10 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
         BITMAPFILEHEADER header;
         WCHAR path[MAX_PATH], filename[MAX_PATH];
         HANDLE file;
+
+        /** Windows 1.x and 2.x have a different bitmap resource type */
+        if (GetExeVersion16() < 0x0300)
+            return load_old_bitmap( hinst, name );
 
         filename[0] = 0;
         if (!(hRsrc = FindResource16( hinst, name, (LPCSTR)RT_BITMAP ))) return 0;
