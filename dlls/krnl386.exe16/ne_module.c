@@ -602,7 +602,8 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
      * (only fail for OS/2 ne_exetyp 0x01 here?) */
     if ((ne_header->ne_exetyp != 0x02 /* Windows */)
         && (ne_header->ne_exetyp != 0x04 /* Windows 386 */)
-        && (ne_header->ne_exetyp != 0x00 /* Unknown - possible early 1.x or 2.x app */))
+        && (ne_header->ne_exetyp != 0x00 /* Unknown - possible early 1.x or 2.x app */)
+        && (ne_header->ne_exetyp != 0xC4 /* Very early Windows app */))
         return ERROR_BAD_FORMAT;
 
     size = sizeof(NE_MODULE) +
