@@ -501,13 +501,20 @@ static HBITMAP16 load_old_bitmap(HMODULE16 hModule, LPCSTR name)
 
     resSize = SizeofResource16(hModule, hRsrc);
 
-    /* Ensure resource is at least as large as old_win16_bitmap struct */
-    if (resSize >= sizeof(struct old_win16_bitmap))
+    /* Ensure resource is at least as large as old_win16_bitmap struct and has type 2 (bitmap) */
+    if ((resSize >= sizeof(struct old_win16_bitmap)) && (bmp->type == 2))
     {
-        DWORD expectedSize = sizeof(struct old_win16_bitmap) + (bmp->height * bmp->widthBytes);
+        DWORD widthBytes;
+        DWORD expectedSize;
 
-        /* Load the bitmap if type is 2 and size is correct */
-        if ((bmp->type == 2) && (resSize == expectedSize))
+        /* Calculate the width in bytes as the one in the struct can be unreliable. The width in bytes must be even
+           (i.e. data is WORD aligned). */
+        widthBytes = (((bmp->width * bmp->bitsPerPixel) + 15) >> 3) & ~1;
+
+        expectedSize = sizeof(struct old_win16_bitmap) + (bmp->height * widthBytes * bmp->planes);
+
+        /* Load the bitmap if size is correct */
+        if (resSize >= expectedSize)
             hBitmap = HBITMAP_16(CreateBitmap(bmp->width, bmp->height, bmp->planes, bmp->bitsPerPixel, bmp->bits));
     }
 
@@ -2205,7 +2212,7 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
         WCHAR path[MAX_PATH], filename[MAX_PATH];
         HANDLE file;
 
-        /** Windows 1.x and 2.x have a different bitmap resource type */
+        /* Windows 1.x and 2.x have a different bitmap resource type */
         if (GetExeVersion16() < 0x0300)
             return load_old_bitmap( hinst, name );
 
