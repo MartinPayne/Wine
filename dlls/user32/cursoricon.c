@@ -1091,6 +1091,134 @@ static void riff_find_chunk( DWORD chunk_id, DWORD chunk_type, const riff_chunk_
 }
 
 
+/* Old Windows 1.x / 2.x icon or cursor */
+struct old_win16_iconinfo
+{
+    BYTE type;       /* 1 = icon, 3 = cursor */
+    BYTE format;     /* 0 = device idependent, 1 = device dependent, 2 = both */
+    WORD hotSpotX;   /* Cursor hotspot horizontal */
+    WORD hotSpotY;   /* Cursor hotspot vertical */
+    WORD width;      /* Width in pixels */
+    WORD height;     /* Height in pixels */
+    WORD widthBytes; /* Width in bytes */
+    WORD unused;     /* Unused */
+    BYTE bits[];     /* Byte array of AND bits followed by XOR bits */
+};
+
+
+/* Load a Windows 1.x / 2.x style icon or cursor */
+static HICON CURSORICON_CreateIconV2(LPBYTE bits, UINT cbSize, BOOL bIcon, INT width, INT height)
+{
+    struct old_win16_iconinfo* oldIconInfo = (struct old_win16_iconinfo*)bits;
+    WORD widthBytes;
+    DWORD bitmaskSize;
+    POINT hotspot;
+    HBITMAP bitmapMask;
+    ICONINFO iconInfo;
+    HICON icon;
+
+    /* Ensure buffer size is at least the size of old_win16_iconinfo struct */
+    if (cbSize < sizeof(struct old_win16_iconinfo))
+        return 0;
+
+    /* Calculate the width in bytes as the one in the struct can be unreliable. The width in bytes must be even (i.e.
+       data is WORD aligned). */
+    widthBytes = ((oldIconInfo->width + 15) >> 3) & ~1;
+
+    /* Total number of bytes in the AND and XOR bits */
+    bitmaskSize = oldIconInfo->height * widthBytes * 2;
+
+    /* Ensure buffer size is at least as large as the icon claims to be */
+    if (cbSize < (sizeof(struct old_win16_iconinfo) + bitmaskSize))
+        return 0;
+
+    /* Validate cursor / icon type and determine hotspot */
+    if (bIcon)
+    {
+        /* Ensure image type is correct for an icon */
+        if (oldIconInfo->type != 1)
+            return 0;
+
+        /* Use centre of icon as hotspot */
+        hotspot.x = width / 2;
+        hotspot.y = height / 2;
+    }
+    else
+    {
+        /* Ensure image type is correct for a cursor */
+        if (oldIconInfo->type != 3)
+            return 0;
+
+        /* Set cursor hotspot */
+        hotspot.x = oldIconInfo->hotSpotX;
+        hotspot.y = oldIconInfo->hotSpotY;
+
+        /* Scale hotspot if cursor is being resized */
+        if (oldIconInfo->width != width)
+            hotspot.x = (hotspot.x * width) / oldIconInfo->width;
+
+        if (oldIconInfo->height != height)
+            hotspot.y = (hotspot.y * height) / oldIconInfo->height;
+    }
+
+    /* Create a bitmap from the AND and XOR bitmasks. The bitmasks are stacked in a single bitmap, so the height must be
+       twice the height of the icon. */
+    bitmapMask = CreateBitmap(oldIconInfo->width, oldIconInfo->height * 2, 1, 1, oldIconInfo->bits);
+
+    if (!bitmapMask)
+        return 0;
+
+    /* Resize the bitmap if it isn't the requested size */
+    if ((oldIconInfo->width != width) || (oldIconInfo->height != height))
+    {
+        HDC hdcSrc;
+        HDC hdcDst;
+        HBITMAP bitmapResized;
+
+        /* Bitmap for the resized image */
+        bitmapResized = CreateBitmap(width, height * 2, 1, 1, NULL);
+
+        /* Free the original bitmap if the resized one couldn't be created */
+        if (!bitmapResized)
+        {
+            DeleteObject(bitmapMask);
+            return 0;
+        }
+
+        /* StretchBlt the bitmap in a memory DC */
+        hdcSrc = CreateCompatibleDC(NULL);
+        hdcDst = CreateCompatibleDC(NULL);
+
+        SelectObject(hdcSrc, bitmapMask);
+        SelectObject(hdcDst, bitmapResized);
+
+        StretchBlt(hdcDst, 0, 0, width, height * 2,
+                   hdcSrc, 0, 0, oldIconInfo->width, oldIconInfo->height * 2, SRCCOPY);
+
+        DeleteDC(hdcSrc);
+        DeleteDC(hdcDst);
+
+        /* Delete original mask and swap in the resized one */
+        DeleteObject(bitmapMask);
+        bitmapMask = bitmapResized;
+    }
+
+    /* Create the new style icon from the old icon information */
+    iconInfo.fIcon = bIcon & TRUE;
+    iconInfo.xHotspot = hotspot.x;
+    iconInfo.yHotspot = hotspot.y;
+    iconInfo.hbmMask = bitmapMask;
+    iconInfo.hbmColor = NULL;
+
+    icon = CreateIconIndirect(&iconInfo);
+
+    /* Delete the bitmap mask */
+    DeleteObject(iconInfo.hbmMask);
+
+    return icon;
+}
+
+
 /*
  * .ANI layout:
  *
@@ -1310,8 +1438,21 @@ HICON WINAPI CreateIconFromResourceEx( LPBYTE bits, UINT cbSize,
 
     if (dwVersion == 0x00020000)
     {
-        FIXME_(cursor)("\t2.xx resources are not supported\n");
-        return 0;
+        INT cxDesired;
+        INT cyDesired;
+
+        /* If width or height are 0, use the default icon or cursor size */
+        if (width == 0)
+            cxDesired = GetSystemMetrics((bIcon) ? SM_CXICON : SM_CXCURSOR);
+        else
+            cxDesired = width;
+
+        if (height == 0)
+            cyDesired = GetSystemMetrics((bIcon) ? SM_CYICON : SM_CYCURSOR);
+        else
+            cyDesired = height;
+
+        return CURSORICON_CreateIconV2( bits, cbSize, bIcon, cxDesired, cyDesired );
     }
 
     /* Check if the resource is an animated icon/cursor */

@@ -2252,27 +2252,43 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
     {
         HICON16 hIcon = 0;
         BYTE *dir, *bits;
-        INT id = 0;
+        DWORD iconVersion;
 
-        if (!(hRsrc = FindResource16( hinst, name,
-                                      (LPCSTR)(type == IMAGE_ICON ? RT_GROUP_ICON : RT_GROUP_CURSOR ))))
-            return 0;
-        hGroupRsrc = hRsrc;
+        /* Windows 3.x and later use an icon directory containing multiple icons, whereas Windows 1.x / 2.x use a single
+           icon resource. */
+        if (GetExeVersion16() >= 0x0300)
+        {
+            INT id = 0;
 
-        if (!(handle = LoadResource16( hinst, hRsrc ))) return 0;
-        if ((dir = LockResource16( handle ))) id = LookupIconIdFromDirectory( dir, type == IMAGE_ICON );
-        FreeResource16( handle );
-        if (!id) return 0;
+            if (!(hRsrc = FindResource16( hinst, name,
+                                          (LPCSTR)(type == IMAGE_ICON ? RT_GROUP_ICON : RT_GROUP_CURSOR ))))
+                return 0;
+            hGroupRsrc = hRsrc;
 
-        if (!(hRsrc = FindResource16( hinst, MAKEINTRESOURCEA(id),
-                                      (LPCSTR)(type == IMAGE_ICON ? RT_ICON : RT_CURSOR) ))) return 0;
+            if (!(handle = LoadResource16( hinst, hRsrc ))) return 0;
+            if ((dir = LockResource16( handle ))) id = LookupIconIdFromDirectory( dir, type == IMAGE_ICON );
+            FreeResource16( handle );
+            if (!id) return 0;
+
+            if (!(hRsrc = FindResource16( hinst, MAKEINTRESOURCEA(id),
+                                          (LPCSTR)(type == IMAGE_ICON ? RT_ICON : RT_CURSOR) ))) return 0;
+            iconVersion = 0x00030000;
+        }
+        else
+        {
+            if (!(hRsrc = FindResource16( hinst, name,
+                                          (LPCSTR)(type == IMAGE_ICON ? RT_ICON : RT_CURSOR) ))) return 0;
+            hGroupRsrc = hRsrc;
+            iconVersion = 0x00020000;
+        }
 
         if ((flags & LR_SHARED) && (hIcon = find_shared_icon( hinst, hRsrc ) ) != 0) return hIcon;
 
         if (!(handle = LoadResource16( hinst, hRsrc ))) return 0;
         bits = LockResource16( handle );
         size = SizeofResource16( hinst, hRsrc );
-        hIcon = CreateIconFromResourceEx16( bits, size, type == IMAGE_ICON, 0x00030000, cx, cy, flags );
+
+        hIcon = CreateIconFromResourceEx16( bits, size, type == IMAGE_ICON, iconVersion, cx, cy, flags );
         FreeResource16( handle );
 
         if (hIcon && (flags & LR_SHARED)) add_shared_icon( hinst, hRsrc, hGroupRsrc, hIcon );
