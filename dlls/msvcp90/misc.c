@@ -362,6 +362,7 @@ void __thiscall _Container_base12__Swap_all(
 #define TICKS_1601_TO_1970 (SECS_1601_TO_1970 * TICKSPERSEC)
 #define NANOSEC_PER_MILLISEC 1000000
 #define MILLISEC_PER_SEC 1000
+#define NANOSEC_PER_SEC (NANOSEC_PER_MILLISEC * MILLISEC_PER_SEC)
 
 typedef int MSVCRT_long;
 
@@ -401,16 +402,24 @@ int __cdecl xtime_get(xtime* t, int unknown)
 /* _Xtime_diff_to_millis2 */
 MSVCRT_long __cdecl _Xtime_diff_to_millis2(const xtime *t1, const xtime *t2)
 {
-    __time64_t diff_sec;
-    MSVCRT_long diff_nsec, ret;
+    LONGLONG diff_sec, diff_nsec;
 
     TRACE("(%p, %p)\n", t1, t2);
 
     diff_sec = t1->sec - t2->sec;
     diff_nsec = t1->nsec - t2->nsec;
-    ret = diff_sec * MILLISEC_PER_SEC +
-            (diff_nsec + NANOSEC_PER_MILLISEC - 1) / NANOSEC_PER_MILLISEC;
-    return ret > 0 ? ret : 0;
+
+    diff_sec += diff_nsec / NANOSEC_PER_SEC;
+    diff_nsec %= NANOSEC_PER_SEC;
+    if (diff_nsec < 0) {
+        diff_sec -= 1;
+        diff_nsec += NANOSEC_PER_SEC;
+    }
+
+    if (diff_sec<0 || (diff_sec==0 && diff_nsec<0))
+        return 0;
+    return diff_sec * MILLISEC_PER_SEC +
+        (diff_nsec + NANOSEC_PER_MILLISEC - 1) / NANOSEC_PER_MILLISEC;
 }
 
 /* _Xtime_diff_to_millis */
@@ -1692,5 +1701,25 @@ MSVCP_size_t __cdecl _vector_base_v4__Segment_index_of(MSVCP_size_t x)
         return log2i(half) + 32;
 
     return log2i(x);
+}
+
+/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IBEXI@Z */
+/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IEBAX_K@Z */
+DEFINE_THISCALL_WRAPPER(_vector_base_v4__Internal_throw_exception, 8)
+void __thiscall _vector_base_v4__Internal_throw_exception(void/*_vector_base_v4*/ *this, MSVCP_size_t idx)
+{
+    static const struct {
+        exception_type type;
+        const char *msg;
+    } exceptions[] = {
+        { EXCEPTION_OUT_OF_RANGE, "Index out of range" },
+        { EXCEPTION_OUT_OF_RANGE, "Index out of segments table range" },
+        { EXCEPTION_RANGE_ERROR,  "Index is inside segment which failed to be allocated" },
+    };
+
+    TRACE("(%p %lu)\n", this, idx);
+
+    if(idx < sizeof(exceptions)/sizeof(exceptions[0]))
+        throw_exception(exceptions[idx].type, exceptions[idx].msg);
 }
 #endif

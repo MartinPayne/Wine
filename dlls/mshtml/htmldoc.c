@@ -2679,7 +2679,7 @@ static HRESULT WINAPI HTMLDocument4_fireEvent(IHTMLDocument4 *iface, BSTR bstrEv
 
     TRACE("(%p)->(%s %p %p)\n", This, debugstr_w(bstrEventName), pvarEventObject, pfCanceled);
 
-    return dispatch_event(&This->doc_node->node, bstrEventName, pvarEventObject, pfCanceled);
+    return fire_event(&This->doc_node->node, bstrEventName, pvarEventObject, pfCanceled);
 }
 
 static HRESULT WINAPI HTMLDocument4_createRenderStyle(IHTMLDocument4 *iface, BSTR v,
@@ -4355,8 +4355,10 @@ static HRESULT WINAPI DocumentEvent_Invoke(IDocumentEvent *iface, DISPID dispIdM
 static HRESULT WINAPI DocumentEvent_createEvent(IDocumentEvent *iface, BSTR eventType, IDOMEvent **p)
 {
     HTMLDocument *This = impl_from_IDocumentEvent(iface);
-    FIXME("(%p)->(%s %p)\n", This, debugstr_w(eventType), p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_w(eventType), p);
+
+    return create_document_event_str(This->doc_node, eventType, p);
 }
 
 static const IDocumentEventVtbl DocumentEventVtbl = {
@@ -5024,20 +5026,49 @@ static compat_mode_t HTMLDocumentNode_get_compat_mode(DispatchEx *dispex)
     return This->document_mode;
 }
 
-static void HTMLDocumentNode_bind_event(DispatchEx *dispex, int eid)
+static void HTMLDocumentNode_bind_event(DispatchEx *dispex, eventid_t eid)
 {
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
     ensure_doc_nsevent_handler(This, eid);
 }
 
-static const dispex_static_data_vtbl_t HTMLDocumentNode_dispex_vtbl = {
+static EventTarget *HTMLDocumentNode_get_parent_event_target(DispatchEx *dispex)
+{
+    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
+    if(!This->window)
+        return NULL;
+    IHTMLWindow2_AddRef(&This->window->base.IHTMLWindow2_iface);
+    return &This->window->event_target;
+}
+
+static ConnectionPointContainer *HTMLDocumentNode_get_cp_container(DispatchEx *dispex)
+{
+    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
+    ConnectionPointContainer *container = This->basedoc.doc_obj
+        ? &This->basedoc.doc_obj->basedoc.cp_container : &This->basedoc.cp_container;
+    IConnectionPointContainer_AddRef(&container->IConnectionPointContainer_iface);
+    return container;
+}
+
+static IHTMLEventObj *HTMLDocumentNode_set_current_event(DispatchEx *dispex, IHTMLEventObj *event)
+{
+    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
+    return default_set_current_event(This->window, event);
+}
+
+static const event_target_vtbl_t HTMLDocumentNode_event_target_vtbl = {
+    {
+        NULL,
+        NULL,
+        HTMLDocumentNode_invoke,
+        HTMLDocumentNode_get_compat_mode,
+        NULL
+    },
+    HTMLDocumentNode_bind_event,
+    HTMLDocumentNode_get_parent_event_target,
     NULL,
-    NULL,
-    HTMLDocumentNode_invoke,
-    HTMLDocumentNode_get_compat_mode,
-    NULL,
-    NULL,
-    HTMLDocumentNode_bind_event
+    HTMLDocumentNode_get_cp_container,
+    HTMLDocumentNode_set_current_event
 };
 
 static const NodeImplVtbl HTMLDocumentFragmentImplVtbl = {
@@ -5077,7 +5108,7 @@ static void HTMLDocumentNode_init_dispex_info(dispex_data_t *info, compat_mode_t
 }
 
 static dispex_static_data_t HTMLDocumentNode_dispex = {
-    &HTMLDocumentNode_dispex_vtbl,
+    &HTMLDocumentNode_event_target_vtbl.dispex_vtbl,
     DispHTMLDocument_tid,
     HTMLDocumentNode_iface_tids,
     HTMLDocumentNode_init_dispex_info
@@ -5137,7 +5168,6 @@ HRESULT create_doc_from_nsdoc(nsIDOMHTMLDocument *nsdoc, HTMLDocumentObj *doc_ob
     doc_init_events(doc);
 
     doc->node.vtbl = &HTMLDocumentNodeImplVtbl;
-    doc->node.cp_container = &doc->basedoc.cp_container;
 
     *ret = doc;
     return S_OK;
@@ -5155,7 +5185,6 @@ static HRESULT create_document_fragment(nsIDOMNode *nsnode, HTMLDocumentNode *do
 
     HTMLDOMNode_Init(doc_node, &doc_frag->node, nsnode, &HTMLDocumentNode_dispex);
     doc_frag->node.vtbl = &HTMLDocumentFragmentImplVtbl;
-    doc_frag->node.cp_container = &doc_frag->basedoc.cp_container;
 
     *ret = doc_frag;
     return S_OK;

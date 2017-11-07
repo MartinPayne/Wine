@@ -43,6 +43,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdiplus);
 
+HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT, IWICImagingFactory**);
+
 typedef struct EmfPlusARGB
 {
     BYTE Blue;
@@ -197,6 +199,30 @@ enum LineStyle
     LineStyleCustom
 };
 
+typedef struct EmfPlusDashedLineData
+{
+    DWORD DashedLineDataSize;
+    BYTE data[1];
+} EmfPlusDashedLineData;
+
+typedef struct EmfPlusCompoundLineData
+{
+    DWORD CompoundLineDataSize;
+    BYTE data[1];
+} EmfPlusCompoundLineData;
+
+typedef struct EmfPlusCustomStartCapData
+{
+    DWORD CustomStartCapSize;
+    BYTE data[1];
+} EmfPlusCustomStartCapData;
+
+typedef struct EmfPlusCustomEndCapData
+{
+    DWORD CustomEndCapSize;
+    BYTE data[1];
+} EmfPlusCustomEndCapData;
+
 typedef struct EmfPlusPenData
 {
     DWORD PenDataFlags;
@@ -239,12 +265,25 @@ typedef struct EmfPlusPath
     BYTE data[1];
 } EmfPlusPath;
 
+typedef struct EmfPlusRegionNodePath
+{
+    DWORD RegionNodePathLength;
+    EmfPlusPath RegionNodePath;
+} EmfPlusRegionNodePath;
+
 typedef struct EmfPlusRegion
 {
     DWORD Version;
     DWORD RegionNodeCount;
     BYTE RegionNode[1];
 } EmfPlusRegion;
+
+typedef struct EmfPlusPalette
+{
+    DWORD PaletteStyleFlags;
+    DWORD PaletteCount;
+    BYTE PaletteEntries[1];
+} EmfPlusPalette;
 
 typedef enum
 {
@@ -319,6 +358,18 @@ typedef struct EmfPlusRectF
     float Height;
 } EmfPlusRectF;
 
+typedef struct EmfPlusPointR7
+{
+    BYTE X;
+    BYTE Y;
+} EmfPlusPointR7;
+
+typedef struct EmfPlusPoint
+{
+    short X;
+    short Y;
+} EmfPlusPoint;
+
 typedef struct EmfPlusPointF
 {
     float X;
@@ -334,10 +385,10 @@ typedef struct EmfPlusDrawImagePoints
     DWORD count;
     union
     {
-        /*EmfPlusPointR pointR;
-        EmfPlusPoint point;*/
-        EmfPlusPointF pointF;
-    } PointData[3];
+        EmfPlusPointR7 pointsR[3];
+        EmfPlusPoint points[3];
+        EmfPlusPointF pointsF[3];
+    } PointData;
 } EmfPlusDrawImagePoints;
 
 typedef struct EmfPlusDrawPath
@@ -356,6 +407,17 @@ typedef struct EmfPlusFillPath
     } data;
 } EmfPlusFillPath;
 
+typedef struct EmfPlusFont
+{
+    DWORD Version;
+    float EmSize;
+    DWORD SizeUnit;
+    DWORD FontStyleFlags;
+    DWORD Reserved;
+    DWORD Length;
+    WCHAR FamilyName[1];
+} EmfPlusFont;
+
 static void metafile_free_object_table_entry(GpMetafile *metafile, BYTE id)
 {
     struct emfplus_object *object = &metafile->objtable[id];
@@ -366,6 +428,21 @@ static void metafile_free_object_table_entry(GpMetafile *metafile, BYTE id)
         break;
     case ObjectTypeBrush:
         GdipDeleteBrush(object->u.brush);
+        break;
+    case ObjectTypePen:
+        GdipDeletePen(object->u.pen);
+        break;
+    case ObjectTypePath:
+        GdipDeletePath(object->u.path);
+        break;
+    case ObjectTypeRegion:
+        GdipDeleteRegion(object->u.region);
+        break;
+    case ObjectTypeImage:
+        GdipDisposeImage(object->u.image);
+        break;
+    case ObjectTypeFont:
+        GdipDeleteFont(object->u.font);
         break;
     case ObjectTypeImageAttributes:
         GdipDisposeImageAttributes(object->u.image_attributes);
@@ -1446,6 +1523,303 @@ static void metafile_set_object_table_entry(GpMetafile *metafile, BYTE id, BYTE 
     metafile->objtable[id].u.object = object;
 }
 
+static GpStatus metafile_deserialize_image(const BYTE *record_data, UINT data_size, GpImage **image)
+{
+    EmfPlusImage *data = (EmfPlusImage *)record_data;
+    GpStatus status;
+
+    *image = NULL;
+
+    if (data_size < FIELD_OFFSET(EmfPlusImage, ImageData))
+        return InvalidParameter;
+    data_size -= FIELD_OFFSET(EmfPlusImage, ImageData);
+
+    switch (data->Type)
+    {
+    case ImageDataTypeBitmap:
+    {
+        EmfPlusBitmap *bitmapdata = &data->ImageData.bitmap;
+
+        if (data_size <= FIELD_OFFSET(EmfPlusBitmap, BitmapData))
+            return InvalidParameter;
+        data_size -= FIELD_OFFSET(EmfPlusBitmap, BitmapData);
+
+        switch (bitmapdata->Type)
+        {
+        case BitmapDataTypePixel:
+        {
+            ColorPalette *palette;
+            BYTE *scan0;
+
+            if (bitmapdata->PixelFormat & PixelFormatIndexed)
+            {
+                EmfPlusPalette *palette_obj = (EmfPlusPalette *)bitmapdata->BitmapData;
+                UINT palette_size = FIELD_OFFSET(EmfPlusPalette, PaletteEntries);
+
+                if (data_size <= palette_size)
+                    return InvalidParameter;
+                palette_size += palette_obj->PaletteCount * sizeof(EmfPlusARGB);
+
+                if (data_size < palette_size)
+                    return InvalidParameter;
+                data_size -= palette_size;
+
+                palette = (ColorPalette *)bitmapdata->BitmapData;
+                scan0 = (BYTE *)bitmapdata->BitmapData + palette_size;
+            }
+            else
+            {
+                palette = NULL;
+                scan0 = bitmapdata->BitmapData;
+            }
+
+            if (data_size < bitmapdata->Height * bitmapdata->Stride)
+                return InvalidParameter;
+
+            status = GdipCreateBitmapFromScan0(bitmapdata->Width, bitmapdata->Height, bitmapdata->Stride,
+                bitmapdata->PixelFormat, scan0, (GpBitmap **)image);
+            if (status == Ok && palette)
+            {
+                status = GdipSetImagePalette(*image, palette);
+                if (status != Ok)
+                {
+                    GdipDisposeImage(*image);
+                    *image = NULL;
+                }
+            }
+            break;
+        }
+        case BitmapDataTypeCompressed:
+        {
+            IWICImagingFactory *factory;
+            IWICStream *stream;
+            HRESULT hr;
+
+            if (WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory) != S_OK)
+                return GenericError;
+
+            hr = IWICImagingFactory_CreateStream(factory, &stream);
+            IWICImagingFactory_Release(factory);
+            if (hr != S_OK)
+                return GenericError;
+
+            if (IWICStream_InitializeFromMemory(stream, bitmapdata->BitmapData, data_size) == S_OK)
+                status = GdipCreateBitmapFromStream((IStream *)stream, (GpBitmap **)image);
+            else
+                status = GenericError;
+
+            IWICStream_Release(stream);
+            break;
+        }
+        default:
+            WARN("Invalid bitmap type %d.\n", bitmapdata->Type);
+            return InvalidParameter;
+        }
+        break;
+    }
+    default:
+        FIXME("image type %d not supported.\n", data->Type);
+        return NotImplemented;
+    }
+
+    return status;
+}
+
+static GpStatus metafile_deserialize_path(const BYTE *record_data, UINT data_size, GpPath **path)
+{
+    EmfPlusPath *data = (EmfPlusPath *)record_data;
+    GpStatus status;
+    BYTE *types;
+    UINT size;
+    DWORD i;
+
+    *path = NULL;
+
+    if (data_size <= FIELD_OFFSET(EmfPlusPath, data))
+        return InvalidParameter;
+    data_size -= FIELD_OFFSET(EmfPlusPath, data);
+
+    if (data->PathPointFlags & 0x800) /* R */
+    {
+        FIXME("RLE encoded path data is not supported.\n");
+        return NotImplemented;
+    }
+    else
+    {
+        if (data->PathPointFlags & 0x4000) /* C */
+            size = sizeof(EmfPlusPoint);
+        else
+            size = sizeof(EmfPlusPointF);
+        size += sizeof(BYTE); /* EmfPlusPathPointType */
+        size *= data->PathPointCount;
+    }
+
+    if (data_size < size)
+        return InvalidParameter;
+
+    status = GdipCreatePath(FillModeAlternate, path);
+    if (status != Ok)
+        return status;
+
+    (*path)->pathdata.Count = data->PathPointCount;
+    (*path)->pathdata.Points = GdipAlloc(data->PathPointCount * sizeof(*(*path)->pathdata.Points));
+    (*path)->pathdata.Types = GdipAlloc(data->PathPointCount * sizeof(*(*path)->pathdata.Types));
+    (*path)->datalen = (*path)->pathdata.Count;
+
+    if (!(*path)->pathdata.Points || !(*path)->pathdata.Types)
+    {
+        GdipDeletePath(*path);
+        return OutOfMemory;
+    }
+
+    if (data->PathPointFlags & 0x4000) /* C */
+    {
+        EmfPlusPoint *points = (EmfPlusPoint *)data->data;
+        for (i = 0; i < data->PathPointCount; i++)
+        {
+            (*path)->pathdata.Points[i].X = points[i].X;
+            (*path)->pathdata.Points[i].Y = points[i].Y;
+        }
+        types = (BYTE *)(points + i);
+    }
+    else
+    {
+        EmfPlusPointF *points = (EmfPlusPointF *)data->data;
+        memcpy((*path)->pathdata.Points, points, sizeof(*points) * data->PathPointCount);
+        types = (BYTE *)(points + data->PathPointCount);
+    }
+
+    memcpy((*path)->pathdata.Types, types, sizeof(*types) * data->PathPointCount);
+
+    return Ok;
+}
+
+static GpStatus metafile_read_region_node(struct memory_buffer *mbuf, GpRegion *region, region_element *node, UINT *count)
+{
+    const DWORD *type;
+    GpStatus status;
+
+    type = buffer_read(mbuf, sizeof(*type));
+    if (!type) return Ok;
+
+    node->type = *type;
+
+    switch (node->type)
+    {
+    case CombineModeReplace:
+    case CombineModeIntersect:
+    case CombineModeUnion:
+    case CombineModeXor:
+    case CombineModeExclude:
+    case CombineModeComplement:
+    {
+        region_element *left, *right;
+
+        left = heap_alloc_zero(sizeof(*left));
+        if (!left)
+            return OutOfMemory;
+
+        right = heap_alloc_zero(sizeof(*right));
+        if (!right)
+        {
+            heap_free(left);
+            return OutOfMemory;
+        }
+
+        status = metafile_read_region_node(mbuf, region, left, count);
+        if (status == Ok)
+        {
+            status = metafile_read_region_node(mbuf, region, right, count);
+            if (status == Ok)
+            {
+                node->elementdata.combine.left = left;
+                node->elementdata.combine.right = right;
+                region->num_children += 2;
+                return Ok;
+            }
+        }
+
+        heap_free(left);
+        heap_free(right);
+        return status;
+    }
+    case RegionDataRect:
+    {
+        const EmfPlusRectF *rect;
+
+        rect = buffer_read(mbuf, sizeof(*rect));
+        if (!rect)
+            return InvalidParameter;
+
+        memcpy(&node->elementdata.rect, rect, sizeof(*rect));
+        *count += 1;
+        return Ok;
+    }
+    case RegionDataPath:
+    {
+        const BYTE *path_data;
+        const UINT *data_size;
+        GpPath *path;
+
+        data_size = buffer_read(mbuf, FIELD_OFFSET(EmfPlusRegionNodePath, RegionNodePath));
+        if (!data_size)
+            return InvalidParameter;
+
+        path_data = buffer_read(mbuf, *data_size);
+        if (!path_data)
+            return InvalidParameter;
+
+        status = metafile_deserialize_path(path_data, *data_size, &path);
+        if (status == Ok)
+        {
+            node->elementdata.path = path;
+            *count += 1;
+        }
+        return Ok;
+    }
+    case RegionDataEmptyRect:
+    case RegionDataInfiniteRect:
+        *count += 1;
+        return Ok;
+    default:
+        FIXME("element type %#x is not supported\n", *type);
+        break;
+    }
+
+    return InvalidParameter;
+}
+
+static GpStatus metafile_deserialize_region(const BYTE *record_data, UINT data_size, GpRegion **region)
+{
+    struct memory_buffer mbuf;
+    GpStatus status;
+    UINT count;
+
+    *region = NULL;
+
+    init_memory_buffer(&mbuf, record_data, data_size);
+
+    if (!buffer_read(&mbuf, FIELD_OFFSET(EmfPlusRegion, RegionNode)))
+        return InvalidParameter;
+
+    status = GdipCreateRegion(region);
+    if (status != Ok)
+        return status;
+
+    count = 0;
+    status = metafile_read_region_node(&mbuf, *region, &(*region)->node, &count);
+    if (status == Ok && !count)
+        status = InvalidParameter;
+
+    if (status != Ok)
+    {
+        GdipDeleteRegion(*region);
+        *region = NULL;
+    }
+
+    return status;
+}
+
 static GpStatus metafile_deserialize_brush(const BYTE *record_data, UINT data_size, GpBrush **brush)
 {
     static const UINT header_size = FIELD_OFFSET(EmfPlusBrush, BrushData);
@@ -1473,6 +1847,93 @@ static GpStatus metafile_deserialize_brush(const BYTE *record_data, UINT data_si
     return status;
 }
 
+static GpStatus metafile_get_pen_brush_data_offset(EmfPlusPen *data, UINT data_size, DWORD *ret)
+{
+    EmfPlusPenData *pendata = (EmfPlusPenData *)data->data;
+    DWORD offset = FIELD_OFFSET(EmfPlusPen, data);
+
+    if (data_size <= offset)
+        return InvalidParameter;
+
+    offset += FIELD_OFFSET(EmfPlusPenData, OptionalData);
+    if (data_size <= offset)
+        return InvalidParameter;
+
+    if (pendata->PenDataFlags & PenDataTransform)
+        offset += sizeof(EmfPlusTransformMatrix);
+
+    if (pendata->PenDataFlags & PenDataStartCap)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataEndCap)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataJoin)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataMiterLimit)
+        offset += sizeof(REAL);
+
+    if (pendata->PenDataFlags & PenDataLineStyle)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataDashedLineCap)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataDashedLineOffset)
+        offset += sizeof(REAL);
+
+    if (pendata->PenDataFlags & PenDataDashedLine)
+    {
+        EmfPlusDashedLineData *dashedline = (EmfPlusDashedLineData *)((BYTE *)data + offset);
+
+        offset += FIELD_OFFSET(EmfPlusDashedLineData, data);
+        if (data_size <= offset)
+            return InvalidParameter;
+
+        offset += dashedline->DashedLineDataSize * sizeof(float);
+    }
+
+    if (pendata->PenDataFlags & PenDataNonCenter)
+        offset += sizeof(DWORD);
+
+    if (pendata->PenDataFlags & PenDataCompoundLine)
+    {
+        EmfPlusCompoundLineData *compoundline = (EmfPlusCompoundLineData *)((BYTE *)data + offset);
+
+        offset += FIELD_OFFSET(EmfPlusCompoundLineData, data);
+        if (data_size <= offset)
+            return InvalidParameter;
+
+        offset += compoundline->CompoundLineDataSize * sizeof(float);
+    }
+
+    if (pendata->PenDataFlags & PenDataCustomStartCap)
+    {
+        EmfPlusCustomStartCapData *startcap = (EmfPlusCustomStartCapData *)((BYTE *)data + offset);
+
+        offset += FIELD_OFFSET(EmfPlusCustomStartCapData, data);
+        if (data_size <= offset)
+            return InvalidParameter;
+
+        offset += startcap->CustomStartCapSize;
+    }
+
+    if (pendata->PenDataFlags & PenDataCustomEndCap)
+    {
+        EmfPlusCustomEndCapData *endcap = (EmfPlusCustomEndCapData *)((BYTE *)data + offset);
+
+        offset += FIELD_OFFSET(EmfPlusCustomEndCapData, data);
+        if (data_size <= offset)
+            return InvalidParameter;
+
+        offset += endcap->CustomEndCapSize;
+    }
+
+    *ret = offset;
+    return Ok;
+}
+
 static GpStatus METAFILE_PlaybackObject(GpMetafile *metafile, UINT flags, UINT data_size, const BYTE *record_data)
 {
     BYTE type = (flags >> 8) & 0xff;
@@ -1488,6 +1949,161 @@ static GpStatus METAFILE_PlaybackObject(GpMetafile *metafile, UINT flags, UINT d
     case ObjectTypeBrush:
         status = metafile_deserialize_brush(record_data, data_size, (GpBrush **)&object);
         break;
+    case ObjectTypePen:
+    {
+        EmfPlusPen *data = (EmfPlusPen *)record_data;
+        EmfPlusPenData *pendata = (EmfPlusPenData *)data->data;
+        GpBrush *brush;
+        DWORD offset;
+        GpPen *pen;
+
+        status = metafile_get_pen_brush_data_offset(data, data_size, &offset);
+        if (status != Ok)
+            return status;
+
+        status = metafile_deserialize_brush(record_data + offset, data_size - offset, &brush);
+        if (status != Ok)
+            return status;
+
+        status = GdipCreatePen2(brush, pendata->PenWidth, pendata->PenUnit, &pen);
+        GdipDeleteBrush(brush);
+        if (status != Ok)
+            return status;
+
+        offset = FIELD_OFFSET(EmfPlusPenData, OptionalData);
+
+        if (pendata->PenDataFlags & PenDataTransform)
+        {
+            FIXME("PenDataTransform is not supported.\n");
+            offset += sizeof(EmfPlusTransformMatrix);
+        }
+
+        if (pendata->PenDataFlags & PenDataStartCap)
+        {
+            if ((status = GdipSetPenStartCap(pen, *(DWORD *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataEndCap)
+        {
+            if ((status = GdipSetPenEndCap(pen, *(DWORD *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataJoin)
+        {
+            if ((status = GdipSetPenLineJoin(pen, *(DWORD *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataMiterLimit)
+        {
+            if ((status = GdipSetPenMiterLimit(pen, *(REAL *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(REAL);
+        }
+
+        if (pendata->PenDataFlags & PenDataLineStyle)
+        {
+            if ((status = GdipSetPenDashStyle(pen, *(DWORD *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataDashedLineCap)
+        {
+            FIXME("PenDataDashedLineCap is not supported.\n");
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataDashedLineOffset)
+        {
+            if ((status = GdipSetPenDashOffset(pen, *(REAL *)((BYTE *)pendata + offset))) != Ok)
+                goto penfailed;
+            offset += sizeof(REAL);
+        }
+
+        if (pendata->PenDataFlags & PenDataDashedLine)
+        {
+            EmfPlusDashedLineData *dashedline = (EmfPlusDashedLineData *)((BYTE *)pendata + offset);
+            FIXME("PenDataDashedLine is not supported.\n");
+            offset += FIELD_OFFSET(EmfPlusDashedLineData, data) + dashedline->DashedLineDataSize * sizeof(float);
+        }
+
+        if (pendata->PenDataFlags & PenDataNonCenter)
+        {
+            FIXME("PenDataNonCenter is not supported.\n");
+            offset += sizeof(DWORD);
+        }
+
+        if (pendata->PenDataFlags & PenDataCompoundLine)
+        {
+            EmfPlusCompoundLineData *compoundline = (EmfPlusCompoundLineData *)((BYTE *)pendata + offset);
+            FIXME("PenDataCompundLine is not supported.\n");
+            offset += FIELD_OFFSET(EmfPlusCompoundLineData, data) + compoundline->CompoundLineDataSize * sizeof(float);
+        }
+
+        if (pendata->PenDataFlags & PenDataCustomStartCap)
+        {
+            EmfPlusCustomStartCapData *startcap = (EmfPlusCustomStartCapData *)((BYTE *)pendata + offset);
+            FIXME("PenDataCustomStartCap is not supported.\n");
+            offset += FIELD_OFFSET(EmfPlusCustomStartCapData, data) + startcap->CustomStartCapSize;
+        }
+
+        if (pendata->PenDataFlags & PenDataCustomEndCap)
+        {
+            EmfPlusCustomEndCapData *endcap = (EmfPlusCustomEndCapData *)((BYTE *)pendata + offset);
+            FIXME("PenDataCustomEndCap is not supported.\n");
+            offset += FIELD_OFFSET(EmfPlusCustomEndCapData, data) + endcap->CustomEndCapSize;
+        }
+
+        object = pen;
+        break;
+
+    penfailed:
+        GdipDeletePen(pen);
+        return status;
+    }
+    case ObjectTypePath:
+        status = metafile_deserialize_path(record_data, data_size, (GpPath **)&object);
+        break;
+    case ObjectTypeRegion:
+        status = metafile_deserialize_region(record_data, data_size, (GpRegion **)&object);
+        break;
+    case ObjectTypeImage:
+        status = metafile_deserialize_image(record_data, data_size, (GpImage **)&object);
+        break;
+    case ObjectTypeFont:
+    {
+        EmfPlusFont *data = (EmfPlusFont *)record_data;
+        GpFontFamily *family;
+        WCHAR *familyname;
+
+        if (data_size <= FIELD_OFFSET(EmfPlusFont, FamilyName))
+            return InvalidParameter;
+        data_size -= FIELD_OFFSET(EmfPlusFont, FamilyName);
+
+        if (data_size < data->Length * sizeof(WCHAR))
+            return InvalidParameter;
+
+        if (!(familyname = GdipAlloc((data->Length + 1) * sizeof(*familyname))))
+            return OutOfMemory;
+
+        memcpy(familyname, data->FamilyName, data->Length * sizeof(*familyname));
+        familyname[data->Length] = 0;
+
+        status = GdipCreateFontFamilyFromName(familyname, NULL, &family);
+        GdipFree(familyname);
+        if (status != Ok)
+            return InvalidParameter;
+
+        status = GdipCreateFont(family, data->EmSize, data->FontStyleFlags, data->SizeUnit, (GpFont **)&object);
+        GdipDeleteFontFamily(family);
+        break;
+    }
     case ObjectTypeImageAttributes:
     {
         EmfPlusImageAttributes *data = (EmfPlusImageAttributes *)record_data;
@@ -1516,6 +2132,18 @@ static GpStatus METAFILE_PlaybackObject(GpMetafile *metafile, UINT flags, UINT d
         metafile_set_object_table_entry(metafile, id, type, object);
 
     return status;
+}
+
+static GpStatus metafile_set_clip_region(GpMetafile *metafile, GpRegion *region, CombineMode mode)
+{
+    GpMatrix world_to_device;
+
+    get_graphics_transform(metafile->playback_graphics, CoordinateSpaceDevice, CoordinateSpaceWorld, &world_to_device);
+
+    GdipTransformRegion(region, &world_to_device);
+    GdipCombineRegionRegion(metafile->clip, region, mode);
+
+    return METAFILE_PlaybackUpdateClip(metafile);
 }
 
 GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
@@ -1619,6 +2247,9 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
         {
             EmfPlusClear *record = (EmfPlusClear*)header;
 
+            if (dataSize != sizeof(record->Color))
+                return InvalidParameter;
+
             return GdipGraphicsClear(metafile->playback_graphics, record->Color);
         }
         case EmfPlusRecordTypeFillRects:
@@ -1648,8 +2279,12 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
             }
             else
             {
-                FIXME("brush deserialization not implemented\n");
-                return NotImplemented;
+                if (record->BrushID >= EmfPlusObjectTableSize ||
+                        real_metafile->objtable[record->BrushID].type != ObjectTypeBrush)
+                    return InvalidParameter;
+
+                brush = real_metafile->objtable[record->BrushID].u.brush;
+                stat = Ok;
             }
 
             if (stat == Ok)
@@ -1692,7 +2327,6 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
             EmfPlusSetClipRect *record = (EmfPlusSetClipRect*)header;
             CombineMode mode = (CombineMode)((flags >> 8) & 0xf);
             GpRegion *region;
-            GpMatrix world_to_device;
 
             if (dataSize + sizeof(EmfPlusRecordHeader) < sizeof(*record))
                 return InvalidParameter;
@@ -1701,17 +2335,53 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
 
             if (stat == Ok)
             {
-                get_graphics_transform(real_metafile->playback_graphics,
-                    CoordinateSpaceDevice, CoordinateSpaceWorld, &world_to_device);
-
-                GdipTransformRegion(region, &world_to_device);
-
-                GdipCombineRegionRegion(real_metafile->clip, region, mode);
-
+                stat = metafile_set_clip_region(real_metafile, region, mode);
                 GdipDeleteRegion(region);
             }
 
-            return METAFILE_PlaybackUpdateClip(real_metafile);
+            return stat;
+        }
+        case EmfPlusRecordTypeSetClipRegion:
+        {
+            CombineMode mode = (flags >> 8) & 0xf;
+            BYTE regionid = flags & 0xff;
+            GpRegion *region;
+
+            if (dataSize != 0)
+                return InvalidParameter;
+
+            if (regionid >= EmfPlusObjectTableSize || real_metafile->objtable[regionid].type != ObjectTypeRegion)
+                return InvalidParameter;
+
+            stat = GdipCloneRegion(real_metafile->objtable[regionid].u.region, &region);
+            if (stat == Ok)
+            {
+                stat = metafile_set_clip_region(real_metafile, region, mode);
+                GdipDeleteRegion(region);
+            }
+
+            return stat;
+        }
+        case EmfPlusRecordTypeSetClipPath:
+        {
+            CombineMode mode = (flags >> 8) & 0xf;
+            BYTE pathid = flags & 0xff;
+            GpRegion *region;
+
+            if (dataSize != 0)
+                return InvalidParameter;
+
+            if (pathid >= EmfPlusObjectTableSize || real_metafile->objtable[pathid].type != ObjectTypePath)
+                return InvalidParameter;
+
+            stat = GdipCreateRegionPath(real_metafile->objtable[pathid].u.path, &region);
+            if (stat == Ok)
+            {
+                stat = metafile_set_clip_region(real_metafile, region, mode);
+                GdipDeleteRegion(region);
+            }
+
+            return stat;
         }
         case EmfPlusRecordTypeSetPageTransform:
         {
@@ -1966,6 +2636,119 @@ GpStatus WINGDIPAPI GdipPlayMetafileRecord(GDIPCONST GpMetafile *metafile,
         case EmfPlusRecordTypeObject:
         {
             return METAFILE_PlaybackObject(real_metafile, flags, dataSize, data);
+        }
+        case EmfPlusRecordTypeDrawImagePoints:
+        {
+            EmfPlusDrawImagePoints *draw = (EmfPlusDrawImagePoints *)header;
+            static const UINT fixed_part_size = FIELD_OFFSET(EmfPlusDrawImagePoints, PointData) -
+                FIELD_OFFSET(EmfPlusDrawImagePoints, ImageAttributesID);
+            BYTE image = flags & 0xff;
+            GpPointF points[3];
+            unsigned int i;
+            UINT size;
+
+            if (image >= EmfPlusObjectTableSize || real_metafile->objtable[image].type != ObjectTypeImage)
+                return InvalidParameter;
+
+            if (dataSize <= fixed_part_size)
+                return InvalidParameter;
+            dataSize -= fixed_part_size;
+
+            if (draw->ImageAttributesID >= EmfPlusObjectTableSize ||
+                    real_metafile->objtable[draw->ImageAttributesID].type != ObjectTypeImageAttributes)
+                return InvalidParameter;
+
+            if (draw->count != 3)
+                return InvalidParameter;
+
+            if ((flags >> 13) & 1) /* E */
+                FIXME("image effects are not supported.\n");
+
+            if ((flags >> 11) & 1) /* P */
+                size = sizeof(EmfPlusPointR7) * draw->count;
+            else if ((flags >> 14) & 1) /* C */
+                size = sizeof(EmfPlusPoint) * draw->count;
+            else
+                size = sizeof(EmfPlusPointF) * draw->count;
+
+            if (dataSize != size)
+                return InvalidParameter;
+
+            if ((flags >> 11) & 1) /* P */
+            {
+                points[0].X = draw->PointData.pointsR[0].X;
+                points[0].Y = draw->PointData.pointsR[0].Y;
+                for (i = 1; i < 3; i++)
+                {
+                    points[i].X = points[i-1].X + draw->PointData.pointsR[i].X;
+                    points[i].Y = points[i-1].Y + draw->PointData.pointsR[i].Y;
+                }
+            }
+            else if ((flags >> 14) & 1) /* C */
+            {
+                for (i = 0; i < 3; i++)
+                {
+                    points[i].X = draw->PointData.points[i].X;
+                    points[i].Y = draw->PointData.points[i].Y;
+                }
+            }
+            else
+                memcpy(points, draw->PointData.pointsF, sizeof(points));
+
+            return GdipDrawImagePointsRect(real_metafile->playback_graphics, real_metafile->objtable[image].u.image,
+                points, 3, draw->SrcRect.X, draw->SrcRect.Y, draw->SrcRect.Width, draw->SrcRect.Height, draw->SrcUnit,
+                real_metafile->objtable[draw->ImageAttributesID].u.image_attributes, NULL, NULL);
+        }
+        case EmfPlusRecordTypeFillPath:
+        {
+            EmfPlusFillPath *fill = (EmfPlusFillPath *)header;
+            GpSolidFill *solidfill = NULL;
+            BYTE path = flags & 0xff;
+            GpBrush *brush;
+
+            if (path >= EmfPlusObjectTableSize || real_metafile->objtable[path].type != ObjectTypePath)
+                return InvalidParameter;
+
+            if (dataSize != sizeof(fill->data.BrushId))
+                return InvalidParameter;
+
+            if (flags & 0x8000)
+            {
+                stat = GdipCreateSolidFill(*(ARGB *)&fill->data.Color, (GpSolidFill **)&solidfill);
+                if (stat != Ok)
+                    return stat;
+                brush = (GpBrush *)solidfill;
+            }
+            else
+            {
+                if (fill->data.BrushId >= EmfPlusObjectTableSize ||
+                        real_metafile->objtable[fill->data.BrushId].type != ObjectTypeBrush)
+                    return InvalidParameter;
+
+                brush = real_metafile->objtable[fill->data.BrushId].u.brush;
+            }
+
+            stat = GdipFillPath(real_metafile->playback_graphics, brush, real_metafile->objtable[path].u.path);
+            GdipDeleteBrush((GpBrush *)solidfill);
+            return stat;
+        }
+        case EmfPlusRecordTypeDrawPath:
+        {
+            EmfPlusDrawPath *draw = (EmfPlusDrawPath *)header;
+            BYTE path = flags & 0xff;
+
+            if (dataSize != sizeof(draw->PenId))
+                return InvalidParameter;
+
+            if (path >= EmfPlusObjectTableSize || draw->PenId >= EmfPlusObjectTableSize)
+                return InvalidParameter;
+
+            if (real_metafile->objtable[path].type != ObjectTypePath ||
+                    real_metafile->objtable[draw->PenId].type != ObjectTypePen)
+                return InvalidParameter;
+
+            return GdipDrawPath(real_metafile->playback_graphics, real_metafile->objtable[draw->PenId].u.pen,
+                real_metafile->objtable[path].u.path);
         }
         default:
             FIXME("Not implemented for record type %x\n", recordType);
@@ -2865,12 +3648,7 @@ GpStatus METAFILE_DrawImagePointsRect(GpMetafile *metafile, GpImage *image,
     draw_image_record->SrcRect.Width = units_to_pixels(srcwidth, srcUnit, metafile->image.xres);
     draw_image_record->SrcRect.Height = units_to_pixels(srcheight, srcUnit, metafile->image.yres);
     draw_image_record->count = 3;
-    draw_image_record->PointData[0].pointF.X = points[0].X;
-    draw_image_record->PointData[0].pointF.Y = points[0].Y;
-    draw_image_record->PointData[1].pointF.X = points[1].X;
-    draw_image_record->PointData[1].pointF.Y = points[1].Y;
-    draw_image_record->PointData[2].pointF.X = points[2].X;
-    draw_image_record->PointData[2].pointF.Y = points[2].Y;
+    memcpy(draw_image_record->PointData.pointsF, points, 3 * sizeof(*points));
     METAFILE_WriteRecords(metafile);
     return Ok;
 }

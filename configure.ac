@@ -56,6 +56,7 @@ AC_ARG_WITH(gsm,       AS_HELP_STRING([--without-gsm],[do not use libgsm (GSM 06
 AC_ARG_WITH(gstreamer, AS_HELP_STRING([--without-gstreamer],[do not use GStreamer (codecs support)]))
 AC_ARG_WITH(hal,       AS_HELP_STRING([--without-hal],[do not use HAL (dynamic device support)]))
 AC_ARG_WITH(jpeg,      AS_HELP_STRING([--without-jpeg],[do not use JPEG]))
+AC_ARG_WITH(krb5,      AS_HELP_STRING([--without-krb5],[do not use krb5 (Kerberos)]))
 AC_ARG_WITH(ldap,      AS_HELP_STRING([--without-ldap],[do not use LDAP]),
             [if test "x$withval" = "xno"; then ac_cv_header_ldap_h=no; ac_cv_header_lber_h=no; fi])
 AC_ARG_WITH(mpg123,    AS_HELP_STRING([--without-mpg123],[do not use the mpg123 library]))
@@ -1625,6 +1626,23 @@ fi
 WINE_NOTICE_WITH(gsm,[test "x$ac_cv_lib_soname_gsm" = "x"],
                  [libgsm ${notice_platform}development files not found, gsm 06.10 codec won't be supported.])
 
+dnl **** Check for krb5 ****
+if test "x$with_krb5" != "xno"
+then
+    WINE_PACKAGE_FLAGS(KRB5,[krb5],,
+                       [`${KRB5_CONFIG:-krb5-config} --cflags 2>/dev/null`],
+                       [`${KRB5_CONFIG:-krb5-config} --libs 2>/dev/null`],
+        [AC_CHECK_HEADERS([krb5/krb5.h])
+         if test "$ac_cv_header_krb5_krb5_h" = "yes"
+         then
+             WINE_CHECK_SONAME(krb5,krb5_init_context,,[KRB5_CFLAGS=""],[$KRB5_LIBS])
+         else
+             KRB5_CFLAGS=""
+         fi])
+fi
+WINE_NOTICE_WITH(krb5,[test "x$ac_cv_lib_soname_krb5" = "x"],
+                 [libkrb5 ${notice_platform}development files not found, Kerberos won't be supported.])
+
 dnl **** Check for libjpeg ****
 if test "x$with_jpeg" != "xno"
 then
@@ -2004,7 +2022,7 @@ esac
 case $host_os in
   linux*)
     case $host_cpu in
-      *i[[3456789]]86*|x86_64*)
+      *i[[3456789]]86*|x86_64*|*aarch64*)
         test "$wine_binary" = wine || WINE_IGNORE_FILE("loader/wine-preloader")
         WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
         ;;
@@ -2762,6 +2780,7 @@ WINE_CONFIG_DLL(api-ms-win-core-fibers-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-core-file-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-file-l1-2-0)
 WINE_CONFIG_DLL(api-ms-win-core-file-l1-2-1)
+WINE_CONFIG_DLL(api-ms-win-core-file-l1-2-2)
 WINE_CONFIG_DLL(api-ms-win-core-file-l2-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-file-l2-1-1)
 WINE_CONFIG_DLL(api-ms-win-core-file-l2-1-2)
@@ -2782,6 +2801,7 @@ WINE_CONFIG_DLL(api-ms-win-core-kernel32-private-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-core-libraryloader-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-libraryloader-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-core-libraryloader-l1-2-0)
+WINE_CONFIG_DLL(api-ms-win-core-libraryloader-l1-2-1)
 WINE_CONFIG_DLL(api-ms-win-core-libraryloader-l1-2-2)
 WINE_CONFIG_DLL(api-ms-win-core-localization-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-localization-l1-2-0)
@@ -2827,6 +2847,7 @@ WINE_CONFIG_DLL(api-ms-win-core-string-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-string-l2-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-string-obsolete-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-stringansi-l1-1-0)
+WINE_CONFIG_DLL(api-ms-win-core-synch-ansi-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-synch-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-synch-l1-2-0)
 WINE_CONFIG_DLL(api-ms-win-core-synch-l1-2-1)
@@ -2920,6 +2941,7 @@ WINE_CONFIG_DLL(api-ms-win-service-management-l2-1-0)
 WINE_CONFIG_DLL(api-ms-win-service-private-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-service-winsvc-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-service-winsvc-l1-2-0)
+WINE_CONFIG_DLL(api-ms-win-shcore-scaling-l1-1-1)
 WINE_CONFIG_DLL(api-ms-win-shell-shellcom-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-shell-shellfolders-l1-1-0)
 WINE_CONFIG_DLL(apphelp)
@@ -3113,7 +3135,7 @@ WINE_CONFIG_TEST(dlls/dswave/tests)
 WINE_CONFIG_DLL(dwmapi,,[implib])
 WINE_CONFIG_DLL(dwrite,,[implib])
 WINE_CONFIG_TEST(dlls/dwrite/tests)
-WINE_CONFIG_DLL(dx8vb)
+WINE_CONFIG_DLL(dx8vb,,[clean])
 WINE_CONFIG_DLL(dxdiagn,,[clean])
 WINE_CONFIG_TEST(dlls/dxdiagn/tests)
 WINE_CONFIG_LIB(dxerr8)
@@ -3213,6 +3235,7 @@ WINE_CONFIG_DLL(jscript,,[clean])
 WINE_CONFIG_TEST(dlls/jscript/tests)
 WINE_CONFIG_DLL(jsproxy,,[implib])
 WINE_CONFIG_TEST(dlls/jsproxy/tests)
+WINE_CONFIG_DLL(kerberos)
 WINE_CONFIG_DLL(kernel32,,[clean,implib])
 WINE_CONFIG_TEST(dlls/kernel32/tests)
 WINE_CONFIG_DLL(kernelbase)

@@ -3526,7 +3526,7 @@ static HRESULT WINAPI HTMLElement3_fireEvent(IHTMLElement3 *iface, BSTR bstrEven
     TRACE("(%p)->(%s %s %p)\n", This, debugstr_w(bstrEventName), debugstr_variant(pvarEventObject),
           pfCancelled);
 
-    return dispatch_event(&This->node, bstrEventName, pvarEventObject, pfCancelled);
+    return fire_event(&This->node, bstrEventName, pvarEventObject, pfCancelled);
 }
 
 static HRESULT WINAPI HTMLElement3_put_onresizestart(IHTMLElement3 *iface, VARIANT v)
@@ -5188,10 +5188,17 @@ HRESULT HTMLElement_handle_event(HTMLDOMNode *iface, DWORD eid, nsIDOMEvent *eve
 
             nsIDOMKeyEvent_GetKeyCode(key_event, &code);
 
-            switch(code) {
-            case VK_F1: /* DOM_VK_F1 */
+            if(code == VK_F1 /* DOM_VK_F1 */) {
+                DOMEvent *help_event;
+                HRESULT hres;
+
                 TRACE("F1 pressed\n");
-                fire_event(This->node.doc, EVENTID_HELP, TRUE, &This->node, NULL, NULL);
+
+                hres = create_document_event(This->node.doc, EVENTID_HELP, &help_event);
+                if(SUCCEEDED(hres)) {
+                    dispatch_event(&This->node.event_target, help_event);
+                    IDOMEvent_Release(&help_event->IDOMEvent_iface);
+                }
                 *prevent_default = TRUE;
             }
 
@@ -5332,15 +5339,7 @@ static HRESULT HTMLElement_populate_props(DispatchEx *dispex)
     return S_OK;
 }
 
-static EventTarget *HTMLElement_get_event_target(DispatchEx *dispex)
-{
-    HTMLElement *This = impl_from_DispatchEx(dispex);
-    return This->node.vtbl->get_event_target
-        ? This->node.vtbl->get_event_target(&This->node)
-        : &This->node.event_target;
-}
-
-static void HTMLElement_bind_event(DispatchEx *dispex, int eid)
+static void HTMLElement_bind_event(DispatchEx *dispex, eventid_t eid)
 {
     HTMLElement *This = impl_from_DispatchEx(dispex);
 
@@ -5351,8 +5350,51 @@ static void HTMLElement_bind_event(DispatchEx *dispex, int eid)
         add_nsevent_listener(This->node.doc, This->node.nsnode, loadW);
         return;
     default:
-        dispex_get_vtbl(&This->node.doc->node.event_target.dispex)->bind_event(&This->node.doc->node.event_target.dispex, eid);
+        ensure_doc_nsevent_handler(This->node.doc, eid);
     }
+}
+
+static HRESULT HTMLElement_handle_event_default(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *nsevent, BOOL *prevent_default)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+
+    if(!This->node.vtbl->handle_event)
+        return S_OK;
+    return This->node.vtbl->handle_event(&This->node, eid, nsevent, prevent_default);
+}
+
+static EventTarget *HTMLElement_get_parent_event_target(DispatchEx *dispex)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode *node;
+    nsIDOMNode *nsnode;
+    nsresult nsres;
+    HRESULT hres;
+
+    nsres = nsIDOMNode_GetParentNode(This->node.nsnode, &nsnode);
+    assert(nsres == NS_OK);
+    if(!nsnode)
+        return NULL;
+
+    hres = get_node(This->node.doc, nsnode, TRUE, &node);
+    nsIDOMNode_Release(nsnode);
+    if(FAILED(hres))
+        return NULL;
+
+    return &node->event_target;
+}
+
+static ConnectionPointContainer *HTMLElement_get_cp_container(DispatchEx *dispex)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+    IConnectionPointContainer_AddRef(&This->cp_container.IConnectionPointContainer_iface);
+    return &This->cp_container;
+}
+
+static IHTMLEventObj *HTMLElement_set_current_event(DispatchEx *dispex, IHTMLEventObj *event)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+    return default_set_current_event(This->node.doc->window, event);
 }
 
 void HTMLElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
@@ -5377,18 +5419,23 @@ static const tid_t HTMLElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_vtbl_t HTMLElement_dispex_vtbl = {
-    NULL,
-    HTMLElement_get_dispid,
-    HTMLElement_invoke,
-    NULL,
-    HTMLElement_populate_props,
-    HTMLElement_get_event_target,
-    HTMLElement_bind_event
+static event_target_vtbl_t HTMLElement_event_target_vtbl = {
+    {
+        NULL,
+        HTMLElement_get_dispid,
+        HTMLElement_invoke,
+        NULL,
+        HTMLElement_populate_props
+    },
+    HTMLElement_bind_event,
+    HTMLElement_get_parent_event_target,
+    HTMLElement_handle_event_default,
+    HTMLElement_get_cp_container,
+    HTMLElement_set_current_event
 };
 
 static dispex_static_data_t HTMLElement_dispex = {
-    &HTMLElement_dispex_vtbl,
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLUnknownElement_tid,
     HTMLElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -5407,7 +5454,7 @@ void HTMLElement_Init(HTMLElement *This, HTMLDocumentNode *doc, nsIDOMHTMLElemen
     This->IProvideMultipleClassInfo_iface.lpVtbl = &ProvideMultipleClassInfoVtbl;
 
     if(dispex_data && !dispex_data->vtbl)
-        dispex_data->vtbl = &HTMLElement_dispex_vtbl;
+        dispex_data->vtbl = &HTMLElement_event_target_vtbl.dispex_vtbl;
 
     if(nselem) {
         HTMLDOMNode_Init(doc, &This->node, (nsIDOMNode*)nselem, dispex_data ? dispex_data : &HTMLElement_dispex);
@@ -5417,7 +5464,6 @@ void HTMLElement_Init(HTMLElement *This, HTMLDocumentNode *doc, nsIDOMHTMLElemen
         This->nselem = nselem;
     }
 
-    This->node.cp_container = &This->cp_container;
     ConnectionPointContainer_Init(&This->cp_container, (IUnknown*)&This->IHTMLElement_iface, This->node.vtbl->cpc_entries);
 }
 

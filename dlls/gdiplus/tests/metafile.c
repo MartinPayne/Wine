@@ -2170,8 +2170,8 @@ static const emfplus_record clipping_records[] = {
     { EmfPlusRecordTypeRestore },
     { EmfPlusRecordTypeSetClipRect, 0x300 },
     { EmfPlusRecordTypeFillRects, 0xc000 },
-    { EmfPlusRecordTypeObject, ObjectTypeRegion << 8, 0, 1 },
-    { EmfPlusRecordTypeSetClipRegion, 0x100, 0, 1 },
+    { EmfPlusRecordTypeObject, ObjectTypeRegion << 8 },
+    { EmfPlusRecordTypeSetClipRegion, 0x100 },
     { EmfPlusRecordTypeEndOfFile },
     { EMR_EOF },
     { 0 }

@@ -181,17 +181,22 @@ static nsrefcnt NSAPI XMLHttpReqEventListener_Release(nsIDOMEventListener *iface
     return ref;
 }
 
-static nsresult NSAPI XMLHttpReqEventListener_HandleEvent(nsIDOMEventListener *iface, nsIDOMEvent *event)
+static nsresult NSAPI XMLHttpReqEventListener_HandleEvent(nsIDOMEventListener *iface, nsIDOMEvent *nsevent)
 {
     XMLHttpReqEventListener *This = impl_from_nsIDOMEventListener(iface);
+    DOMEvent *event;
+    HRESULT hres;
 
     TRACE("(%p)\n", This);
 
     if(!This->xhr)
         return NS_OK;
 
-    call_event_handlers(NULL, NULL, &This->xhr->event_target, NULL, EVENTID_READYSTATECHANGE,
-            (IDispatch*)&This->xhr->IHTMLXMLHttpRequest_iface);
+    hres = create_event_from_nsevent(nsevent, &event);
+    if(SUCCEEDED(hres) ){
+        dispatch_event(&This->xhr->event_target, event);
+        IDOMEvent_Release(&event->IDOMEvent_iface);
+    }
     return NS_OK;
 }
 
@@ -733,7 +738,7 @@ static inline HTMLXMLHttpRequest *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLXMLHttpRequest, event_target.dispex);
 }
 
-static void HTMLXMLHttpRequest_bind_event(DispatchEx *dispex, int eid)
+static void HTMLXMLHttpRequest_bind_event(DispatchEx *dispex, eventid_t eid)
 {
     HTMLXMLHttpRequest *This = impl_from_DispatchEx(dispex);
     nsIDOMEventTarget *nstarget;
@@ -768,13 +773,8 @@ static void HTMLXMLHttpRequest_bind_event(DispatchEx *dispex, int eid)
         ERR("AddEventListener failed: %08x\n", nsres);
 }
 
-static dispex_static_data_vtbl_t HTMLXMLHttpRequest_dispex_vtbl = {
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
+static event_target_vtbl_t HTMLXMLHttpRequest_event_target_vtbl = {
+    {NULL},
     HTMLXMLHttpRequest_bind_event
 };
 
@@ -783,7 +783,7 @@ static const tid_t HTMLXMLHttpRequest_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLXMLHttpRequest_dispex = {
-    &HTMLXMLHttpRequest_dispex_vtbl,
+    &HTMLXMLHttpRequest_event_target_vtbl.dispex_vtbl,
     DispHTMLXMLHttpRequest_tid,
     HTMLXMLHttpRequest_iface_tids
 };
