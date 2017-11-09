@@ -651,6 +651,13 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
 
     pModule->ne_flags &= ~(NE_FFLAGS_BUILTIN | NE_FFLAGS_WIN32);
 
+    /* link4 version 4 doesn't set a meaningful expected version in NE header. Assume Windows 1.01. */
+    if (ne_header->ne_ver == 0x04)
+        pModule->ne_expver = 0x0101;
+    /* If linker major version is not 4 but expected Windows version isn't set, assume Windows 2.01. */
+    else if (ne_header->ne_expver == 0x0000)
+        pModule->ne_expver = 0x0201;
+
     /* Get the segment table */
 
     pModule->ne_segtab = pData - (BYTE *)pModule;
@@ -660,6 +667,13 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
     for (i = ne_header->ne_cseg; i > 0; i--, pSeg++)
     {
         memcpy( pData, pSeg, sizeof(*pSeg) );
+
+        /* The original NE spec (which link4 version 4.x follows) uses 0xF000 for discardable segements. The upper bits
+           were later used for things like marking the segment as 32 bit, so the extra bits must be masked off to
+           prevent Wine from trying to load the segment as 32 bit. */
+        if (ne_header->ne_ver == 0x04)
+            ((struct ne_segment_table_entry_s*)pData)->seg_flags &= 0x1FFF;
+
         pData += sizeof(SEGTABLEENTRY);
     }
 
