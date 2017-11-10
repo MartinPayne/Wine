@@ -2477,7 +2477,12 @@ BOOL16 WINAPI InsertMenu16( HMENU16 hMenu, UINT16 pos, UINT16 flags,
     if ((pos == (UINT16)-1) && (flags & MF_BYPOSITION)) pos32 = (UINT)-1;
     if (IS_MENU_STRING_ITEM(flags) && data)
         return InsertMenuA( HMENU_32(hMenu), pos32, flags, id, MapSL(data) );
-    return InsertMenuA( HMENU_32(hMenu), pos32, flags, id, (LPSTR)data );
+
+    /* The top WORD is masked off if "data" is an HBITMAP. This is because some applications forget to cast the HBITMAP
+       LONG before casting to LPSTR. That results in the application's DGROUP selector being in the upper WORD and makes
+       the handle invalid. */
+    return InsertMenuA( HMENU_32(hMenu), pos32, flags, id,
+                      ((flags & MF_BITMAP) == MF_BITMAP) ? (LPSTR)(data & 0xFFFF) : (LPSTR)data );
 }
 
 
