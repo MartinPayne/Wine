@@ -109,6 +109,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_APPLE_ycbcr_422",                  APPLE_YCBCR_422               },
 
     /* ARB */
+    {"GL_ARB_base_instance",                ARB_BASE_INSTANCE             },
     {"GL_ARB_blend_func_extended",          ARB_BLEND_FUNC_EXTENDED       },
     {"GL_ARB_clear_buffer_object",          ARB_CLEAR_BUFFER_OBJECT       },
     {"GL_ARB_clear_texture",                ARB_CLEAR_TEXTURE             },
@@ -123,6 +124,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_derivative_control",           ARB_DERIVATIVE_CONTROL        },
     {"GL_ARB_draw_buffers",                 ARB_DRAW_BUFFERS              },
     {"GL_ARB_draw_elements_base_vertex",    ARB_DRAW_ELEMENTS_BASE_VERTEX },
+    {"GL_ARB_draw_indirect",                ARB_DRAW_INDIRECT             },
     {"GL_ARB_draw_instanced",               ARB_DRAW_INSTANCED            },
     {"GL_ARB_ES2_compatibility",            ARB_ES2_COMPATIBILITY         },
     {"GL_ARB_ES3_compatibility",            ARB_ES3_COMPATIBILITY         },
@@ -2685,6 +2687,9 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     /* GL_APPLE_flush_buffer_range */
     USE_GL_FUNC(glBufferParameteriAPPLE)
     USE_GL_FUNC(glFlushMappedBufferRangeAPPLE)
+    /* GL_ARB_base_instance */
+    USE_GL_FUNC(glDrawArraysInstancedBaseInstance)
+    USE_GL_FUNC(glDrawElementsInstancedBaseVertexBaseInstance)
     /* GL_ARB_blend_func_extended */
     USE_GL_FUNC(glBindFragDataLocationIndexed)
     USE_GL_FUNC(glGetFragDataIndex)
@@ -2715,6 +2720,9 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     USE_GL_FUNC(glDrawElementsInstancedBaseVertex)
     USE_GL_FUNC(glDrawRangeElementsBaseVertex)
     USE_GL_FUNC(glMultiDrawElementsBaseVertex)
+    /* GL_ARB_draw_indirect */
+    USE_GL_FUNC(glDrawArraysIndirect)
+    USE_GL_FUNC(glDrawElementsIndirect)
     /* GL_ARB_draw_instanced */
     USE_GL_FUNC(glDrawArraysInstancedARB)
     USE_GL_FUNC(glDrawElementsInstancedARB)
@@ -3866,6 +3874,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         {ARB_TIMER_QUERY,                  MAKEDWORD_VERSION(3, 3)},
         {ARB_VERTEX_TYPE_2_10_10_10_REV,   MAKEDWORD_VERSION(3, 3)},
 
+        {ARB_DRAW_INDIRECT,                MAKEDWORD_VERSION(4, 0)},
         {ARB_GPU_SHADER5,                  MAKEDWORD_VERSION(4, 0)},
         {ARB_TESSELLATION_SHADER,          MAKEDWORD_VERSION(4, 0)},
         {ARB_TEXTURE_CUBE_MAP_ARRAY,       MAKEDWORD_VERSION(4, 0)},
@@ -3876,6 +3885,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         {ARB_ES2_COMPATIBILITY,            MAKEDWORD_VERSION(4, 1)},
         {ARB_VIEWPORT_ARRAY,               MAKEDWORD_VERSION(4, 1)},
 
+        {ARB_BASE_INSTANCE,                MAKEDWORD_VERSION(4, 2)},
         {ARB_CONSERVATIVE_DEPTH,           MAKEDWORD_VERSION(4, 2)},
         {ARB_INTERNALFORMAT_QUERY,         MAKEDWORD_VERSION(4, 2)},
         {ARB_MAP_BUFFER_ALIGNMENT,         MAKEDWORD_VERSION(4, 2)},
@@ -4201,8 +4211,16 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
     if (gl_info->supported[ARB_TEXTURE_STORAGE] && gl_info->supported[APPLE_YCBCR_422])
     {
         /* AFAIK APPLE_ycbcr_422 is only available in legacy contexts so we shouldn't ever hit this. */
-        FIXME("Disabling APPLE_ycbcr_422 because of ARB_texture_storage.\n");
+        ERR("Disabling APPLE_ycbcr_422 because of ARB_texture_storage.\n");
         gl_info->supported[APPLE_YCBCR_422] = FALSE;
+    }
+    if (gl_info->supported[ARB_DRAW_INDIRECT] && !gl_info->supported[ARB_BASE_INSTANCE])
+    {
+        /* If ARB_base_instance is not supported the baseInstance field
+         * in indirect draw parameters must be 0 or behavior is undefined.
+         */
+        WARN("Disabling ARB_draw_indirect because ARB_base_instance is not supported.\n");
+        gl_info->supported[ARB_DRAW_INDIRECT] = FALSE;
     }
 
     wined3d_adapter_init_limits(gl_info);
@@ -6505,6 +6523,7 @@ static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, UINT ordinal, 
 {
     static const DWORD supported_gl_versions[] =
     {
+        MAKEDWORD_VERSION(4, 4),
         MAKEDWORD_VERSION(3, 2),
         MAKEDWORD_VERSION(1, 0),
     };

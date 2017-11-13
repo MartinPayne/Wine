@@ -227,6 +227,16 @@ new_array = x
 x(0) = "new value"
 Call ok(new_array(0) = "a1", "new_array(0) = " & new_array(0))
 
+Call ok(getVT(UBound(x)) = "VT_I4", "getVT(UBound(x)) = " & getVT(UBound(x)))
+Call ok(UBound(x) = 2, "UBound(x) = " & UBound(x))
+Call ok(getVT(UBound(x, 1)) = "VT_I4", "getVT(UBound(x, 1)) = " & getVT(UBound(x, 1)))
+Call ok(UBound(x, 1) = 2, "UBound(x) = " & UBound(x, 1))
+
+Dim arr2(2, 4)
+Call ok(UBound(arr2) = 2, "UBound(x) = " & UBound(x))
+Call ok(UBound(arr2, 1) = 2, "UBound(x) = " & UBound(x))
+Call ok(UBound(arr2, 2) = 4, "UBound(x) = " & UBound(x))
+
 Dim newObject
 Set newObject = New ValClass
 newObject.myval = 1
@@ -594,7 +604,6 @@ if isEnglishLang then
     Call ok(WeekDayName(1, false) = "Sunday", "WeekDayName(1, false) = " & WeekDayName(1, false))
     Call ok(WeekDayName(1, true) = "Sun", "WeekDayName(1, true) = " & WeekDayName(1, true))
     Call ok(WeekDayName(1, 10) = "Sun", "WeekDayName(1, 10) = " & WeekDayName(1, 10))
-    Call ok(WeekDayName(1, true, 0) = "Sun", "WeekDayName(1, true, 0) = " & WeekDayName(1, true, 0))
     Call ok(WeekDayName(1, true, 2) = "Mon", "WeekDayName(1, true, 2) = " & WeekDayName(1, true, 2))
     Call ok(WeekDayName(1, true, 2.5) = "Mon", "WeekDayName(1, true, 2.5) = " & WeekDayName(1, true, 2.5))
     Call ok(WeekDayName(1, true, 1.5) = "Mon", "WeekDayName(1, true, 1.5) = " & WeekDayName(1, true, 1.5))
@@ -608,6 +617,9 @@ if isEnglishLang then
     Call ok(MonthName(1, 10) = "Jan", "MonthName(1, 10) = " & MonthName(1, 10))
     Call ok(MonthName(12, true) = "Dec", "MonthName(12, true) = " & MonthName(12, true))
 end if
+
+Call ok(WeekDayName(1, true, 0) = WeekDayName(1, true, firstDayOfWeek), _
+        "WeekDayName(1, true, 0) = " & WeekDayName(1, true, 0))
 
 Call ok(getVT(Now()) = "VT_DATE", "getVT(Now()) = " & getVT(Now()))
 

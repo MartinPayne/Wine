@@ -129,6 +129,7 @@ typedef struct EventTarget EventTarget;
     XIID(IDocumentSelector) \
     XIID(IElementSelector) \
     XIID(IElementTraversal) \
+    XIID(IEventTarget) \
     XIID(IHTMLAnchorElement) \
     XIID(IHTMLAreaElement) \
     XIID(IHTMLAttributeCollection) \
@@ -868,7 +869,6 @@ void HTMLDocument_OleObj_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_View_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_Window_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_Service_Init(HTMLDocument*) DECLSPEC_HIDDEN;
-void HTMLDocument_Hlink_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 
 void TargetContainer_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void init_binding_ui(HTMLDocumentObj*) DECLSPEC_HIDDEN;
@@ -1041,6 +1041,7 @@ void HTMLFrameBase_Init(HTMLFrameBase*,HTMLDocumentNode*,nsIDOMHTMLElement*,disp
 
 void EventTarget_Init(EventTarget*,IUnknown*,dispex_static_data_t*,compat_mode_t) DECLSPEC_HIDDEN;
 HRESULT EventTarget_QI(EventTarget*,REFIID,void**) DECLSPEC_HIDDEN;
+void EventTarget_init_dispex_info(dispex_data_t*,compat_mode_t) DECLSPEC_HIDDEN;
 
 HRESULT HTMLDOMNode_QI(HTMLDOMNode*,REFIID,void**) DECLSPEC_HIDDEN;
 void HTMLDOMNode_destructor(HTMLDOMNode*) DECLSPEC_HIDDEN;
@@ -1329,6 +1330,11 @@ static inline void windowref_release(windowref_t *ref)
 {
     if(!InterlockedDecrement(&ref->ref))
         heap_free(ref);
+}
+
+static inline VARIANT_BOOL variant_bool(BOOL b)
+{
+    return b ? VARIANT_TRUE : VARIANT_FALSE;
 }
 
 UINT cp_from_charset_string(BSTR) DECLSPEC_HIDDEN;

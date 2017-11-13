@@ -118,13 +118,33 @@ static const MIME_CP_INFO baltic_cp[] =
 };
 static const MIME_CP_INFO chinese_simplified_cp[] =
 {
+    { "Chinese Simplified (Auto-Select)",
+      50936, MIMECONTF_IMPORT | MIMECONTF_VALID | MIMECONTF_VALID_NLS |
+             MIMECONTF_MIME_LATEST,
+      "_autodetect_chs", "_autodetect_chs", "_autodetect_chs" },
     { "Chinese Simplified (GB2312)",
       936, MIMECONTF_MAILNEWS | MIMECONTF_BROWSER | MIMECONTF_MINIMAL |
-           MIMECONTF_IMPORT | MIMECONTF_SAVABLE_MAILNEWS |
+           MIMECONTF_IMPORT | MIMECONTF_SAVABLE_MAILNEWS | MIMECONTF_VALID |
            MIMECONTF_SAVABLE_BROWSER | MIMECONTF_EXPORT | MIMECONTF_VALID_NLS |
            MIMECONTF_MIME_IE4 | MIMECONTF_MIME_LATEST,
       "gb2312", "gb2312", "gb2312" },
-      { "Chinese Simplified (GBK)",
+    { "Chinese Simplified (GB2312-80)",
+      20936, MIMECONTF_IMPORT | MIMECONTF_EXPORT | MIMECONTF_VALID |
+             MIMECONTF_VALID_NLS | MIMECONTF_MIME_LATEST,
+      "x-cp20936", "x-cp20936", "x-cp20936" },
+    { "Chinese Simplified (HZ)",
+      52936, MIMECONTF_MAILNEWS | MIMECONTF_BROWSER | MIMECONTF_IMPORT |
+             MIMECONTF_SAVABLE_MAILNEWS | MIMECONTF_SAVABLE_BROWSER | MIMECONTF_EXPORT |
+             MIMECONTF_VALID | MIMECONTF_VALID_NLS | MIMECONTF_MIME_IE4 |
+             MIMECONTF_MIME_LATEST,
+      "hz-gb-2312", "hz-gb-2312", "hz-gb-2312" },
+    { "Chinese Simplified (GB18030)",
+      54936, MIMECONTF_MAILNEWS | MIMECONTF_BROWSER | MIMECONTF_MINIMAL |
+             MIMECONTF_IMPORT | MIMECONTF_SAVABLE_MAILNEWS | MIMECONTF_SAVABLE_BROWSER |
+             MIMECONTF_EXPORT | MIMECONTF_VALID | MIMECONTF_VALID_NLS |
+             MIMECONTF_MIME_LATEST,
+      "GB18030", "GB18030", "GB18030" },
+    { "Chinese Simplified (GBK)",
       936, MIMECONTF_MAILNEWS | MIMECONTF_BROWSER | MIMECONTF_MINIMAL |
            MIMECONTF_IMPORT | MIMECONTF_SAVABLE_MAILNEWS |
            MIMECONTF_SAVABLE_BROWSER | MIMECONTF_EXPORT | MIMECONTF_VALID_NLS |
@@ -133,12 +153,20 @@ static const MIME_CP_INFO chinese_simplified_cp[] =
 };
 static const MIME_CP_INFO chinese_traditional_cp[] =
 {
+    { "Chinese Traditional (Auto-Select)",
+      50950, MIMECONTF_IMPORT | MIMECONTF_VALID | MIMECONTF_VALID_NLS |
+             MIMECONTF_MIME_LATEST,
+      "_autodetect_cht", "_autodetect_cht", "_autodetect_cht" },
     { "Chinese Traditional (Big5)",
       950, MIMECONTF_MAILNEWS | MIMECONTF_BROWSER | MIMECONTF_MINIMAL |
            MIMECONTF_IMPORT | MIMECONTF_SAVABLE_MAILNEWS |
-           MIMECONTF_SAVABLE_BROWSER | MIMECONTF_EXPORT |
+           MIMECONTF_SAVABLE_BROWSER | MIMECONTF_EXPORT | MIMECONTF_VALID |
            MIMECONTF_VALID_NLS | MIMECONTF_MIME_IE4 | MIMECONTF_MIME_LATEST,
-      "big5", "big5", "big5" }
+      "big5", "big5", "big5" },
+    { "Chinese Traditional (CNS)",
+      20000, MIMECONTF_IMPORT | MIMECONTF_EXPORT | MIMECONTF_VALID |
+             MIMECONTF_VALID_NLS | MIMECONTF_MIME_LATEST,
+      "x-Chinese-CNS", "x-Chinese-CNS", "x-Chinese-CNS" }
 };
 static const MIME_CP_INFO central_european_cp[] =
 {
@@ -470,9 +498,9 @@ static const struct mlang_data
     { "Baltic",1257,sizeof(baltic_cp)/sizeof(baltic_cp[0]),baltic_cp,
       "Courier","Arial", sidAsciiLatin }, /* FIXME */
     { "Chinese Simplified",936,sizeof(chinese_simplified_cp)/sizeof(chinese_simplified_cp[0]),chinese_simplified_cp,
-      "Courier","Arial", sidHan }, /* FIXME */
+      "Simsun","Simsun", sidHan },
     { "Chinese Traditional",950,sizeof(chinese_traditional_cp)/sizeof(chinese_traditional_cp[0]),chinese_traditional_cp,
-      "Courier","Arial", sidBopomofo }, /* FIXME */
+      "MingLiu","New MingLiu", sidBopomofo },
     { "Central European",1250,sizeof(central_european_cp)/sizeof(central_european_cp[0]),central_european_cp,
       "Courier","Arial", sidAsciiLatin }, /* FIXME */
     { "Cyrillic",1251,sizeof(cyrillic_cp)/sizeof(cyrillic_cp[0]),cyrillic_cp,

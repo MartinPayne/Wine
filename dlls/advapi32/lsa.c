@@ -44,6 +44,12 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
         return FailureCode; \
 }
 
+static LPCSTR debugstr_us( const UNICODE_STRING *us )
+{
+    if (!us) return "(null)";
+    return debugstr_wn(us->Buffer, us->Length / sizeof(WCHAR));
+}
+
 static void dumpLsaAttributes(const LSA_OBJECT_ATTRIBUTES *oa)
 {
     if (oa)
@@ -978,11 +984,43 @@ NTSTATUS WINAPI LsaUnregisterPolicyChangeNotification(
  * LsaLookupPrivilegeName [ADVAPI32.@]
  *
  */
-NTSTATUS WINAPI LsaLookupPrivilegeName(
-    LSA_HANDLE handle,
-    LUID *luid,
-    UNICODE_STRING **name)
+NTSTATUS WINAPI LsaLookupPrivilegeName(LSA_HANDLE handle, LUID *luid, LSA_UNICODE_STRING **name)
 {
-    FIXME("(%p,%p,%p) stub\n", handle, luid, name);
+    const WCHAR *privnameW;
+    DWORD length;
+    WCHAR *strW;
+
+    TRACE("(%p,%p,%p)\n", handle, luid, name);
+
+    if (!luid || !handle)
+        return STATUS_INVALID_PARAMETER;
+
+    *name = NULL;
+
+    if (!(privnameW = get_wellknown_privilege_name(luid)))
+        return STATUS_NO_SUCH_PRIVILEGE;
+
+    length = strlenW(privnameW);
+    *name = heap_alloc(sizeof(**name) + (length + 1) * sizeof(WCHAR));
+    if (!*name)
+        return STATUS_NO_MEMORY;
+
+    strW = (WCHAR *)(*name + 1);
+    memcpy(strW, privnameW, length * sizeof(WCHAR));
+    strW[length] = 0;
+    RtlInitUnicodeString(*name, strW);
+
+    return STATUS_SUCCESS;
+}
+
+/******************************************************************************
+ * LsaLookupPrivilegeDisplayName [ADVAPI32.@]
+ *
+ */
+NTSTATUS WINAPI LsaLookupPrivilegeDisplayName(LSA_HANDLE handle, LSA_UNICODE_STRING *name,
+    LSA_UNICODE_STRING **display_name, SHORT *language)
+{
+    FIXME("(%p, %s, %p, %p)\n", handle, debugstr_us(name), display_name, language);
+
     return STATUS_NO_SUCH_PRIVILEGE;
 }

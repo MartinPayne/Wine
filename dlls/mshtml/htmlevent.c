@@ -89,6 +89,7 @@ static const WCHAR selectstartW[] = {'s','e','l','e','c','t','s','t','a','r','t'
 static const WCHAR selectionchangeW[] = {'s','e','l','e','c','t','i','o','n','c','h','a','n','g','e',0};
 static const WCHAR submitW[] = {'s','u','b','m','i','t',0};
 static const WCHAR unloadW[] = {'u','n','l','o','a','d',0};
+static const WCHAR DOMContentLoadedW[] = {'D','O','M','C','o','n','t','e','n','t','L','o','a','d','e','d',0};
 
 static const WCHAR EventW[] = {'E','v','e','n','t',0};
 static const WCHAR UIEventW[] = {'U','I','E','v','e','n','t',0};
@@ -149,6 +150,8 @@ static const event_info_t event_info[] = {
     {dataavailableW,     EVENT_TYPE_EVENT,     DISPID_EVMETH_ONDATAAVAILABLE,
         EVENT_FIXME | EVENT_BUBBLES},
     {dblclickW,          EVENT_TYPE_MOUSE,     DISPID_EVMETH_ONDBLCLICK,
+        EVENT_DEFAULTLISTENER | EVENT_BUBBLES | EVENT_CANCELABLE},
+    {DOMContentLoadedW,  EVENT_TYPE_EVENT,     0,
         EVENT_DEFAULTLISTENER | EVENT_BUBBLES | EVENT_CANCELABLE},
     {dragW,              EVENT_TYPE_DRAG,      DISPID_EVMETH_ONDRAG,
         EVENT_FIXME | EVENT_BUBBLES | EVENT_CANCELABLE},
@@ -227,7 +230,7 @@ static eventid_t attr_to_eid(const WCHAR *str)
         return EVENTID_LAST;
 
     for(i=0; i < sizeof(event_info)/sizeof(event_info[0]); i++) {
-        if(!strcmpW(event_info[i].name, str+2))
+        if(!strcmpW(event_info[i].name, str+2) && event_info[i].dispid)
             return i;
     }
 
@@ -418,7 +421,7 @@ static HRESULT WINAPI HTMLEventObj_get_altKey(IHTMLEventObj *iface, VARIANT_BOOL
         }
     }
 
-    *p = ret ? VARIANT_TRUE : VARIANT_FALSE;
+    *p = variant_bool(ret);
     return S_OK;
 }
 
@@ -448,7 +451,7 @@ static HRESULT WINAPI HTMLEventObj_get_ctrlKey(IHTMLEventObj *iface, VARIANT_BOO
         }
     }
 
-    *p = ret ? VARIANT_TRUE : VARIANT_FALSE;
+    *p = variant_bool(ret);
     return S_OK;
 }
 
@@ -478,7 +481,7 @@ static HRESULT WINAPI HTMLEventObj_get_shiftKey(IHTMLEventObj *iface, VARIANT_BO
         }
     }
 
-    *p = ret ? VARIANT_TRUE : VARIANT_FALSE;
+    *p = variant_bool(ret);
     return S_OK;
 }
 
@@ -526,7 +529,7 @@ static HRESULT WINAPI HTMLEventObj_get_cancelBubble(IHTMLEventObj *iface, VARIAN
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    *p = This->event && This->event->stop_propagation ? VARIANT_TRUE : VARIANT_FALSE;
+    *p = variant_bool(This->event && This->event->stop_propagation);
     return S_OK;
 }
 
@@ -992,8 +995,11 @@ static HRESULT WINAPI DOMEvent_get_currentTarget(IDOMEvent *iface, IEventTarget 
 static HRESULT WINAPI DOMEvent_get_defaultPrevented(IDOMEvent *iface, VARIANT_BOOL *p)
 {
     DOMEvent *This = impl_from_IDOMEvent(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    *p = variant_bool(This->prevent_default);
+    return S_OK;
 }
 
 static HRESULT WINAPI DOMEvent_get_eventPhase(IDOMEvent *iface, USHORT *p)
@@ -1298,7 +1304,7 @@ static void call_event_handlers(EventTarget *event_target, DOMEvent *event)
     event_listener_t *listener, listeners_buf[8], *listeners = listeners_buf;
     unsigned listeners_cnt, listeners_size;
     ConnectionPointContainer *cp_container = NULL;
-    const event_target_vtbl_t *vtbl;
+    const event_target_vtbl_t *vtbl = NULL;
     VARIANT v;
     HRESULT hres;
 
@@ -1446,7 +1452,8 @@ static void call_event_handlers(EventTarget *event_target, DOMEvent *event)
     if(event->phase == DEP_CAPTURING_PHASE)
         return;
 
-    if((vtbl = dispex_get_vtbl(&event_target->dispex)) && vtbl->get_cp_container)
+    if(event_info[eid].dispid && (vtbl = dispex_get_vtbl(&event_target->dispex))
+       && vtbl->get_cp_container)
         cp_container = vtbl->get_cp_container(&event_target->dispex);
     if(cp_container) {
         if(cp_container->cps) {
@@ -2199,6 +2206,12 @@ HRESULT EventTarget_QI(EventTarget *event_target, REFIID riid, void **ppv)
     WARN("(%p)->(%s %p)\n", event_target, debugstr_mshtml_guid(riid), ppv);
     *ppv = NULL;
     return E_NOINTERFACE;
+}
+
+void EventTarget_init_dispex_info(dispex_data_t *dispex_info, compat_mode_t compat_mode)
+{
+    if(compat_mode >= COMPAT_MODE_IE9)
+        dispex_info_add_interface(dispex_info, IEventTarget_tid, NULL);
 }
 
 static int event_id_cmp(const void *key, const struct wine_rb_entry *entry)

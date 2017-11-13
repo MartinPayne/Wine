@@ -1300,6 +1300,8 @@ static void export_hex_data(FILE *fp, WCHAR **buf, DWORD type, DWORD line_len,
 
     line_len += export_hex_data_type(fp, type, unicode);
 
+    if (!size) return;
+
     if (!unicode && (type == REG_EXPAND_SZ || type == REG_MULTI_SZ))
         data = GetMultiByteStringN(data, size / sizeof(WCHAR), &size);
 
@@ -1343,8 +1345,12 @@ static void export_data(FILE *fp, WCHAR *value_name, DWORD value_len, DWORD type
         export_string_data(&buf, data, size);
         break;
     case REG_DWORD:
-        export_dword_data(&buf, data);
-        break;
+        if (size)
+        {
+            export_dword_data(&buf, data);
+            break;
+        }
+        /* fall through */
     case REG_NONE:
     case REG_EXPAND_SZ:
     case REG_BINARY:
@@ -1354,8 +1360,12 @@ static void export_data(FILE *fp, WCHAR *value_name, DWORD value_len, DWORD type
         break;
     }
 
-    REGPROC_write_line(fp, buf, unicode);
-    heap_free(buf);
+    if (size || type == REG_SZ)
+    {
+        REGPROC_write_line(fp, buf, unicode);
+        heap_free(buf);
+    }
+
     export_newline(fp, unicode);
 }
 

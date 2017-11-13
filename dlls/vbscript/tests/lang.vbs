@@ -752,6 +752,11 @@ Private Sub TestPrivateSub
 End Sub
 Call TestPrivateSub
 
+Public Sub TestSeparatorSub : :
+:
+End Sub
+Call TestSeparatorSub
+
 if false then
 Function testfunc
     x = true
@@ -866,6 +871,12 @@ Call TestPublicFunc
 Private Function TestPrivateFunc
 End Function
 Call TestPrivateFunc
+
+Public Function TestSepFunc(ByVal a) : :
+: TestSepFunc = a
+End Function
+Call ok(TestSepFunc(1) = 1, "Function did not return 1")
+
 
 ' Stop has an effect only in debugging mode
 Stop
@@ -1127,6 +1138,30 @@ Class Property2
     End Sub
 End Class
 
+Class SeparatorTest : : Dim varTest1
+:
+    Private Sub Class_Initialize : varTest1 = 1
+    End Sub ::
+
+    Property Get Test1() :
+        Test1 = varTest1
+    End Property ::
+: :
+    Property Let Test1(a) :
+        varTest1 = a
+    End Property :
+
+    Public Function AddToTest1(ByVal a)  :: :
+        varTest1 = varTest1 + a
+        AddToTest1 = varTest1
+    End Function :    End Class : ::   Set obj = New SeparatorTest
+
+Call ok(obj.Test1 = 1, "obj.Test1 is not 1")
+obj.Test1 = 6
+Call ok(obj.Test1 = 6, "obj.Test1 is not 6")
+obj.AddToTest1(5)
+Call ok(obj.Test1 = 11, "obj.Test1 is not 11")
+
 ' Array tests
 
 Call ok(getVT(arr) = "VT_EMPTY*", "getVT(arr) = " & getVT(arr))
@@ -1268,6 +1303,35 @@ Call ok(arr(0) = "modified", "arr(0) = " & arr(0))
 arr(0) = "not modified"
 modifyarr(arr)
 Call todo_wine_ok(arr(0) = "not modified", "arr(0) = " & arr(0))
+
+for x = 0 to UBound(arr)
+    arr(x) = x
+next
+y = 0
+for each x in arr
+    Call ok(x = y, "x = " & x & ", expected " & y)
+    Call ok(arr(y) = y, "arr(" & y & ") = " & arr(y))
+    arr(y) = 1
+    x = 1
+    y = y+1
+next
+Call ok(y = 4, "y = " & y & " after array enumeration")
+
+for x=0 to UBound(arr2, 1)
+    for y=0 to UBound(arr2, 2)
+        arr2(x, y) = x + y*(UBound(arr2, 1)+1)
+    next
+next
+y = 0
+for each x in arr2
+    Call ok(x = y, "x = " & x & ", expected " & y)
+    y = y+1
+next
+Call ok(y = 20, "y = " & y & " after array enumeration")
+
+for each x in noarr
+    Call ok(false, "Empty array contains: " & x)
+next
 
 ' It's allowed to declare non-builtin RegExp class...
 class RegExp

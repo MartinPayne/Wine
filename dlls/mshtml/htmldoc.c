@@ -2606,7 +2606,7 @@ static HRESULT WINAPI HTMLDocument4_hasFocus(IHTMLDocument4 *iface, VARIANT_BOOL
     nsres = nsIDOMHTMLDocument_HasFocus(This->doc_node->nsdoc, &has_focus);
     assert(nsres == NS_OK);
 
-    *pfFocus = has_focus ? VARIANT_TRUE : VARIANT_FALSE;
+    *pfFocus = variant_bool(has_focus);
     return S_OK;
 }
 
@@ -4262,8 +4262,32 @@ static HRESULT WINAPI DocumentSelector_Invoke(IDocumentSelector *iface, DISPID d
 static HRESULT WINAPI DocumentSelector_querySelector(IDocumentSelector *iface, BSTR v, IHTMLElement **pel)
 {
     HTMLDocument *This = impl_from_IDocumentSelector(iface);
-    FIXME("(%p)->(%s %p)\n", This, debugstr_w(v), pel);
-    return E_NOTIMPL;
+    nsIDOMElement *nselem;
+    HTMLElement *elem;
+    nsAString nsstr;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_w(v), pel);
+
+    nsAString_InitDepend(&nsstr, v);
+    nsres = nsIDOMHTMLDocument_QuerySelector(This->doc_node->nsdoc, &nsstr, &nselem);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres)) {
+        ERR("QuerySelector failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    if(!nselem) {
+        *pel = NULL;
+        return S_OK;
+    }
+
+    hres = get_elem(This->doc_node, nselem, &elem);
+    nsIDOMElement_Release(nselem);
+    if(SUCCEEDED(hres))
+        *pel = &elem->IHTMLElement_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI DocumentSelector_querySelectorAll(IDocumentSelector *iface, BSTR v, IHTMLDOMChildrenCollection **pel)
@@ -4842,7 +4866,6 @@ static void init_doc(HTMLDocument *doc, IUnknown *outer, IDispatchEx *dispex)
     HTMLDocument_View_Init(doc);
     HTMLDocument_Window_Init(doc);
     HTMLDocument_Service_Init(doc);
-    HTMLDocument_Hlink_Init(doc);
 
     ConnectionPointContainer_Init(&doc->cp_container, (IUnknown*)&doc->IHTMLDocument2_iface, HTMLDocument_cpc);
 }

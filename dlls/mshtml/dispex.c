@@ -206,6 +206,7 @@ HRESULT get_class_typeinfo(const CLSID *clsid, ITypeInfo **typeinfo)
 /* Not all argument types are supported yet */
 #define BUILTIN_ARG_TYPES_SWITCH                        \
     CASE_VT(VT_I2, INT16, V_I2);                        \
+    CASE_VT(VT_UI2, UINT16, V_UI2);                     \
     CASE_VT(VT_I4, INT32, V_I4);                        \
     CASE_VT(VT_R4, float, V_R4);                        \
     CASE_VT(VT_BSTR, BSTR, V_BSTR);                     \
@@ -970,7 +971,7 @@ static HRESULT change_type(VARIANT *dst, VARIANT *src, VARTYPE vt, IServiceProvi
     case VT_BOOL:
         if(V_VT(src) == VT_BSTR) {
             V_VT(dst) = VT_BOOL;
-            V_BOOL(dst) = V_BSTR(src) && *V_BSTR(src) ? VARIANT_TRUE : VARIANT_FALSE;
+            V_BOOL(dst) = variant_bool(V_BSTR(src) && *V_BSTR(src));
             return S_OK;
         }
         break;

@@ -1515,9 +1515,34 @@ struct wined3d_dispatch_parameters
     } u;
 };
 
+struct wined3d_direct_draw_parameters
+{
+    int base_vertex_idx;
+    unsigned int start_idx;
+    unsigned int index_count;
+    unsigned int start_instance;
+    unsigned int instance_count;
+};
+
+struct wined3d_indirect_draw_parameters
+{
+    struct wined3d_buffer *buffer;
+    unsigned int offset;
+};
+
+struct wined3d_draw_parameters
+{
+    BOOL indirect;
+    union
+    {
+        struct wined3d_direct_draw_parameters direct;
+        struct wined3d_indirect_draw_parameters indirect;
+    } u;
+    BOOL indexed;
+};
+
 void draw_primitive(struct wined3d_device *device, const struct wined3d_state *state,
-        int base_vertex_idx, unsigned int start_idx, unsigned int index_count,
-        unsigned int start_instance, unsigned int instance_count, BOOL indexed) DECLSPEC_HIDDEN;
+        const struct wined3d_draw_parameters *draw_parameters) DECLSPEC_HIDDEN;
 void dispatch_compute(struct wined3d_device *device, const struct wined3d_state *state,
         const struct wined3d_dispatch_parameters *dispatch_parameters) DECLSPEC_HIDDEN;
 DWORD get_flexible_vertex_size(DWORD d3dvtVertexType) DECLSPEC_HIDDEN;
@@ -3472,6 +3497,8 @@ void wined3d_cs_emit_dispatch_indirect(struct wined3d_cs *cs,
 void wined3d_cs_emit_draw(struct wined3d_cs *cs, GLenum primitive_type, unsigned int patch_vertex_count,
         int base_vertex_idx, unsigned int start_idx, unsigned int index_count,
         unsigned int start_instance, unsigned int instance_count, BOOL indexed) DECLSPEC_HIDDEN;
+void wined3d_cs_emit_draw_indirect(struct wined3d_cs *cs, GLenum primitive_type, unsigned int patch_vertex_count,
+        struct wined3d_buffer *buffer, unsigned int offset, BOOL indexed) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_flush(struct wined3d_cs *cs) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_preload_resource(struct wined3d_cs *cs, struct wined3d_resource *resource) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_present(struct wined3d_cs *cs, struct wined3d_swapchain *swapchain,
@@ -4217,6 +4244,8 @@ DWORD wined3d_format_convert_from_float(const struct wined3d_format *format,
         const struct wined3d_color *color) DECLSPEC_HIDDEN;
 void wined3d_format_get_float_color_key(const struct wined3d_format *format,
         const struct wined3d_color_key *key, struct wined3d_color *float_colors) DECLSPEC_HIDDEN;
+BOOL wined3d_format_is_depth_view(enum wined3d_format_id resource_format_id,
+        enum wined3d_format_id view_format_id) DECLSPEC_HIDDEN;
 const struct wined3d_color_key_conversion * wined3d_format_get_color_key_conversion(
         const struct wined3d_texture *texture, BOOL need_alpha_ck) DECLSPEC_HIDDEN;
 
@@ -4294,6 +4323,12 @@ static inline BOOL needs_interpolation_qualifiers_for_shader_outputs(const struc
      * match between shader stages.
      */
     return gl_info->glsl_version < MAKEDWORD_VERSION(4, 40);
+}
+
+static inline BOOL is_rasterization_disabled(const struct wined3d_shader *geometry_shader)
+{
+    return geometry_shader
+            && geometry_shader->u.gs.so_desc.rasterizer_stream_idx == WINED3D_NO_RASTERIZER_STREAM;
 }
 
 static inline DWORD wined3d_extract_bits(const DWORD *bitstream,
