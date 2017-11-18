@@ -806,7 +806,7 @@ static BOOL NE_LoadDLLs( NE_MODULE *pModule )
 
             /* Append .DLL to name if no extension present */
             if (!(p = strrchr( buffer, '.')) || strchr( p, '/' ) || strchr( p, '\\'))
-                    strcat( buffer, ".DLL" );
+                    strcat( buffer, (GetExeVersion16() >= 0x0300) ? ".DLL" : ".EXE" );
 
             if ((hDLL = MODULE_LoadModule16( buffer, TRUE, TRUE )) < 32)
             {
@@ -1004,7 +1004,7 @@ static HINSTANCE16 MODULE_LoadModule16( LPCSTR libname, BOOL implicit, BOOL lib_
 
         strcpy( dllname, basename );
         q = strrchr( dllname, '.' );
-        if (!q) strcat( dllname, ".dll" );
+        if (!q) strcat( dllname, (GetExeVersion16() >= 0x0300) ? ".dll" : ".exe" );
         for (q = dllname; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
 
         strcpy( q, "16" );
