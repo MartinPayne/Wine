@@ -337,6 +337,45 @@ unknown:
 }
 
 
+/* Early Windows 1 C applications initialise their "_psp" variable to 0. It should actually be initialised with the
+   segment / selector of the PSP. Applications running in real mode manage to get away with this, but in protected mode
+   the application will crash when it tries to use the PSP. This function checks for the faulty entry point code and
+   patches it to load _psp from the ES register. */
+void NE_FixWin1Startup(NE_MODULE *pModule, WORD segnum)
+{
+    SEGTABLEENTRY seg;
+    BYTE* pEntryPoint;
+    WORD* patch1;
+    WORD* patch2;
+
+    /* Do nothing if this is a Windows 2 or later application */
+    if (pModule->ne_expver >= 0x0200)
+        return;
+
+    /* Do nothing if the segment doesn't contain the application entry point */
+    if (segnum != HIWORD(pModule->ne_csip))
+        return;
+
+    /* Get the code segment */
+    seg = NE_SEG_TABLE(pModule)[segnum-1];
+
+    /* Get flat pointer to executable entry point */
+    pEntryPoint = MapSL(MAKESEGPTR(seg.hSeg, LOWORD(pModule->ne_csip)));
+
+    /* Instructions to patch and NOP are 9 and 13 bytes after the entry point */
+    patch1 = (WORD*)(pEntryPoint + 9);
+    patch2 = (WORD*)(pEntryPoint + 13);
+
+    /* Check for "mov WORD PTR ds:[_psp],0" and patch if present */
+    if ((*patch1 == 0x06C7) && (*patch2 == 0x0000))
+    {
+        /* Patch the instruction, leaving the _psp address as-is and NOP-ing out the rest */
+        *patch1 = 0x068C; /* mov WORD PTR ds:[_psp],es */
+        *patch2 = 0x9090; /* nop nop */
+    }
+}
+
+
 /***********************************************************************
  *           NE_LoadSegment
  */
@@ -436,6 +475,9 @@ BOOL NE_LoadSegment( NE_MODULE *pModule, WORD segnum )
 
     /* Perform exported function prolog fixups */
     NE_FixupSegmentPrologs( pModule, segnum );
+
+    /* Fixup potentially incorrect Windows 1 startup code */
+    NE_FixWin1Startup( pModule, segnum );
 
     if (!(pSeg->flags & NE_SEGFLAGS_RELOC_DATA))
         return TRUE;  /* No relocation data, we are done */
