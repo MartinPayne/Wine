@@ -597,13 +597,10 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
 
     /* We now have a valid NE header */
 
-    /* check to be able to fall back to loading OS/2 programs as DOS
-     * FIXME: should this check be reversed in order to be less strict?
-     * (only fail for OS/2 ne_exetyp 0x01 here?) */
+    /* check to be able to fall back to loading OS/2 programs as DOS */
     if ((ne_header->ne_exetyp != 0x02 /* Windows */)
-        && (ne_header->ne_exetyp != 0x04 /* Windows 386 */)
         && (ne_header->ne_exetyp != 0x00 /* Unknown - possible early 1.x or 2.x app */)
-        && (ne_header->ne_exetyp != 0xC4 /* Very early Windows app */))
+        && (ne_header->ne_ver != 0x04 /* link4 version 4 - possible early 1.x or 2.x app */))
         return ERROR_BAD_FORMAT;
 
     size = sizeof(NE_MODULE) +
@@ -712,6 +709,45 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
     if (!NE_READ_DATA( pModule, pData, mz_header->e_lfanew + ne_header->ne_imptab,
                        ne_header->ne_enttab - ne_header->ne_imptab )) goto failed;
     pData += ne_header->ne_enttab - ne_header->ne_imptab;
+
+    /* If the executable type is unknown or the linker version is 4.x, it is necessary to check the import table to
+       determine whether this is a Windows application or an OS/2 or Multitasking DOS 4 application. */
+    if (((ne_header->ne_exetyp == 0x00) || (ne_header->ne_ver == 0x04)) && pModule->ne_modtab)
+    {
+        WORD* pModuleTable;
+        BYTE* pImportTable;
+        BOOL importsDosCalls = FALSE;
+        BOOL importsKernel = FALSE;
+        int i;
+
+        /* Get address of module table and import table from their offsets */
+        pModuleTable = (WORD*)(((BYTE*)pModule) + pModule->ne_modtab);
+        pImportTable = ((BYTE*)pModule) + pModule->ne_imptab;
+
+        /* Look for imports from DOSCALLS and KERNEL */
+        for (i = 0; i < pModule->ne_cmod; i++)
+        {
+            BYTE len;
+            char* moduleName;
+
+            /* Module name is a Pascal string so first byte is the length of the string */
+            len = *(pImportTable + pModuleTable[i]);
+            moduleName = (char*)(pImportTable + pModuleTable[i] + 1);
+
+            if (!importsDosCalls && !strncmp("DOSCALLS", moduleName, len))
+                importsDosCalls = TRUE;
+
+            else if (!importsKernel && !strncmp("KERNEL", moduleName, len))
+                importsKernel = TRUE;
+
+            if (importsDosCalls && importsKernel)
+                break;
+        }
+
+        /* If the module has imports from DOSCALLS but not KERNEL, assume it's for OS/2 or Multitasking DOS 4. */
+        if (importsDosCalls && !importsKernel)
+            goto failed;
+    }
 
     /* Load entry table, convert it to the optimized version used by Windows */
 
