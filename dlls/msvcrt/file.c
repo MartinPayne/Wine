@@ -581,30 +581,57 @@ void msvcrt_init_io(void)
   fdinfo = get_ioinfo_alloc_fd(MSVCRT_STDIN_FILENO);
   if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
     HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD flags = WX_OPEN | WX_TEXT;
     DWORD type = GetFileType(h);
 
-    msvcrt_set_fd(fdinfo, h, WX_OPEN|WX_TEXT|((type&0xf)==FILE_TYPE_CHAR ? WX_TTY : 0)
-            |((type&0xf)==FILE_TYPE_PIPE ? WX_PIPE : 0));
+    if (type == FILE_TYPE_UNKNOWN) {
+        h = MSVCRT_NO_CONSOLE;
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
+        flags |= WX_PIPE;
+    }
+
+    msvcrt_set_fd(fdinfo, h, flags);
   }
   release_ioinfo(fdinfo);
 
   fdinfo = get_ioinfo_alloc_fd(MSVCRT_STDOUT_FILENO);
   if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD flags = WX_OPEN | WX_TEXT;
     DWORD type = GetFileType(h);
 
-    msvcrt_set_fd(fdinfo, h, WX_OPEN|WX_TEXT|((type&0xf)==FILE_TYPE_CHAR ? WX_TTY : 0)
-            |((type&0xf)==FILE_TYPE_PIPE ? WX_PIPE : 0));
+    if (type == FILE_TYPE_UNKNOWN) {
+        h = MSVCRT_NO_CONSOLE;
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
+        flags |= WX_PIPE;
+    }
+
+    msvcrt_set_fd(fdinfo, h, flags);
   }
   release_ioinfo(fdinfo);
 
   fdinfo = get_ioinfo_alloc_fd(MSVCRT_STDERR_FILENO);
   if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD flags = WX_OPEN | WX_TEXT;
     DWORD type = GetFileType(h);
 
-    msvcrt_set_fd(fdinfo, h, WX_OPEN|WX_TEXT|((type&0xf)==FILE_TYPE_CHAR ? WX_TTY : 0)
-            |((type&0xf)==FILE_TYPE_PIPE ? WX_PIPE : 0));
+    if (type == FILE_TYPE_UNKNOWN) {
+        h = MSVCRT_NO_CONSOLE;
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
+        flags |= WX_TTY;
+    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
+        flags |= WX_PIPE;
+    }
+
+    msvcrt_set_fd(fdinfo, h, flags);
   }
   release_ioinfo(fdinfo);
 
@@ -616,7 +643,8 @@ void msvcrt_init_io(void)
   for (i = 0; i < 3; i++)
   {
     /* FILE structs for stdin/out/err are static and never deleted */
-    MSVCRT__iob[i]._file = i;
+    MSVCRT__iob[i]._file = get_ioinfo_nolock(i)->handle == MSVCRT_NO_CONSOLE ?
+        MSVCRT_NO_CONSOLE_FD : i;
     MSVCRT__iob[i]._tmpfname = NULL;
     MSVCRT__iob[i]._flag = (i == 0) ? MSVCRT__IOREAD : MSVCRT__IOWRT;
   }
@@ -1019,7 +1047,11 @@ int CDECL MSVCRT__close(int fd)
   int ret;
 
   TRACE(":fd (%d) handle (%p)\n", fd, info->handle);
-  if (!(info->wxflag & WX_OPEN)) {
+
+  if (fd == MSVCRT_NO_CONSOLE_FD) {
+    *MSVCRT__errno() = MSVCRT_EBADF;
+    ret = -1;
+  } else if (!(info->wxflag & WX_OPEN)) {
     ret = -1;
   } else if (fd == MSVCRT_STDOUT_FILENO &&
           info->handle == get_ioinfo_nolock(MSVCRT_STDERR_FILENO)->handle) {
@@ -2860,6 +2892,7 @@ static int read_i(int fd, ioinfo *fdinfo, void *buf, unsigned int count)
         else
         {
             TRACE(":failed-last error (%d)\n",GetLastError());
+            msvcrt_set_errno(GetLastError());
             return -1;
         }
     }
@@ -2874,8 +2907,16 @@ static int read_i(int fd, ioinfo *fdinfo, void *buf, unsigned int count)
  */
 int CDECL MSVCRT__read(int fd, void *buf, unsigned int count)
 {
-    ioinfo *info = get_ioinfo(fd);
-    int num_read = read_i(fd, info, buf, count);
+    ioinfo *info;
+    int num_read;
+
+    if(fd == MSVCRT_NO_CONSOLE_FD) {
+        *MSVCRT__errno() = MSVCRT_EBADF;
+        return -1;
+    }
+
+    info = get_ioinfo(fd);
+    num_read = read_i(fd, info, buf, count);
     release_ioinfo(info);
     return num_read;
 }
@@ -3382,7 +3423,7 @@ int CDECL MSVCRT__write(int fd, const void* buf, unsigned int count)
     if (count > 32)
         TRACE(":fd (%d) handle (%d) buf (%p) len (%d)\n",fd,hand,buf,count);
 #endif
-    if (hand == INVALID_HANDLE_VALUE)
+    if (hand == INVALID_HANDLE_VALUE || fd == MSVCRT_NO_CONSOLE_FD)
     {
         *MSVCRT__errno() = MSVCRT_EBADF;
         release_ioinfo(info);
@@ -3410,14 +3451,14 @@ int CDECL MSVCRT__write(int fd, const void* buf, unsigned int count)
         }
         TRACE("WriteFile (fd %d, hand %p) failed-last error (%d)\n", fd,
                 hand, GetLastError());
-        *MSVCRT__errno() = MSVCRT_ENOSPC;
+        msvcrt_set_errno(GetLastError());
     }
     else
     {
         unsigned int i, j, nr_lf, size;
         char *p = NULL;
         const char *q;
-        const char *s = buf, *buf_start = buf;
+        const char *s = buf;
 
         if (!(info->exflag & (EF_UTF8|EF_UTF16)))
         {
@@ -3536,8 +3577,8 @@ int CDECL MSVCRT__write(int fd, const void* buf, unsigned int count)
         {
             TRACE("WriteFile (fd %d, hand %p) failed-last error (%d), num_written %d\n",
                     fd, hand, GetLastError(), num_written);
-            *MSVCRT__errno() = MSVCRT_ENOSPC;
-            return s - buf_start;
+            msvcrt_set_errno(GetLastError());
+            return -1;
         }
         return count;
     }
@@ -3886,6 +3927,7 @@ int CDECL MSVCRT__flsbuf(int c, MSVCRT_FILE* file)
     if(!(file->_flag & MSVCRT__IOWRT)) {
         if(!(file->_flag & MSVCRT__IORW)) {
             file->_flag |= MSVCRT__IOERR;
+            *MSVCRT__errno() = MSVCRT_EBADF;
             return MSVCRT_EOF;
         }
         file->_flag |= MSVCRT__IOWRT;
@@ -4259,9 +4301,12 @@ MSVCRT_size_t CDECL MSVCRT__fread_nolock(void *ptr, MSVCRT_size_t size, MSVCRT_s
   {
     int i;
     if (!file->_cnt && rcnt<MSVCRT_BUFSIZ && (file->_flag & (MSVCRT__IOMYBUF | MSVCRT__USERBUF))) {
-      file->_cnt = MSVCRT__read(file->_file, file->_base, file->_bufsiz);
+      i = MSVCRT__read(file->_file, file->_base, file->_bufsiz);
       file->_ptr = file->_base;
-      i = (file->_cnt<rcnt) ? file->_cnt : rcnt;
+      if (i != -1) {
+          file->_cnt = i;
+          if (i > rcnt) i = rcnt;
+      }
       /* If the buffer fill reaches eof but fread wouldn't, clear eof. */
       if (i > 0 && i < file->_cnt) {
         get_ioinfo_nolock(file->_file)->wxflag &= ~WX_ATEOF;

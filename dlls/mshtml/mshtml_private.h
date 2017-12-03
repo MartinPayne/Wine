@@ -283,6 +283,14 @@ typedef struct {
     dispex_data_t *delayed_init_info;
 } dispex_static_data_t;
 
+typedef HRESULT (*dispex_hook_invoke_t)(DispatchEx*,LCID,WORD,DISPPARAMS*,VARIANT*,
+                                        EXCEPINFO*,IServiceProvider*);
+
+typedef struct {
+    DISPID dispid;
+    dispex_hook_invoke_t invoke;
+} dispex_hook_t;
+
 struct DispatchEx {
     IDispatchEx IDispatchEx_iface;
 
@@ -331,7 +339,7 @@ void dispex_unlink(DispatchEx*) DECLSPEC_HIDDEN;
 void release_typelib(void) DECLSPEC_HIDDEN;
 HRESULT get_class_typeinfo(const CLSID*,ITypeInfo**) DECLSPEC_HIDDEN;
 const void *dispex_get_vtbl(DispatchEx*) DECLSPEC_HIDDEN;
-void dispex_info_add_interface(dispex_data_t*,tid_t,const DISPID*) DECLSPEC_HIDDEN;
+void dispex_info_add_interface(dispex_data_t*,tid_t,const dispex_hook_t*) DECLSPEC_HIDDEN;
 compat_mode_t dispex_compat_mode(DispatchEx*) DECLSPEC_HIDDEN;
 
 static inline void init_dispex(DispatchEx *dispex, IUnknown *outer, dispex_static_data_t *desc)
@@ -602,10 +610,7 @@ struct HTMLDocument {
 
     HTMLOuterWindow *window;
 
-    LONG task_magic;
-
     ConnectionPointContainer cp_container;
-    IOleAdviseHolder *advise_holder;
 };
 
 static inline HRESULT htmldoc_query_interface(HTMLDocument *This, REFIID riid, void **ppv)
@@ -648,6 +653,7 @@ struct HTMLDocumentObj {
     IUnknown *webbrowser;
     ITravelLog *travel_log;
     IUnknown *browser_service;
+    IOleAdviseHolder *advise_holder;
 
     DOCHOSTUIINFO hostinfo;
 
@@ -672,6 +678,7 @@ struct HTMLDocumentObj {
     LPWSTR mime;
 
     DWORD update;
+    LONG task_magic;
 };
 
 typedef struct nsWeakReference nsWeakReference;
@@ -697,7 +704,6 @@ struct NSContainer {
 
     nsWeakReference *weak_reference;
 
-    NSContainer *parent;
     HTMLDocumentObj *doc;
 
     nsIURIContentListener *content_listener;
@@ -867,7 +873,6 @@ void HTMLDocument_Persist_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_OleCmd_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_OleObj_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_View_Init(HTMLDocument*) DECLSPEC_HIDDEN;
-void HTMLDocument_Window_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_Service_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 
 void TargetContainer_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
@@ -1100,7 +1105,7 @@ void do_ns_command(HTMLDocument*,const char*,nsICommandParams*) DECLSPEC_HIDDEN;
 #define UPDATE_UI       0x0001
 #define UPDATE_TITLE    0x0002
 
-void update_doc(HTMLDocument*,DWORD) DECLSPEC_HIDDEN;
+void update_doc(HTMLDocumentObj*,DWORD) DECLSPEC_HIDDEN;
 void update_title(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void set_document_navigation(HTMLDocumentObj*,BOOL) DECLSPEC_HIDDEN;
 
@@ -1146,7 +1151,6 @@ HWND get_thread_hwnd(void) DECLSPEC_HIDDEN;
 LONG get_task_target_magic(void) DECLSPEC_HIDDEN;
 HRESULT push_task(task_t*,task_proc_t,task_proc_t,LONG) DECLSPEC_HIDDEN;
 void remove_target_tasks(LONG) DECLSPEC_HIDDEN;
-void flush_pending_tasks(LONG) DECLSPEC_HIDDEN;
 
 HRESULT set_task_timer(HTMLInnerWindow*,LONG,BOOL,IDispatch*,LONG*) DECLSPEC_HIDDEN;
 HRESULT clear_task_timer(HTMLInnerWindow*,DWORD) DECLSPEC_HIDDEN;

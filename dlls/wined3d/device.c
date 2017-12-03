@@ -1030,6 +1030,7 @@ static void wined3d_device_create_primary_opengl_context_cs(void *object)
     wined3d_ffp_blitter_create(&device->blitter, &device->adapter->gl_info);
     wined3d_arbfp_blitter_create(&device->blitter, device);
     wined3d_fbo_blitter_create(&device->blitter, &device->adapter->gl_info);
+    wined3d_raw_blitter_create(&device->blitter, &device->adapter->gl_info);
 
     swapchain = device->swapchains[0];
     target = swapchain->back_buffers ? swapchain->back_buffers[0] : swapchain->front_buffer;
@@ -4028,9 +4029,10 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
         return;
     }
 
-    if (src_resource->format->id != dst_resource->format->id)
+    if (src_resource->format->typeless_id != dst_resource->format->typeless_id
+            || (!src_resource->format->typeless_id && src_resource->format->id != dst_resource->format->id))
     {
-        WARN("Resource formats (%s / %s) don't match.\n",
+        WARN("Resource formats %s and %s are incompatible.\n",
                 debug_d3dformat(dst_resource->format->id),
                 debug_d3dformat(src_resource->format->id));
         return;
@@ -4040,7 +4042,7 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
     {
         wined3d_box_set(&box, 0, 0, src_resource->size, 1, 0, 1);
         wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, 0, &box,
-                src_resource, 0, &box, 0, NULL, WINED3D_TEXF_POINT);
+                src_resource, 0, &box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
         return;
     }
 
@@ -4067,7 +4069,7 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
             unsigned int idx = j * dst_texture->level_count + i;
 
             wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, idx, &box,
-                    src_resource, idx, &box, 0, NULL, WINED3D_TEXF_POINT);
+                    src_resource, idx, &box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
         }
     }
 }
@@ -4098,9 +4100,10 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (src_resource->format->id != dst_resource->format->id)
+    if (src_resource->format->typeless_id != dst_resource->format->typeless_id
+            || (!src_resource->format->typeless_id && src_resource->format->id != dst_resource->format->id))
     {
-        WARN("Resource formats (%s / %s) don't match.\n",
+        WARN("Resource formats %s and %s are incompatible.\n",
                 debug_d3dformat(dst_resource->format->id),
                 debug_d3dformat(src_resource->format->id));
         return WINED3DERR_INVALIDCALL;
@@ -4122,7 +4125,10 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
 
         if (!src_box)
         {
-            wined3d_box_set(&b, 0, 0, src_resource->size, 1, 0, 1);
+            unsigned int dst_w;
+
+            dst_w = dst_resource->size - dst_x;
+            wined3d_box_set(&b, 0, 0, min(src_resource->size, dst_w), 1, 0, 1);
             src_box = &b;
         }
         else if ((src_box->left >= src_box->right
@@ -4175,8 +4181,16 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
 
         if (!src_box)
         {
-            wined3d_box_set(&b, 0, 0, wined3d_texture_get_level_width(src_texture, src_level),
-                    wined3d_texture_get_level_height(src_texture, src_level), 0, 1);
+            unsigned int src_w, src_h, dst_w, dst_h, dst_level;
+
+            src_w = wined3d_texture_get_level_width(src_texture, src_level);
+            src_h = wined3d_texture_get_level_height(src_texture, src_level);
+
+            dst_level = dst_sub_resource_idx % dst_texture->level_count;
+            dst_w = wined3d_texture_get_level_width(dst_texture, dst_level) - dst_x;
+            dst_h = wined3d_texture_get_level_height(dst_texture, dst_level) - dst_y;
+
+            wined3d_box_set(&b, 0, 0, min(src_w, dst_w), min(src_h, dst_h), 0, 1);
             src_box = &b;
         }
         else if (FAILED(wined3d_texture_check_box_dimensions(src_texture, src_level, src_box)))
@@ -4201,7 +4215,7 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
     }
 
     wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, dst_sub_resource_idx, &dst_box,
-            src_resource, src_sub_resource_idx, src_box, 0, NULL, WINED3D_TEXF_POINT);
+            src_resource, src_sub_resource_idx, src_box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
 
     return WINED3D_OK;
 }

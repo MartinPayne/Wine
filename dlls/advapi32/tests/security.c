@@ -133,6 +133,7 @@ static BOOL     (WINAPI *pGetWindowsAccountDomainSid)(PSID,PSID,DWORD*);
 static void     (WINAPI *pRtlInitAnsiString)(PANSI_STRING,PCSZ);
 static NTSTATUS (WINAPI *pRtlFreeUnicodeString)(PUNICODE_STRING);
 static PSID_IDENTIFIER_AUTHORITY (WINAPI *pGetSidIdentifierAuthority)(PSID);
+static DWORD    (WINAPI *pGetExplicitEntriesFromAclW)(PACL,PULONG,PEXPLICIT_ACCESSW*);
 
 static HMODULE hmod;
 static int     myARGC;
@@ -227,6 +228,7 @@ static void init(void)
     pGetWindowsAccountDomainSid = (void *)GetProcAddress(hmod, "GetWindowsAccountDomainSid");
     pGetSidIdentifierAuthority = (void *)GetProcAddress(hmod, "GetSidIdentifierAuthority");
     pDuplicateTokenEx = (void *)GetProcAddress(hmod, "DuplicateTokenEx");
+    pGetExplicitEntriesFromAclW = (void *)GetProcAddress(hmod, "GetExplicitEntriesFromAclW");
 
     myARGC = winetest_get_mainargs( &myARGV );
 }
@@ -2729,12 +2731,12 @@ static void test_LookupAccountName(void)
 
 static void test_security_descriptor(void)
 {
-    SECURITY_DESCRIPTOR sd;
+    SECURITY_DESCRIPTOR sd, *sd_rel, *sd_rel2, *sd_abs;
     char buf[8192];
-    DWORD size;
+    DWORD size, size_dacl, size_sacl, size_owner, size_group;
     BOOL isDefault, isPresent, ret;
-    PACL pacl;
-    PSID psid;
+    PACL pacl, dacl, sacl;
+    PSID psid, owner, group;
 
     SetLastError(0xdeadbeef);
     ret = InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
@@ -2772,6 +2774,46 @@ static void test_security_descriptor(void)
         expect_eq(psid, NULL, PSID, "%p");
         expect_eq(isDefault, FALSE, BOOL, "%d");
     }
+
+    ret = pConvertStringSecurityDescriptorToSecurityDescriptorA(
+        "O:SYG:S-1-5-21-93476-23408-4576D:(A;NP;GAGXGWGR;;;SU)(A;IOID;CCDC;;;SU)"
+        "(D;OICI;0xffffffff;;;S-1-5-21-93476-23408-4576)S:(AU;OICINPIOIDSAFA;CCDCLCSWRPRC;;;SU)"
+        "(AU;NPSA;0x12019f;;;SU)", SDDL_REVISION_1, (void **)&sd_rel, NULL);
+    ok(ret, "got %u\n", GetLastError());
+
+    size = 0;
+    ret = MakeSelfRelativeSD(sd_rel, NULL, &size);
+    todo_wine ok(!ret && GetLastError() == ERROR_BAD_DESCRIPTOR_FORMAT, "got %u\n", GetLastError());
+
+    /* convert to absolute form */
+    size = size_dacl = size_sacl = size_owner = size_group = 0;
+    ret = MakeAbsoluteSD(sd_rel, NULL, &size, NULL, &size_dacl, NULL, &size_sacl, NULL, &size_owner, NULL,
+                         &size_group);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+
+    sd_abs = HeapAlloc(GetProcessHeap(), 0, size + size_dacl + size_sacl + size_owner + size_group);
+    dacl = (PACL)(sd_abs + 1);
+    sacl = (PACL)((char *)dacl + size_dacl);
+    owner = (PSID)((char *)sacl + size_sacl);
+    group = (PSID)((char *)owner + size_owner);
+    ret = MakeAbsoluteSD(sd_rel, sd_abs, &size, dacl, &size_dacl, sacl, &size_sacl, owner, &size_owner,
+                         group, &size_group);
+    ok(ret, "got %u\n", GetLastError());
+
+    size = 0;
+    ret = MakeSelfRelativeSD(sd_abs, NULL, &size);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(size == 184, "got %u\n", size);
+
+    size += 4;
+    sd_rel2 = HeapAlloc(GetProcessHeap(), 0, size);
+    ret = MakeSelfRelativeSD(sd_abs, sd_rel2, &size);
+    ok(ret, "got %u\n", GetLastError());
+    ok(size == 188, "got %u\n", size);
+
+    HeapFree(GetProcessHeap(), 0, sd_abs);
+    HeapFree(GetProcessHeap(), 0, sd_rel2);
+    LocalFree(sd_rel);
 }
 
 #define TEST_GRANTED_ACCESS(a,b) test_granted_access(a,b,0,__LINE__)
@@ -4099,6 +4141,8 @@ static void test_ConvertStringSecurityDescriptor(void)
     PSECURITY_DESCRIPTOR pSD;
     static const WCHAR Blank[] = { 0 };
     unsigned int i;
+    ULONG size;
+    ACL *acl;
     static const struct
     {
         const char *sidstring;
@@ -4209,6 +4253,33 @@ static void test_ConvertStringSecurityDescriptor(void)
     ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_DATATYPE) /* win2k */,
        "ConvertStringSecurityDescriptorToSecurityDescriptor failed with error %u\n", GetLastError());
     if (ret) LocalFree(pSD);
+
+    /* empty DACL */
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pConvertStringSecurityDescriptorToSecurityDescriptorA("D:", SDDL_REVISION_1, &pSD, &size);
+    ok(ret, "unexpected error %u\n", GetLastError());
+    ok(size == sizeof(SECURITY_DESCRIPTOR_RELATIVE) + sizeof(ACL), "got %u\n", size);
+    acl = (ACL *)((char *)pSD + sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+    ok(acl->AclRevision == ACL_REVISION, "got %u\n", acl->AclRevision);
+    ok(!acl->Sbz1, "got %u\n", acl->Sbz1);
+    ok(acl->AclSize == sizeof(*acl), "got %u\n", acl->AclSize);
+    ok(!acl->AceCount, "got %u\n", acl->AceCount);
+    ok(!acl->Sbz2, "got %u\n", acl->Sbz2);
+    LocalFree(pSD);
+
+    /* empty SACL */
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pConvertStringSecurityDescriptorToSecurityDescriptorA("S:", SDDL_REVISION_1, &pSD, &size);
+    ok(ret, "unexpected error %u\n", GetLastError());
+    ok(size == sizeof(SECURITY_DESCRIPTOR_RELATIVE) + sizeof(ACL), "got %u\n", size);
+    acl = (ACL *)((char *)pSD + sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+    ok(!acl->Sbz1, "got %u\n", acl->Sbz1);
+    ok(acl->AclSize == sizeof(*acl), "got %u\n", acl->AclSize);
+    ok(!acl->AceCount, "got %u\n", acl->AceCount);
+    ok(!acl->Sbz2, "got %u\n", acl->Sbz2);
+    LocalFree(pSD);
 }
 
 static void test_ConvertSecurityDescriptorToString(void)
@@ -7098,6 +7169,145 @@ static void test_child_token_sd(void)
     HeapFree(GetProcessHeap(), 0, sd);
 }
 
+static void test_GetExplicitEntriesFromAclW(void)
+{
+    static const WCHAR wszCurrentUser[] = { 'C','U','R','R','E','N','T','_','U','S','E','R','\0'};
+    SID_IDENTIFIER_AUTHORITY SIDAuthWorld = { SECURITY_WORLD_SID_AUTHORITY };
+    SID_IDENTIFIER_AUTHORITY SIDAuthNT = { SECURITY_NT_AUTHORITY };
+    PSID everyone_sid = NULL, users_sid = NULL;
+    EXPLICIT_ACCESSW access;
+    EXPLICIT_ACCESSW *access2;
+    PACL new_acl, old_acl = NULL;
+    ULONG count;
+    DWORD res;
+
+    if (!pGetExplicitEntriesFromAclW)
+    {
+        win_skip("GetExplicitEntriesFromAclW is not available\n");
+        return;
+    }
+
+    if (!pSetEntriesInAclW)
+    {
+        win_skip("SetEntriesInAclW is not available\n");
+        return;
+    }
+
+    old_acl = HeapAlloc(GetProcessHeap(), 0, 256);
+    res = InitializeAcl(old_acl, 256, ACL_REVISION);
+    if(!res && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)
+    {
+        win_skip("ACLs not implemented - skipping tests\n");
+        HeapFree(GetProcessHeap(), 0, old_acl);
+        return;
+    }
+    ok(res, "InitializeAcl failed with error %d\n", GetLastError());
+
+    res = AllocateAndInitializeSid(&SIDAuthWorld, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, &everyone_sid);
+    ok(res, "AllocateAndInitializeSid failed with error %d\n", GetLastError());
+
+    res = AllocateAndInitializeSid(&SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                   DOMAIN_ALIAS_RID_USERS, 0, 0, 0, 0, 0, 0, &users_sid);
+    ok(res, "AllocateAndInitializeSid failed with error %d\n", GetLastError());
+
+    res = AddAccessAllowedAce(old_acl, ACL_REVISION, KEY_READ, users_sid);
+    ok(res, "AddAccessAllowedAce failed with error %d\n", GetLastError());
+
+    access2 = NULL;
+    res = pGetExplicitEntriesFromAclW(old_acl, &count, &access2);
+    ok(res == ERROR_SUCCESS, "GetExplicitEntriesFromAclW failed with error %d\n", GetLastError());
+    ok(count == 1, "Expected count == 1, got %d\n", count);
+    ok(access2[0].grfAccessMode == GRANT_ACCESS, "Expected GRANT_ACCESS, got %d\n", access2[0].grfAccessMode);
+    ok(access2[0].grfAccessPermissions == KEY_READ, "Expected KEY_READ, got %d\n", access2[0].grfAccessPermissions);
+    ok(access2[0].Trustee.TrusteeForm == TRUSTEE_IS_SID, "Expected SID trustee, got %d\n", access2[0].Trustee.TrusteeForm);
+    ok(access2[0].grfInheritance == NO_INHERITANCE, "Expected NO_INHERITANCE, got %x\n", access2[0].grfInheritance);
+    ok(EqualSid(access2[0].Trustee.ptstrName, users_sid), "Expected equal SIDs\n");
+    LocalFree(access2);
+
+    access.Trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
+    access.Trustee.pMultipleTrustee = NULL;
+
+    access.grfAccessPermissions = KEY_WRITE;
+    access.grfAccessMode = GRANT_ACCESS;
+    access.grfInheritance = NO_INHERITANCE;
+    access.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.ptstrName = everyone_sid;
+    res = pSetEntriesInAclW(1, &access, old_acl, &new_acl);
+    ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %u\n", res);
+    ok(new_acl != NULL, "returned acl was NULL\n");
+
+    access2 = NULL;
+    res = pGetExplicitEntriesFromAclW(new_acl, &count, &access2);
+    ok(res == ERROR_SUCCESS, "GetExplicitEntriesFromAclW failed with error %d\n", GetLastError());
+    ok(count == 2, "Expected count == 2, got %d\n", count);
+    ok(access2[0].grfAccessMode == GRANT_ACCESS, "Expected GRANT_ACCESS, got %d\n", access2[0].grfAccessMode);
+    ok(access2[0].grfAccessPermissions == KEY_WRITE, "Expected KEY_WRITE, got %d\n", access2[0].grfAccessPermissions);
+    ok(access2[0].Trustee.TrusteeType == TRUSTEE_IS_UNKNOWN,
+       "Expected TRUSTEE_IS_UNKNOWN trustee type, got %d\n", access2[0].Trustee.TrusteeType);
+    ok(access2[0].Trustee.TrusteeForm == TRUSTEE_IS_SID, "Expected SID trustee, got %d\n", access2[0].Trustee.TrusteeForm);
+    ok(access2[0].grfInheritance == NO_INHERITANCE, "Expected NO_INHERITANCE, got %x\n", access2[0].grfInheritance);
+    ok(EqualSid(access2[0].Trustee.ptstrName, everyone_sid), "Expected equal SIDs\n");
+    LocalFree(access2);
+    LocalFree(new_acl);
+
+    access.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+    res = pSetEntriesInAclW(1, &access, old_acl, &new_acl);
+    ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %u\n", res);
+    ok(new_acl != NULL, "returned acl was NULL\n");
+
+    access2 = NULL;
+    res = pGetExplicitEntriesFromAclW(new_acl, &count, &access2);
+    ok(res == ERROR_SUCCESS, "GetExplicitEntriesFromAclW failed with error %d\n", GetLastError());
+    ok(count == 2, "Expected count == 2, got %d\n", count);
+    ok(access2[0].grfAccessMode == GRANT_ACCESS, "Expected GRANT_ACCESS, got %d\n", access2[0].grfAccessMode);
+    ok(access2[0].grfAccessPermissions == KEY_WRITE, "Expected KEY_WRITE, got %d\n", access2[0].grfAccessPermissions);
+    ok(access2[0].Trustee.TrusteeType == TRUSTEE_IS_UNKNOWN,
+       "Expected TRUSTEE_IS_UNKNOWN trustee type, got %d\n", access2[0].Trustee.TrusteeType);
+    ok(access2[0].Trustee.TrusteeForm == TRUSTEE_IS_SID, "Expected SID trustee, got %d\n", access2[0].Trustee.TrusteeForm);
+    ok(access2[0].grfInheritance == NO_INHERITANCE, "Expected NO_INHERITANCE, got %x\n", access2[0].grfInheritance);
+    ok(EqualSid(access2[0].Trustee.ptstrName, everyone_sid), "Expected equal SIDs\n");
+    LocalFree(access2);
+    LocalFree(new_acl);
+
+    access.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
+    access.Trustee.ptstrName = (LPWSTR)wszCurrentUser;
+    res = pSetEntriesInAclW(1, &access, old_acl, &new_acl);
+    ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %u\n", res);
+    ok(new_acl != NULL, "returned acl was NULL\n");
+
+    access2 = NULL;
+    res = pGetExplicitEntriesFromAclW(new_acl, &count, &access2);
+    ok(res == ERROR_SUCCESS, "GetExplicitEntriesFromAclW failed with error %d\n", GetLastError());
+    ok(count == 2, "Expected count == 2, got %d\n", count);
+    ok(access2[0].grfAccessMode == GRANT_ACCESS, "Expected GRANT_ACCESS, got %d\n", access2[0].grfAccessMode);
+    ok(access2[0].grfAccessPermissions == KEY_WRITE, "Expected KEY_WRITE, got %d\n", access2[0].grfAccessPermissions);
+    ok(access2[0].Trustee.TrusteeType == TRUSTEE_IS_UNKNOWN,
+       "Expected TRUSTEE_IS_UNKNOWN trustee type, got %d\n", access2[0].Trustee.TrusteeType);
+    ok(access2[0].Trustee.TrusteeForm == TRUSTEE_IS_SID, "Expected SID trustee, got %d\n", access2[0].Trustee.TrusteeForm);
+    ok(access2[0].grfInheritance == NO_INHERITANCE, "Expected NO_INHERITANCE, got %x\n", access2[0].grfInheritance);
+    LocalFree(access2);
+    LocalFree(new_acl);
+
+    access.grfAccessMode = REVOKE_ACCESS;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.ptstrName = users_sid;
+    res = pSetEntriesInAclW(1, &access, old_acl, &new_acl);
+    ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %u\n", res);
+    ok(new_acl != NULL, "returned acl was NULL\n");
+
+    access2 = (void *)0xdeadbeef;
+    res = pGetExplicitEntriesFromAclW(new_acl, &count, &access2);
+    ok(res == ERROR_SUCCESS, "GetExplicitEntriesFromAclW failed with error %d\n", GetLastError());
+    ok(count == 0, "Expected count == 0, got %d\n", count);
+    ok(access2 == NULL, "access2 was not NULL\n");
+    LocalFree(new_acl);
+
+    FreeSid(users_sid);
+    FreeSid(everyone_sid);
+    HeapFree(GetProcessHeap(), 0, old_acl);
+}
+
 START_TEST(security)
 {
     init();
@@ -7151,6 +7361,7 @@ START_TEST(security)
     test_pseudo_tokens();
     test_maximum_allowed();
     test_token_label();
+    test_GetExplicitEntriesFromAclW();
 
     /* Must be the last test, modifies process token */
     test_token_security_descriptor();

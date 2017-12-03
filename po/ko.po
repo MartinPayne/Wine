@@ -61,14 +61,14 @@ msgstr "지원 정보"
 #: dinput.rc:46 ieframe.rc:96 localui.rc:44 localui.rc:57 mpr.rc:49
 #: msacm32.rc:53 mshtml.rc:47 mshtml.rc:57 msvfw32.rc:36 oledlg.rc:62
 #: oledlg.rc:94 serialui.rc:41 setupapi.rc:59 shell32.rc:276 shell32.rc:300
-#: shell32.rc:322 shell32.rc:341 shlwapi.rc:44 user32.rc:83 user32.rc:98
-#: wininet.rc:51 wininet.rc:71 winspool.rc:42 net.rc:47 notepad.rc:117
-#: oleview.rc:161 oleview.rc:174 progman.rc:106 progman.rc:124 progman.rc:142
-#: progman.rc:158 progman.rc:180 progman.rc:199 progman.rc:216 regedit.rc:296
-#: regedit.rc:307 regedit.rc:320 regedit.rc:336 regedit.rc:349 regedit.rc:362
-#: taskmgr.rc:442 taskmgr.rc:517 winecfg.rc:214 winecfg.rc:224
+#: shell32.rc:322 shell32.rc:341 shlwapi.rc:44 twain.rc:32 user32.rc:83
+#: user32.rc:98 wininet.rc:51 wininet.rc:71 winspool.rc:42 net.rc:47
+#: notepad.rc:117 oleview.rc:161 oleview.rc:174 progman.rc:106 progman.rc:124
+#: progman.rc:142 progman.rc:158 progman.rc:180 progman.rc:199 progman.rc:216
+#: regedit.rc:296 regedit.rc:307 regedit.rc:320 regedit.rc:336 regedit.rc:349
+#: regedit.rc:362 taskmgr.rc:442 taskmgr.rc:517 winecfg.rc:214 winecfg.rc:224
 #: wineconsole.rc:135 winefile.rc:128 winefile.rc:151 winefile.rc:181
-#: winemine.rc:71 winemine.rc:82 winemine.rc:96 wordpad.rc:215 wordpad.rc:226
+#: winemine.rc:73 winemine.rc:84 winemine.rc:98 wordpad.rc:215 wordpad.rc:226
 #: wordpad.rc:244 wordpad.rc:257
 msgid "OK"
 msgstr "확인"
@@ -144,14 +144,14 @@ msgstr "설치(&I)"
 #: localui.rc:45 localui.rc:58 mpr.rc:50 msacm32.rc:54 mshtml.rc:48
 #: mshtml.rc:58 msvfw32.rc:37 oledlg.rc:63 oledlg.rc:95 serialui.rc:42
 #: setupapi.rc:42 setupapi.rc:60 shell32.rc:277 shell32.rc:301 shell32.rc:312
-#: shell32.rc:342 shlwapi.rc:45 user32.rc:84 user32.rc:99 wininet.rc:52
-#: wininet.rc:72 winspool.rc:43 notepad.rc:118 oleview.rc:162 oleview.rc:175
-#: progman.rc:107 progman.rc:125 progman.rc:143 progman.rc:159 progman.rc:181
-#: progman.rc:200 progman.rc:217 regedit.rc:297 regedit.rc:308 regedit.rc:321
-#: regedit.rc:337 regedit.rc:350 regedit.rc:363 taskmgr.rc:443 taskmgr.rc:518
-#: wineboot.rc:34 winecfg.rc:215 winecfg.rc:225 wineconsole.rc:136
-#: winefile.rc:129 winefile.rc:152 winefile.rc:182 winemine.rc:97
-#: wordpad.rc:216 wordpad.rc:227 wordpad.rc:245 wordpad.rc:258
+#: shell32.rc:342 shlwapi.rc:45 twain.rc:33 user32.rc:84 user32.rc:99
+#: wininet.rc:52 wininet.rc:72 winspool.rc:43 notepad.rc:118 oleview.rc:162
+#: oleview.rc:175 progman.rc:107 progman.rc:125 progman.rc:143 progman.rc:159
+#: progman.rc:181 progman.rc:200 progman.rc:217 regedit.rc:297 regedit.rc:308
+#: regedit.rc:321 regedit.rc:337 regedit.rc:350 regedit.rc:363 taskmgr.rc:443
+#: taskmgr.rc:518 wineboot.rc:34 winecfg.rc:215 winecfg.rc:225
+#: wineconsole.rc:136 winefile.rc:129 winefile.rc:152 winefile.rc:182
+#: winemine.rc:99 wordpad.rc:216 wordpad.rc:227 wordpad.rc:245 wordpad.rc:258
 msgid "Cancel"
 msgstr "취소"
 
@@ -161,15 +161,17 @@ msgstr "Wine Mono 설치관리자"
 
 #: appwiz.rc:118
 msgid ""
-"Wine could not find a Mono package which is needed for .NET applications to "
-"work correctly. Wine can automatically download and install it for you.\n"
+"Wine could not find a wine-mono package which is needed for .NET "
+"applications to work correctly. Wine can automatically download and install "
+"it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
 "href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
-"Wine은 닷넷 응용프로그램을 제대로 실행시키기 위해 필요한 Mono 패키지를 찾을 "
-"수없습니다. Wine은 당신을 위해서 자동으로 다운로드하고 설치할 것입니다.\n"
+"Wine은 닷넷 응용프로그램을 제대로 실행시키기 위해 필요한 wine-mono 패키지를 "
+"찾을 수없습니다. Wine은 당신을 위해서 자동으로 다운로드하고 설치할 것입니"
+"다.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
 "주의:당신의 배포판의 패키지를 대신 사용하는 것을 추천합니다.자세한 것은<a "
@@ -352,7 +354,7 @@ msgstr "재설정(&E)"
 #: clock.rc:44 notepad.rc:60 notepad.rc:119 oleview.rc:72 progman.rc:55
 #: progman.rc:108 progman.rc:126 progman.rc:144 progman.rc:160 progman.rc:184
 #: progman.rc:202 progman.rc:219 regedit.rc:77 taskmgr.rc:87 winefile.rc:82
-#: winemine.rc:51 winhlp32.rc:57 wordpad.rc:102
+#: winemine.rc:53 winhlp32.rc:57 wordpad.rc:102
 msgid "&Help"
 msgstr "도움말(&H)"
 
@@ -8568,7 +8570,7 @@ msgid "&Rename"
 msgstr "이름 바꾸기(&R)"
 
 #: shell32.rc:117 notepad.rc:39 oleview.rc:38 regedit.rc:41 view.rc:34
-#: winefile.rc:40 winemine.rc:49 winhlp32.rc:37 wordpad.rc:40
+#: winefile.rc:40 winemine.rc:51 winhlp32.rc:37 wordpad.rc:40
 msgid "E&xit"
 msgstr "끝내기(&X)"
 
@@ -9050,6 +9052,12 @@ msgstr "분"
 msgctxt "time unit: seconds"
 msgid " sec"
 msgstr "초"
+
+#: twain.rc:29
+#, fuzzy
+#| msgid "New Folder"
+msgid "Select Source"
+msgstr "새 폴더"
 
 #: urlmon.rc:32 wininet.rc:77
 msgid "Security Warning"
@@ -10112,7 +10120,7 @@ msgstr "리퍼럴을 다루는 동안의 루프"
 msgid "Referral hop limit exceeded"
 msgstr "리퍼럴 홉 제한에 도달했습니다"
 
-#: attrib.rc:30 cmd.rc:361
+#: attrib.rc:30 cmd.rc:373
 msgid ""
 "Not Yet Implemented\n"
 "\n"
@@ -10120,7 +10128,7 @@ msgstr ""
 "아직 구현되지 않았습니다\n"
 "\n"
 
-#: attrib.rc:31 cmd.rc:364
+#: attrib.rc:31 cmd.rc:376
 msgid "%1: File Not Found\n"
 msgstr "%1:파일을 찾을 수 없습니다\n"
 
@@ -10913,6 +10921,20 @@ msgstr ""
 "허용하는 키를 누를 때까지 기다립니다.\n"
 "CHOICE는 주로 배치 파일에서 메뉴 선택을 넣는 데 사용됩니다.\n"
 
+#: cmd.rc:324
+msgid ""
+"Create a symbolic link.\n"
+"\n"
+"Syntax: MKLINK [options] link_name target\n"
+"\n"
+"Options:\n"
+"/d             Create a directory symbolic link.\n"
+"/h             Create a hard link.\n"
+"/j             Create a directory junction.\n"
+"link_name is the name of the new symbolic link.\n"
+"target is the path that link_name points to.\n"
+msgstr ""
+
 #: cmd.rc:312
 #, fuzzy
 #| msgid ""
@@ -10925,7 +10947,48 @@ msgstr ""
 "EXIT는 현재 명령 세션을 중단시키고 운영체제로 돌아가거나 cmd를\n"
 "호출한 셀로 돌아갑니다.\n"
 
-#: cmd.rc:351
+#: cmd.rc:364
+#, fuzzy
+#| msgid ""
+#| "CMD built-in commands are:\n"
+#| "ASSOC\t\tShow or modify file extension associations\n"
+#| "ATTRIB\t\tShow or change DOS file attributes\n"
+#| "CALL\t\tInvoke a batch file from inside another\n"
+#| "CD (CHDIR)\tChange current default directory\n"
+#| "CHOICE\t\tWait for an keypress from a selectable list\n"
+#| "CLS\t\tClear the console screen\n"
+#| "COPY\t\tCopy file\n"
+#| "CTTY\t\tChange input/output device\n"
+#| "DATE\t\tShow or change the system date\n"
+#| "DEL (ERASE)\tDelete a file or set of files\n"
+#| "DIR\t\tList the contents of a directory\n"
+#| "ECHO\t\tCopy text directly to the console output\n"
+#| "ENDLOCAL\tEnd localization of environment changes in a batch file\n"
+#| "FTYPE\t\tShow or modify open commands associated with file types\n"
+#| "HELP\t\tShow brief help details on a topic\n"
+#| "MD (MKDIR)\tCreate a subdirectory\n"
+#| "MORE\t\tDisplay output in pages\n"
+#| "MOVE\t\tMove a file, set of files or directory tree\n"
+#| "PATH\t\tSet or show the search path\n"
+#| "PAUSE\t\tSuspend execution of a batch file\n"
+#| "POPD\t\tRestore the directory to the last one saved with PUSHD\n"
+#| "PROMPT\t\tChange the command prompt\n"
+#| "PUSHD\t\tChange to a new directory, saving the current one\n"
+#| "REN (RENAME)\tRename a file\n"
+#| "RD (RMDIR)\tDelete a subdirectory\n"
+#| "SET\t\tSet or show environment variables\n"
+#| "SETLOCAL\tStart localization of environment changes in a batch file\n"
+#| "START\t\tStart a program, or open a document in the associated program\n"
+#| "TIME\t\tSet or show the current system time\n"
+#| "TITLE\t\tSet the window title for the CMD session\n"
+#| "TYPE\t\tType the contents of a text file\n"
+#| "VER\t\tShow the current version of CMD\n"
+#| "VOL\t\tShow the volume label of a disk device\n"
+#| "XCOPY\t\tCopy source files or directory trees to a destination\n"
+#| "EXIT\t\tClose down CMD\n"
+#| "\n"
+#| "Enter HELP <command> for further information on any of the above "
+#| "commands.\n"
 msgid ""
 "CMD built-in commands are:\n"
 "ASSOC\t\tShow or modify file extension associations\n"
@@ -10944,6 +11007,7 @@ msgid ""
 "FTYPE\t\tShow or modify open commands associated with file types\n"
 "HELP\t\tShow brief help details on a topic\n"
 "MD (MKDIR)\tCreate a subdirectory\n"
+"MKLINK\tCreate a symbolic link\n"
 "MORE\t\tDisplay output in pages\n"
 "MOVE\t\tMove a file, set of files or directory tree\n"
 "PATH\t\tSet or show the search path\n"
@@ -11005,110 +11069,110 @@ msgstr ""
 "\n"
 "HELP <명령>을 치면 그 명령의 상세한 정보를 보여줍니다.\n"
 
-#: cmd.rc:353
+#: cmd.rc:365
 msgid "Are you sure?"
 msgstr "당신은 확신합니까?"
 
-#: cmd.rc:354 reg.rc:50 xcopy.rc:43
+#: cmd.rc:366 reg.rc:50 xcopy.rc:43
 msgctxt "Yes key"
 msgid "Y"
 msgstr "예"
 
-#: cmd.rc:355 reg.rc:51 xcopy.rc:44
+#: cmd.rc:367 reg.rc:51 xcopy.rc:44
 msgctxt "No key"
 msgid "N"
 msgstr "아니오"
 
-#: cmd.rc:356
+#: cmd.rc:368
 msgid "File association missing for extension %1\n"
 msgstr "이 파일확장자 %1에 연결된 풀그림이 없습니다\n"
 
-#: cmd.rc:357
+#: cmd.rc:369
 msgid "No open command associated with file type '%1'\n"
 msgstr "이 파일 형식 '%1'과 연결된 어떠한 명령도 없습니다'\n"
 
-#: cmd.rc:358
+#: cmd.rc:370
 msgid "Overwrite %1?"
 msgstr "%1을(를) 덮어쓰겠습니까?"
 
-#: cmd.rc:359
+#: cmd.rc:371
 msgid "More..."
 msgstr "더 많이..."
 
-#: cmd.rc:360
+#: cmd.rc:372
 msgid "Line in Batch processing possibly truncated. Using:\n"
 msgstr "배치 작업의 줄은 아마도 불완전한 것 같습니다. 사용법:\n"
 
-#: cmd.rc:362
+#: cmd.rc:374
 msgid "Argument missing\n"
 msgstr "인수가 없습니다\n"
 
-#: cmd.rc:363
+#: cmd.rc:375
 msgid "Syntax error\n"
 msgstr "문법 오류\n"
 
-#: cmd.rc:365
+#: cmd.rc:377
 msgid "No help available for %1\n"
 msgstr "%1를 위한 어떠한 도움말도 찾을 수 없습니다\n"
 
-#: cmd.rc:366
+#: cmd.rc:378
 msgid "Target to GOTO not found\n"
 msgstr "GOTO 타겟을 찾을 수 없습니다\n"
 
-#: cmd.rc:367
+#: cmd.rc:379
 msgid "Current Date is %1\n"
 msgstr "현재 날짜는 %1임\n"
 
-#: cmd.rc:368
+#: cmd.rc:380
 msgid "Current Time is %1\n"
 msgstr "현재 시간은 %1임\n"
 
-#: cmd.rc:369
+#: cmd.rc:381
 msgid "Enter new date: "
 msgstr "새 날짜 입력: "
 
-#: cmd.rc:370
+#: cmd.rc:382
 msgid "Enter new time: "
 msgstr "새 시간 입력: "
 
-#: cmd.rc:371
+#: cmd.rc:383
 msgid "Environment variable %1 not defined\n"
 msgstr "환경 변수 %1 는 정의되지 않았습니다\n"
 
-#: cmd.rc:372 xcopy.rc:41
+#: cmd.rc:384 xcopy.rc:41
 msgid "Failed to open '%1'\n"
 msgstr "'%1' 열기 실패\n"
 
-#: cmd.rc:373
+#: cmd.rc:385
 msgid "Cannot call batch label outside of a batch script\n"
 msgstr "배치 스크립트 밖의 배치 라벨은 불러올수 없습니다\n"
 
-#: cmd.rc:374 xcopy.rc:45
+#: cmd.rc:386 xcopy.rc:45
 msgctxt "All key"
 msgid "A"
 msgstr "모두"
 
-#: cmd.rc:375
+#: cmd.rc:387
 msgid "Delete %1?"
 msgstr "%1을(를) 지우겠습니까?"
 
-#: cmd.rc:376
+#: cmd.rc:388
 msgid "Echo is %1\n"
 msgstr "에코(Echo)는 %1임\n"
 
-#: cmd.rc:377
+#: cmd.rc:389
 msgid "Verify is %1\n"
 msgstr "검증(Verify)은 %1임\n"
 
-#: cmd.rc:378
+#: cmd.rc:390
 msgid "Verify must be ON or OFF\n"
 msgstr "검증(Verify)은 반드시 ON 이나 OFF가 되어야 합니다\n"
 
-#: cmd.rc:379
+#: cmd.rc:391
 msgid "Parameter error\n"
 msgstr "매개변수 오류\n"
 
-#: cmd.rc:380
+#: cmd.rc:392
 msgid ""
 "Volume Serial Number is %1!04x!-%2!04x!\n"
 "\n"
@@ -11116,72 +11180,72 @@ msgstr ""
 "볼륨 시리얼 번호는 %1!04x!-%2!04x!임\n"
 "\n"
 
-#: cmd.rc:381
+#: cmd.rc:393
 msgid "Volume label (11 characters, <Enter> for none)?"
 msgstr "볼륨 라벨 (11 글자, ENTER는 없음과 같음)?"
 
-#: cmd.rc:382
+#: cmd.rc:394
 msgid "PATH not found\n"
 msgstr "PATH를 찾을 수 없습니다\n"
 
-#: cmd.rc:383
+#: cmd.rc:395
 msgid "Press any key to continue... "
 msgstr "아무 키나 누르면 진행함... "
 
-#: cmd.rc:384
+#: cmd.rc:396
 msgid "Wine Command Prompt"
 msgstr "Wine 명령 프롬프트"
 
-#: cmd.rc:385
+#: cmd.rc:397
 msgid "Microsoft Windows %1!S!\n"
 msgstr ""
 
-#: cmd.rc:386
+#: cmd.rc:398
 msgid "More? "
 msgstr "더? "
 
-#: cmd.rc:387
+#: cmd.rc:399
 msgid "The input line is too long.\n"
 msgstr "이 출력 줄은 너무 깁니다.\n"
 
-#: cmd.rc:388
+#: cmd.rc:400
 msgid "Volume in drive %1!c! is %2\n"
 msgstr "드라이브 %1!c!의 볼륨은 %2임\n"
 
-#: cmd.rc:389
+#: cmd.rc:401
 msgid "Volume in drive %1!c! has no label.\n"
 msgstr "드라이브 %1!c!는 라벨을 가지고 있지 않습니다.\n"
 
-#: cmd.rc:390 reg.rc:49
+#: cmd.rc:402 reg.rc:49
 msgid " (Yes|No)"
 msgstr "(예(Y)|아니오(N))"
 
-#: cmd.rc:391
+#: cmd.rc:403
 msgid " (Yes|No|All)"
 msgstr "(예(Y)|아니오(N)|모두(A))"
 
-#: cmd.rc:392
+#: cmd.rc:404
 msgid ""
 "Can't recognize '%1' as an internal or external command, or batch script.\n"
 msgstr "'%1'을 내부나 외부 명령어,나 배치 스크립트로 인식할 수 없습니다.\n"
 
-#: cmd.rc:393
+#: cmd.rc:405
 msgid "Division by zero error.\n"
 msgstr "0으로 나눈 에러가 발생했습니다.\n"
 
-#: cmd.rc:394
+#: cmd.rc:406
 msgid "Expected an operand.\n"
 msgstr "피연산자가 요구됩니다.\n"
 
-#: cmd.rc:395
+#: cmd.rc:407
 msgid "Expected an operator.\n"
 msgstr "연산자가 요구됩니다.\n"
 
-#: cmd.rc:396
+#: cmd.rc:408
 msgid "Mismatch in parentheses.\n"
 msgstr "괄호가 일치하지 않습니다.\n"
 
-#: cmd.rc:397
+#: cmd.rc:409
 msgid ""
 "Badly formed number - must be one of decimal (12),\n"
 " hexadecimal (0x34) or octal (056).\n"
@@ -15229,91 +15293,95 @@ msgstr "인덱스/아이노드"
 msgid "%1 of %2 free"
 msgstr "%2 의 %1 사용가능"
 
-#: winemine.rc:37
+#: winemine.rc:39
 msgid "&Game"
 msgstr "게임(&G)"
 
-#: winemine.rc:38
+#: winemine.rc:40
 msgid "&New\tF2"
 msgstr "새 게임(&N)\tF2"
 
-#: winemine.rc:40
+#: winemine.rc:42
 msgid "Question &Marks"
 msgstr "물음표(&M)"
 
-#: winemine.rc:42
+#: winemine.rc:44
 msgid "&Beginner"
 msgstr "초보자(&B)"
 
-#: winemine.rc:43
+#: winemine.rc:45
 msgid "&Advanced"
 msgstr "중급자(&A)"
 
-#: winemine.rc:44
+#: winemine.rc:46
 msgid "&Expert"
 msgstr "상급자(&E)"
 
-#: winemine.rc:45
+#: winemine.rc:47
 msgid "&Custom..."
 msgstr "사용자 정의(&C)..."
 
-#: winemine.rc:47
+#: winemine.rc:49
 msgid "&Fastest Times"
 msgstr "가장 빠른 시간(&F)"
 
-#: winemine.rc:52
+#: winemine.rc:54
 msgid "&About WineMine"
 msgstr "WINE지뢰찾기 정보(&A)"
 
-#: winemine.rc:59
+#: winemine.rc:61
 msgid "Fastest Times"
 msgstr "최단 시간"
 
-#: winemine.rc:61
+#: winemine.rc:63
 msgid "Fastest times"
 msgstr "최단 시간"
 
-#: winemine.rc:62
+#: winemine.rc:64
 msgid "Beginner"
 msgstr "초보자"
 
-#: winemine.rc:63
+#: winemine.rc:65
 msgid "Advanced"
 msgstr "중급자"
 
-#: winemine.rc:64
+#: winemine.rc:66
 msgid "Expert"
 msgstr "전문가"
 
-#: winemine.rc:72
+#: winemine.rc:74 winemine.rc:33
 #, fuzzy
 #| msgid "Result"
 msgid "Reset Results"
 msgstr "결과"
 
-#: winemine.rc:78
+#: winemine.rc:80
 msgid "Congratulations!"
 msgstr "축하합니다!"
 
-#: winemine.rc:80
+#: winemine.rc:82
 msgid "Please enter your name"
 msgstr "당신의 이름을 적어주세요"
 
-#: winemine.rc:88
+#: winemine.rc:90
 msgid "Custom Game"
 msgstr "게임 사용자 정의"
 
-#: winemine.rc:90
+#: winemine.rc:92
 msgid "Rows"
 msgstr "가로줄"
 
-#: winemine.rc:91
+#: winemine.rc:93
 msgid "Columns"
 msgstr "세로줄"
 
-#: winemine.rc:92
+#: winemine.rc:94
 msgid "Mines"
 msgstr "지뢰"
+
+#: winemine.rc:34
+msgid "All results will be lost. Are you sure?"
+msgstr ""
 
 #: winemine.rc:30
 msgid "WineMine"

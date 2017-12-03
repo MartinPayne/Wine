@@ -146,6 +146,7 @@ IDL_SRCS = \
 	pstore.idl \
 	qedit.idl \
 	richole.idl \
+	roparameterizediid.idl \
 	row.idl \
 	rowchg.idl \
 	rowpos.idl \
@@ -567,6 +568,7 @@ HEADER_SRCS = \
 	patchapi.h \
 	pdh.h \
 	pdhmsg.h \
+	perflib.h \
 	physicalmonitorenumerationapi.h \
 	pktdef.h \
 	poppack.h \

@@ -181,7 +181,7 @@ static nsresult NSAPI handle_keypress(nsIDOMEventListener *iface,
 
     TRACE("(%p)->(%p)\n", doc, event);
 
-    update_doc(&doc_obj->basedoc, UPDATE_UI);
+    update_doc(doc_obj, UPDATE_UI);
     if(doc_obj->usermode == EDITMODE)
         handle_edit_event(&doc_obj->basedoc, event);
 
@@ -269,8 +269,6 @@ static nsresult NSAPI handle_load(nsIDOMEventListener *iface, nsIDOMEvent *event
     if(doc->nsdoc) {
         DOMEvent *load_event;
         HRESULT hres;
-
-        flush_pending_tasks(doc->basedoc.task_magic);
 
         hres = create_document_event(doc, EVENTID_LOAD, &load_event);
         if(SUCCEEDED(hres)) {

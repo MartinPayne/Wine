@@ -48,16 +48,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(advapi);
 
 static BOOL ParseStringSidToSid(LPCWSTR StringSid, PSID pSid, LPDWORD cBytes);
-static BOOL ParseStringAclToAcl(LPCWSTR StringAcl, LPDWORD lpdwFlags, 
-    PACL pAcl, LPDWORD cBytes);
-static BYTE ParseAceStringFlags(LPCWSTR* StringAcl);
-static BYTE ParseAceStringType(LPCWSTR* StringAcl);
-static DWORD ParseAceStringRights(LPCWSTR* StringAcl);
-static BOOL ParseStringSecurityDescriptorToSecurityDescriptor(
-    LPCWSTR StringSecurityDescriptor,
-    SECURITY_DESCRIPTOR_RELATIVE* SecurityDescriptor,
-    LPDWORD cBytes);
-static DWORD ParseAclStringFlags(LPCWSTR* StringAcl);
 
 typedef struct _ACEFLAG
 {
@@ -4211,11 +4201,87 @@ DWORD WINAPI GetExplicitEntriesFromAclA( PACL pacl, PULONG pcCountOfExplicitEntr
 /******************************************************************************
  * GetExplicitEntriesFromAclW [ADVAPI32.@]
  */
-DWORD WINAPI GetExplicitEntriesFromAclW( PACL pacl, PULONG pcCountOfExplicitEntries,
-        PEXPLICIT_ACCESSW* pListOfExplicitEntries)
+DWORD WINAPI GetExplicitEntriesFromAclW( PACL pacl, PULONG count, PEXPLICIT_ACCESSW *list )
 {
-    FIXME("%p %p %p\n",pacl, pcCountOfExplicitEntries, pListOfExplicitEntries);
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    ACL_SIZE_INFORMATION sizeinfo;
+    EXPLICIT_ACCESSW *entries;
+    MAX_SID *sid_entries;
+    ACE_HEADER *ace;
+    NTSTATUS status;
+    int i;
+
+    TRACE("%p %p %p\n",pacl, count, list);
+
+    if (!count || !list)
+        return ERROR_INVALID_PARAMETER;
+
+    status = RtlQueryInformationAcl(pacl, &sizeinfo, sizeof(sizeinfo), AclSizeInformation);
+    if (status) return RtlNtStatusToDosError(status);
+
+    if (!sizeinfo.AceCount)
+    {
+        *count = 0;
+        *list = NULL;
+        return ERROR_SUCCESS;
+    }
+
+    entries = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, (sizeof(EXPLICIT_ACCESSW) + sizeof(MAX_SID)) * sizeinfo.AceCount);
+    if (!entries) return ERROR_OUTOFMEMORY;
+    sid_entries = (MAX_SID *)(entries + sizeinfo.AceCount);
+
+    for (i = 0; i < sizeinfo.AceCount; i++)
+    {
+        status = RtlGetAce(pacl, i, (void**)&ace);
+        if (status) goto error;
+
+        switch (ace->AceType)
+        {
+            case ACCESS_ALLOWED_ACE_TYPE:
+            {
+                ACCESS_ALLOWED_ACE *allow = (ACCESS_ALLOWED_ACE *)ace;
+                entries[i].grfAccessMode = GRANT_ACCESS;
+                entries[i].grfInheritance = ace->AceFlags;
+                entries[i].grfAccessPermissions = allow->Mask;
+
+                CopySid(sizeof(MAX_SID), (PSID)&sid_entries[i], (PSID)&allow->SidStart);
+                entries[i].Trustee.pMultipleTrustee = NULL;
+                entries[i].Trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
+                entries[i].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+                entries[i].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+                entries[i].Trustee.ptstrName = (WCHAR *)&sid_entries[i];
+                break;
+            }
+
+            case ACCESS_DENIED_ACE_TYPE:
+            {
+                ACCESS_DENIED_ACE *deny = (ACCESS_DENIED_ACE *)ace;
+                entries[i].grfAccessMode = DENY_ACCESS;
+                entries[i].grfInheritance = ace->AceFlags;
+                entries[i].grfAccessPermissions = deny->Mask;
+
+                CopySid(sizeof(MAX_SID), (PSID)&sid_entries[i], (PSID)&deny->SidStart);
+                entries[i].Trustee.pMultipleTrustee = NULL;
+                entries[i].Trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
+                entries[i].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+                entries[i].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+                entries[i].Trustee.ptstrName = (WCHAR *)&sid_entries[i];
+                break;
+            }
+
+            default:
+                FIXME("Unhandled ace type %d\n", ace->AceType);
+                entries[i].grfAccessMode = NOT_USED_ACCESS;
+                continue;
+        }
+    }
+
+    *count = sizeinfo.AceCount;
+    *list = entries;
+    return ERROR_SUCCESS;
+
+error:
+    LocalFree(entries);
+    return RtlNtStatusToDosError(status);
 }
 
 /******************************************************************************
@@ -4248,7 +4314,7 @@ static DWORD ParseAclStringFlags(LPCWSTR* StringAcl)
     DWORD flags = 0;
     LPCWSTR szAcl = *StringAcl;
 
-    while (*szAcl != '(')
+    while (*szAcl && *szAcl != '(')
     {
         if (*szAcl == 'P')
 	{
@@ -4559,7 +4625,7 @@ static BOOL ParseStringAclToAcl(LPCWSTR StringAcl, LPDWORD lpdwFlags,
         pAcl->AclRevision = ACL_REVISION;
         pAcl->Sbz1 = 0;
         pAcl->AclSize = length;
-        pAcl->AceCount = acecount++;
+        pAcl->AceCount = acecount;
         pAcl->Sbz2 = 0;
     }
     return TRUE;
@@ -4586,7 +4652,7 @@ static BOOL ParseStringSecurityDescriptorToSecurityDescriptor(
     LPBYTE lpNext = NULL;
     DWORD len;
 
-    *cBytes = sizeof(SECURITY_DESCRIPTOR);
+    *cBytes = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
 
     tok = heap_alloc( (lstrlenW(StringSecurityDescriptor) + 1) * sizeof(WCHAR));
 
@@ -4727,6 +4793,9 @@ BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorA(
     BOOL ret;
     LPWSTR StringSecurityDescriptorW;
 
+    TRACE("%s, %u, %p, %p\n", debugstr_a(StringSecurityDescriptor), StringSDRevision,
+          SecurityDescriptor, SecurityDescriptorSize);
+
     if(!StringSecurityDescriptor)
         return FALSE;
 
@@ -4752,7 +4821,8 @@ BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(
     SECURITY_DESCRIPTOR* psd;
     BOOL bret = FALSE;
 
-    TRACE("%s\n", debugstr_w(StringSecurityDescriptor));
+    TRACE("%s, %u, %p, %p\n", debugstr_w(StringSecurityDescriptor), StringSDRevision,
+          SecurityDescriptor, SecurityDescriptorSize);
 
     if (GetVersion() & 0x80000000)
     {

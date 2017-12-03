@@ -4858,23 +4858,14 @@ static void init_doc(HTMLDocument *doc, IUnknown *outer, IDispatchEx *dispex)
 
     doc->outer_unk = outer;
     doc->dispex = dispex;
-    doc->task_magic = get_task_target_magic();
 
     HTMLDocument_Persist_Init(doc);
     HTMLDocument_OleCmd_Init(doc);
     HTMLDocument_OleObj_Init(doc);
     HTMLDocument_View_Init(doc);
-    HTMLDocument_Window_Init(doc);
     HTMLDocument_Service_Init(doc);
 
     ConnectionPointContainer_Init(&doc->cp_container, (IUnknown*)&doc->IHTMLDocument2_iface, HTMLDocument_cpc);
-}
-
-static void destroy_htmldoc(HTMLDocument *This)
-{
-    remove_target_tasks(This->task_magic);
-
-    ConnectionPointContainer_Destroy(&This->cp_container);
 }
 
 static inline HTMLDocumentNode *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
@@ -4926,7 +4917,7 @@ static void HTMLDocumentNode_destructor(HTMLDOMNode *iface)
     }
 
     heap_free(This->event_vector);
-    destroy_htmldoc(&This->basedoc);
+    ConnectionPointContainer_Destroy(&This->basedoc.cp_container);
 }
 
 static HRESULT HTMLDocumentNode_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -5275,8 +5266,8 @@ static ULONG WINAPI HTMLDocumentObj_Release(IUnknown *iface)
             This->basedoc.window->doc_obj = NULL;
             IHTMLWindow2_Release(&This->basedoc.window->base.IHTMLWindow2_iface);
         }
-        if(This->basedoc.advise_holder)
-            IOleAdviseHolder_Release(This->basedoc.advise_holder);
+        if(This->advise_holder)
+            IOleAdviseHolder_Release(This->advise_holder);
 
         if(This->view_sink)
             IAdviseSink_Release(This->view_sink);
@@ -5299,7 +5290,8 @@ static ULONG WINAPI HTMLDocumentObj_Release(IUnknown *iface)
             DestroyWindow(This->hwnd);
         heap_free(This->mime);
 
-        destroy_htmldoc(&This->basedoc);
+        remove_target_tasks(This->task_magic);
+        ConnectionPointContainer_Destroy(&This->basedoc.cp_container);
         release_dispex(&This->dispex);
 
         if(This->nscontainer)
@@ -5430,6 +5422,7 @@ static HRESULT create_document_object(BOOL is_mhtml, IUnknown *outer, REFIID rii
     doc->is_mhtml = is_mhtml;
 
     doc->usermode = UNKNOWN_USERMODE;
+    doc->task_magic = get_task_target_magic();
 
     init_binding_ui(doc);
 

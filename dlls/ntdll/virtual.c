@@ -185,6 +185,7 @@ static BYTE get_page_vprot( const void *addr )
     size_t idx = (size_t)addr >> page_shift;
 
 #ifdef _WIN64
+    if ((idx >> pages_vprot_shift) >= pages_vprot_size) return 0;
     if (!pages_vprot[idx >> pages_vprot_shift]) return 0;
     return pages_vprot[idx >> pages_vprot_shift][idx & pages_vprot_mask];
 #else
@@ -1163,18 +1164,30 @@ static NTSTATUS map_file_into_view( struct file_view *view, int fd, size_t start
         if (mmap( (char *)view->base + start, size, prot, flags, fd, offset ) != (void *)-1)
             goto done;
 
-        if ((errno == EPERM) && (prot & PROT_EXEC))
-            ERR( "failed to set %08x protection on file map, noexec filesystem?\n", prot );
-
-        /* mmap() failed; if this is because the file offset is not    */
-        /* page-aligned (EINVAL), or because the underlying filesystem */
-        /* does not support mmap() (ENOEXEC,ENODEV), we do it by hand. */
-        if ((errno != ENOEXEC) && (errno != EINVAL) && (errno != ENODEV)) return FILE_GetNtStatus();
-        if (flags & MAP_SHARED)  /* we cannot fake shared mappings */
+        switch (errno)
         {
-            if (errno == EINVAL) return STATUS_INVALID_PARAMETER;
-            ERR( "shared writable mmap not supported, broken filesystem?\n" );
-            return STATUS_NOT_SUPPORTED;
+        case EINVAL:  /* file offset is not page-aligned, fall back to read() */
+            if (flags & MAP_SHARED) return STATUS_INVALID_PARAMETER;
+            break;
+        case ENOEXEC:
+        case ENODEV:  /* filesystem doesn't support mmap(), fall back to read() */
+            if (flags & MAP_SHARED)
+            {
+                ERR( "shared writable mmap not supported, broken filesystem?\n" );
+                return STATUS_NOT_SUPPORTED;
+            }
+            break;
+        case EACCES:
+        case EPERM:  /* noexec filesystem, fall back to read() */
+            if (flags & MAP_SHARED)
+            {
+                if (prot & PROT_EXEC) ERR( "failed to set PROT_EXEC on file map, noexec filesystem?\n" );
+                return STATUS_ACCESS_DENIED;
+            }
+            if (prot & PROT_EXEC) WARN( "failed to set PROT_EXEC on file map, noexec filesystem?\n" );
+            break;
+        default:
+            return FILE_GetNtStatus();
         }
     }
 
@@ -1306,6 +1319,40 @@ static NTSTATUS allocate_dos_memory( struct file_view **view, unsigned int vprot
 
 
 /***********************************************************************
+ *           map_pe_header
+ *
+ * Map the header of a PE file into memory.
+ */
+static NTSTATUS map_pe_header( void *ptr, size_t size, int fd, BOOL *removable )
+{
+    if (!size) return STATUS_INVALID_IMAGE_FORMAT;
+
+    if (!*removable)
+    {
+        if (mmap( ptr, size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_FIXED|MAP_PRIVATE, fd, 0 ) != (void *)-1)
+            return STATUS_SUCCESS;
+
+        switch (errno)
+        {
+        case EPERM:
+        case EACCES:
+            WARN( "noexec file system, falling back to read\n" );
+            break;
+        case ENOEXEC:
+        case ENODEV:
+            WARN( "file system doesn't support mmap, falling back to read\n" );
+            break;
+        default:
+            return FILE_GetNtStatus();
+        }
+        *removable = TRUE;
+    }
+    pread( fd, ptr, size, 0 );
+    return STATUS_SUCCESS;  /* page protections will be updated later */
+}
+
+
+/***********************************************************************
  *           map_image
  *
  * Map an executable (PE format) image into memory.
@@ -1350,11 +1397,10 @@ static NTSTATUS map_image( HANDLE hmapping, ACCESS_MASK access, int fd, char *ba
         status = FILE_GetNtStatus();
         goto error;
     }
-    status = STATUS_INVALID_IMAGE_FORMAT;  /* generic error */
-    if (!st.st_size) goto error;
     header_size = min( header_size, st.st_size );
-    if (map_file_into_view( view, fd, 0, header_size, 0, VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY,
-                            removable ) != STATUS_SUCCESS) goto error;
+    if ((status = map_pe_header( view->base, header_size, fd, &removable )) != STATUS_SUCCESS) goto error;
+
+    status = STATUS_INVALID_IMAGE_FORMAT;  /* generic error */
     dos = (IMAGE_DOS_HEADER *)ptr;
     nt = (IMAGE_NT_HEADERS *)(ptr + dos->e_lfanew);
     header_end = ptr + ROUND_SIZE( 0, header_size );
