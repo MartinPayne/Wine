@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 2013-10-30 12:44+0100\n"
 "Last-Translator: Can Taşan <betax34@hotmail.com>\n"
@@ -123,7 +123,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "Wine, HTML'yi gömülü kullanan uygulamaların düzgün çalışması için gerekli "
@@ -131,7 +131,7 @@ msgstr ""
 "yükleyebilir.\n"
 "\n"
 "Not: kendi dağıtımınızın paketlerini kullanmanız önerilir. Ayrıntılar için "
-"<a href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> "
+"<a href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> "
 "adresine gidin."
 
 #: appwiz.rc:109 appwiz.rc:124
@@ -169,14 +169,14 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "Wine, .NET uygulamalarının düzgün çalışması için gerekli olan wine-mono "
 "paketini bulamadı. Wine, paketi sizin için otomatik indirip yükleyebilir.\n"
 "\n"
 "Not: kendi dağıtımınızın paketlerini kullanmanız önerilir. Ayrıntılar için "
-"<a href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> "
+"<a href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> "
 "adresine gidin."
 
 #: appwiz.rc:31
@@ -12077,7 +12077,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12239,6 +12239,24 @@ msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
 "regedit: Bilinmeyen kaçış sırası [\\%1!c!]\n"
 "\n"
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG QUERY anahtar_adı [/v değer_adı | /ve] [/s]\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "reg: Invalid key name\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "reg: Geçersiz anahtar adı\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The registry value '%1' already exists. Do you want to overwrite it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "Belirtilen '%1' kayıt defteri değeri zaten var. Üzerine yazılsın mı?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -14746,11 +14764,11 @@ msgstr ""
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "Bu, programdaki veya Wine'deki bir sorundan dolayı olabilir. Bu uygulamayı "
-"çalıştırma hakkında ipuçları için <a href=\"http://appdb.winehq.org"
+"çalıştırma hakkında ipuçları için <a href=\"https://appdb.winehq.org"
 "\">Uygulama Veritabanı</a> sayfasını kontrol etmek isteyebilirsiniz."
 
 #: winedbg.rc:61
@@ -14765,12 +14783,12 @@ msgstr "Program Hata Ayrıntıları"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 "Eğer bu problem Windows'ta yoksa ve henüz bildirilmemişse, \"Farklı Kaydet\" "
 "düğmesi kullanarak ayrıntılı bilgiyi bir dosyaya kaydedebilir; ardından bu "
-"dosyayı ekleyerek bir <a href=\"http://wiki.winehq.org/Bugs\">hata raporu</"
+"dosyayı ekleyerek bir <a href=\"https://wiki.winehq.org/Bugs\">hata raporu</"
 "a> gönderebilirsiniz."
 
 #: winedbg.rc:38

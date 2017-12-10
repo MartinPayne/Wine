@@ -59,6 +59,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(relay);
 
 static pthread_key_t teb_key;
 
@@ -1023,14 +1024,8 @@ NTSTATUS signal_alloc_thread( TEB **teb )
  */
 void signal_free_thread( TEB *teb )
 {
-    SIZE_T size;
+    SIZE_T size = 0;
 
-    if (teb->DeallocationStack)
-    {
-        size = 0;
-        NtFreeVirtualMemory( GetCurrentProcess(), &teb->DeallocationStack, &size, MEM_RELEASE );
-    }
-    size = 0;
     NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
 }
 
@@ -1054,7 +1049,7 @@ void signal_init_thread( TEB *teb )
 /**********************************************************************
  *		signal_init_process
  */
-void signal_init_process( CONTEXT *context, LPTHREAD_START_ROUTINE entry )
+void signal_init_process(void)
 {
     struct sigaction sig_act;
 
@@ -1083,8 +1078,6 @@ void signal_init_process( CONTEXT *context, LPTHREAD_START_ROUTINE entry )
     sig_act.sa_sigaction = trap_handler;
     if (sigaction( SIGTRAP, &sig_act, NULL ) == -1) goto error;
 #endif
-
-    /* FIXME: set the initial context */
     return;
 
  error:
@@ -1145,10 +1138,11 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 /***********************************************************************
  *           call_thread_entry_point
  */
-void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
+static void WINAPI call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
 {
     __TRY
     {
+        TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", entry, arg );
         exit_thread( entry( arg ));
     }
     __EXCEPT(unhandled_exception_filter)
@@ -1157,6 +1151,64 @@ void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
     }
     __ENDTRY
     abort();  /* should not be reached */
+}
+
+typedef void (WINAPI *thread_start_func)(LPTHREAD_START_ROUTINE,void *);
+
+struct startup_info
+{
+    thread_start_func      start;
+    LPTHREAD_START_ROUTINE entry;
+    void                  *arg;
+    BOOL                   suspend;
+};
+
+/***********************************************************************
+ *           thread_startup
+ */
+static void thread_startup( void *param )
+{
+    CONTEXT context = { 0 };
+    struct startup_info *info = param;
+
+    /* build the initial context */
+    context.ContextFlags = CONTEXT_FULL;
+    context.Gpr1 = (DWORD)NtCurrentTeb()->Tib.StackBase;
+    context.Gpr3 = (DWORD)info->entry;
+    context.Gpr4 = (DWORD)info->arg;
+    context.Iar  = (DWORD)info->start;
+
+    attach_dlls( &context, info->suspend );
+
+    ((thread_start_func)context.Iar)( (LPTHREAD_START_ROUTINE)context.Gpr3, (void *)context.Gpr4 );
+}
+
+/***********************************************************************
+ *           signal_start_thread
+ *
+ * Thread startup sequence:
+ * signal_start_thread()
+ *   -> thread_startup()
+ *     -> call_thread_entry_point()
+ */
+void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend )
+{
+    struct startup_info info = { call_thread_entry_point, entry, arg, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+}
+
+/**********************************************************************
+ *		signal_start_process
+ *
+ * Process startup sequence:
+ * signal_start_process()
+ *   -> thread_startup()
+ *     -> kernel32_start_process()
+ */
+void signal_start_process( LPTHREAD_START_ROUTINE entry, BOOL suspend )
+{
+    struct startup_info info = { kernel32_start_process, entry, NtCurrentTeb()->Peb, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
 }
 
 /***********************************************************************

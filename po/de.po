@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 2017-11-17 14:31+0100\n"
 "Last-Translator: Julian Rüger\n"
@@ -124,7 +124,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "Wine konnte das Gecko-Paket nicht finden. Es wird von Programmen mit "
@@ -132,8 +132,8 @@ msgstr ""
 "das Paket für Sie herunterladen und installieren.\n"
 "\n"
 "Hinweis: Es wird empfohlen, das Paket ihrer Distribution zu verwenden. "
-"Weitere Hinweise finden Sie unter <a href=\"http://wiki.winehq.org/Gecko\"> "
-"http://wiki.winehq.org/Gecko</a>."
+"Weitere Hinweise finden Sie unter <a href=\"https://wiki.winehq.org/Gecko\"> "
+"https://wiki.winehq.org/Gecko</a>."
 
 #: appwiz.rc:109 appwiz.rc:124
 msgid "&Install"
@@ -170,7 +170,7 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "Wine konnte das wine-mono-Paket nicht finden. Es wird von .NET-Programmen "
@@ -178,8 +178,8 @@ msgstr ""
 "herunterladen und installieren.\n"
 "\n"
 "Hinweis: Es wird empfohlen, das Paket ihrer Distribution zu verwenden. "
-"Weitere Hinweise finden Sie unter <a href=\"http://wiki.winehq.org/Mono\"> "
-"http://wiki.winehq.org/Mono</a>."
+"Weitere Hinweise finden Sie unter <a href=\"https://wiki.winehq.org/Mono\"> "
+"https://wiki.winehq.org/Mono</a>."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12092,12 +12092,23 @@ msgid "Icons (*.ico)"
 msgstr "Symbole (*.ico)"
 
 #: reg.rc:35
+#, fuzzy
+#| msgid ""
+#| "Usage:\n"
+#| "  REG [operation] [parameters]\n"
+#| "\n"
+#| "Supported operations:\n"
+#| "  ADD | DELETE | IMPORT | QUERY\n"
+#| "\n"
+#| "For help on a specific operation, type:\n"
+#| "  REG [operation] /?\n"
+#| "\n"
 msgid ""
 "Usage:\n"
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12249,6 +12260,24 @@ msgstr "reg: Der Schlüssel '%1' konnte nicht geöffnet werden.\n"
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr "reg: Unbekannte Escape-Sequenz [\\%1!c!]\n"
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG IMPORT file.reg\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG IMPORT datei.reg\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "regedit: Invalid system key [%1]\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "regedit: Ungültiger Systemschlüssel [%1]\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The registry value '%1' already exists. Do you want to overwrite it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "Der Wert '%1' existiert bereits. Möchten Sie ihn ersetzen?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -14729,11 +14758,11 @@ msgstr ""
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "Die Ursache kann ein Problem im Programm oder ein Fehler in Wine sein. Sie "
-"können in der <a href=\"http://appdb.winehq.org\">Anwendungsdatenbank</a> "
+"können in der <a href=\"https://appdb.winehq.org\">Anwendungsdatenbank</a> "
 "Tipps zum Ausführen der Anwendung einholen."
 
 #: winedbg.rc:61
@@ -14748,12 +14777,12 @@ msgstr "Programmfehler-Details"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 "Tritt dieses Problem unter Windows nicht auf und wurde es noch nicht "
 "gemeldet, können Sie mit \"Speichern unter\" die detaillierten Informationen "
-"in einer Datei speichern, danach <a href=\"http://wiki.winehq.org/Bugs"
+"in einer Datei speichern, danach <a href=\"https://wiki.winehq.org/Bugs"
 "\">einen Fehlerbericht hinterlassen</a> und die Datei dort anhängen."
 
 #: winedbg.rc:38

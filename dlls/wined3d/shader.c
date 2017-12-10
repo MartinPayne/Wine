@@ -709,6 +709,8 @@ static BOOL shader_record_register_usage(struct wined3d_shader *shader, struct w
             break;
 
         case WINED3DSPR_INPUT:
+            if (reg->idx[0].rel_addr)
+                reg_maps->input_rel_addressing = 1;
             if (shader_type == WINED3D_SHADER_TYPE_PIXEL)
             {
                 /* If relative addressing is used, we must assume that all
@@ -721,7 +723,9 @@ static BOOL shader_record_register_usage(struct wined3d_shader *shader, struct w
                     shader->u.ps.input_reg_used |= 1u << reg->idx[0].offset;
             }
             else
+            {
                 reg_maps->input_registers |= 1u << reg->idx[0].offset;
+            }
             break;
 
         case WINED3DSPR_RASTOUT:
@@ -948,6 +952,31 @@ static HRESULT shader_record_shader_phase(struct wined3d_shader *shader,
 
     phase->start = current_instruction_ptr;
     *current_phase = phase;
+
+    return WINED3D_OK;
+}
+
+static HRESULT shader_calculate_clip_or_cull_distance_mask(
+        const struct wined3d_shader_signature_element *e, DWORD *mask)
+{
+    unsigned int i;
+
+    *mask = 0;
+
+    /* Cull and clip distances are packed in 4 component registers. 0 and 1 are
+     * the only allowed semantic indices.
+     */
+    if (e->semantic_idx >= MAX_CLIP_DISTANCES / 4)
+    {
+        WARN("Invalid clip/cull distance index %u.\n", e->semantic_idx);
+        return WINED3DERR_INVALIDCALL;
+    }
+
+    for (i = 0; i < 4; ++i)
+    {
+        if (e->mask & (WINED3DSP_WRITEMASK_0 << i))
+            *mask |= 1u << (4 * e->semantic_idx + i);
+    }
 
     return WINED3D_OK;
 }
@@ -1754,7 +1783,22 @@ static HRESULT shader_get_registers_used(struct wined3d_shader *shader, const st
     {
         for (i = 0; i < output_signature->element_count; ++i)
         {
-            reg_maps->output_registers |= 1u << output_signature->elements[i].register_idx;
+            const struct wined3d_shader_signature_element *e = &output_signature->elements[i];
+            DWORD mask;
+
+            reg_maps->output_registers |= 1u << e->register_idx;
+            if (e->sysval_semantic == WINED3D_SV_CLIP_DISTANCE)
+            {
+                if (FAILED(hr = shader_calculate_clip_or_cull_distance_mask(e, &mask)))
+                    return hr;
+                reg_maps->clip_distance_mask |= mask;
+            }
+            else if (e->sysval_semantic == WINED3D_SV_CULL_DISTANCE)
+            {
+                if (FAILED(hr = shader_calculate_clip_or_cull_distance_mask(e, &mask)))
+                    return hr;
+                reg_maps->cull_distance_mask |= mask;
+            }
         }
     }
     else if (reg_maps->output_registers)
@@ -2958,7 +3002,8 @@ static void shader_trace_init(const struct wined3d_shader_frontend *fe, void *fe
             if (ins.handler_idx == WINED3DSIH_BREAKP
                     || ins.handler_idx == WINED3DSIH_CONTINUEP
                     || ins.handler_idx == WINED3DSIH_IF
-                    || ins.handler_idx == WINED3DSIH_RETP)
+                    || ins.handler_idx == WINED3DSIH_RETP
+                    || ins.handler_idx == WINED3DSIH_TEXKILL)
             {
                 switch (ins.flags)
                 {

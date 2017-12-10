@@ -1147,8 +1147,8 @@ static unsigned int get_context_system_regs( enum cpu_type cpu )
     case CPU_x86:     return SERVER_CTX_DEBUG_REGISTERS;
     case CPU_x86_64:  return SERVER_CTX_DEBUG_REGISTERS;
     case CPU_POWERPC: return 0;
-    case CPU_ARM:     return 0;
-    case CPU_ARM64:   return 0;
+    case CPU_ARM:     return SERVER_CTX_DEBUG_REGISTERS;
+    case CPU_ARM64:   return SERVER_CTX_DEBUG_REGISTERS;
     }
     return 0;
 }
@@ -1323,7 +1323,6 @@ DECL_HANDLER(init_thread)
         if (process->unix_pid != current->unix_pid)
             process->unix_pid = -1;  /* can happen with linuxthreads */
         init_thread_context( current );
-        stop_thread_if_suspended( current );
         generate_debug_event( current, CREATE_THREAD_DEBUG_EVENT, &req->entry );
         set_thread_affinity( current, current->affinity );
     }
@@ -1334,6 +1333,7 @@ DECL_HANDLER(init_thread)
     reply->version = SERVER_PROTOCOL_VERSION;
     reply->server_start = server_start_time;
     reply->all_cpus     = supported_cpus & get_prefix_cpu_mask();
+    reply->suspend      = (current->suspend || process->suspend);
     return;
 
  error:

@@ -49,7 +49,6 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(snoop);
 WINE_DECLARE_DEBUG_CHANNEL(loaddll);
 WINE_DECLARE_DEBUG_CHANNEL(imports);
-WINE_DECLARE_DEBUG_CHANNEL(pid);
 
 #ifdef _WIN64
 #define DEFAULT_SECURITY_COOKIE_64  (((ULONGLONG)0x00002b99 << 32) | 0x2ddfa232)
@@ -1087,36 +1086,21 @@ static void call_tls_callbacks( HMODULE module, UINT reason )
 
     for (callback = (const PIMAGE_TLS_CALLBACK *)dir->AddressOfCallBacks; *callback; callback++)
     {
-        if (TRACE_ON(relay))
-        {
-            if (TRACE_ON(pid))
-                DPRINTF( "%04x:", GetCurrentProcessId() );
-            DPRINTF("%04x:Call TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
-                    GetCurrentThreadId(), *callback, module, reason_names[reason] );
-        }
+        TRACE_(relay)("\1Call TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
+                      *callback, module, reason_names[reason] );
         __TRY
         {
             call_dll_entry_point( (DLLENTRYPROC)*callback, module, reason, NULL );
         }
         __EXCEPT_ALL
         {
-            if (TRACE_ON(relay))
-            {
-                if (TRACE_ON(pid))
-                    DPRINTF( "%04x:", GetCurrentProcessId() );
-                DPRINTF("%04x:exception in TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
-                        GetCurrentThreadId(), callback, module, reason_names[reason] );
-            }
+            TRACE_(relay)("\1exception in TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
+                          callback, module, reason_names[reason] );
             return;
         }
         __ENDTRY
-        if (TRACE_ON(relay))
-        {
-            if (TRACE_ON(pid))
-                DPRINTF( "%04x:", GetCurrentProcessId() );
-            DPRINTF("%04x:Ret  TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
-                    GetCurrentThreadId(), *callback, module, reason_names[reason] );
-        }
+        TRACE_(relay)("\1Ret  TLS callback (proc=%p,module=%p,reason=%s,reserved=0)\n",
+                      *callback, module, reason_names[reason] );
     }
 }
 
@@ -1143,11 +1127,8 @@ static NTSTATUS MODULE_InitDLL( WINE_MODREF *wm, UINT reason, LPVOID lpReserved 
         size_t len = min( wm->ldr.BaseDllName.Length, sizeof(mod_name)-sizeof(WCHAR) );
         memcpy( mod_name, wm->ldr.BaseDllName.Buffer, len );
         mod_name[len / sizeof(WCHAR)] = 0;
-        if (TRACE_ON(pid))
-            DPRINTF( "%04x:", GetCurrentProcessId() );
-        DPRINTF("%04x:Call PE DLL (proc=%p,module=%p %s,reason=%s,res=%p)\n",
-                GetCurrentThreadId(), entry, module, debugstr_w(mod_name),
-                reason_names[reason], lpReserved );
+        TRACE_(relay)("\1Call PE DLL (proc=%p,module=%p %s,reason=%s,res=%p)\n",
+                      entry, module, debugstr_w(mod_name), reason_names[reason], lpReserved );
     }
     else TRACE("(%p %s,%s,%p) - CALL\n", module, debugstr_w(wm->ldr.BaseDllName.Buffer),
                reason_names[reason], lpReserved );
@@ -1160,13 +1141,8 @@ static NTSTATUS MODULE_InitDLL( WINE_MODREF *wm, UINT reason, LPVOID lpReserved 
     }
     __EXCEPT_ALL
     {
-        if (TRACE_ON(relay))
-        {
-            if (TRACE_ON(pid))
-                DPRINTF( "%04x:", GetCurrentProcessId() );
-            DPRINTF("%04x:exception in PE entry point (proc=%p,module=%p,reason=%s,res=%p)\n",
-                    GetCurrentThreadId(), entry, module, reason_names[reason], lpReserved );
-        }
+        TRACE_(relay)("\1exception in PE entry point (proc=%p,module=%p,reason=%s,res=%p)\n",
+                      entry, module, reason_names[reason], lpReserved );
         status = GetExceptionCode();
     }
     __ENDTRY
@@ -1175,14 +1151,10 @@ static NTSTATUS MODULE_InitDLL( WINE_MODREF *wm, UINT reason, LPVOID lpReserved 
        to the dll. We cannot assume that this module has not been
        deleted.  */
     if (TRACE_ON(relay))
-    {
-        if (TRACE_ON(pid))
-            DPRINTF( "%04x:", GetCurrentProcessId() );
-        DPRINTF("%04x:Ret  PE DLL (proc=%p,module=%p %s,reason=%s,res=%p) retval=%x\n",
-                GetCurrentThreadId(), entry, module, debugstr_w(mod_name),
-                reason_names[reason], lpReserved, retv );
-    }
-    else TRACE("(%p,%s,%p) - RETURN %d\n", module, reason_names[reason], lpReserved, retv );
+        TRACE_(relay)("\1Ret  PE DLL (proc=%p,module=%p %s,reason=%s,res=%p) retval=%x\n",
+                      entry, module, debugstr_w(mod_name), reason_names[reason], lpReserved, retv );
+    else
+        TRACE("(%p,%s,%p) - RETURN %d\n", module, reason_names[reason], lpReserved, retv );
 
     return status;
 }
@@ -3018,11 +2990,13 @@ PIMAGE_NT_HEADERS WINAPI RtlImageNtHeader(HMODULE hModule)
  * Attach to all the loaded dlls.
  * If this is the first time, perform the full process initialization.
  */
-NTSTATUS attach_dlls( void *reserved )
+NTSTATUS attach_dlls( CONTEXT *context, BOOL suspend )
 {
     NTSTATUS status;
     WINE_MODREF *wm;
     LPCWSTR load_path = NtCurrentTeb()->Peb->ProcessParameters->DllPath.Buffer;
+
+    if (suspend) wait_suspend( context );
 
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
 
@@ -3036,7 +3010,12 @@ NTSTATUS attach_dlls( void *reserved )
     if (!imports_fixup_done)
     {
         actctx_init();
-        if ((status = fixup_imports( wm, load_path )) != STATUS_SUCCESS) goto done;
+        if ((status = fixup_imports( wm, load_path )) != STATUS_SUCCESS)
+        {
+            ERR( "Importing dlls for %s failed, status %x\n",
+                 debugstr_w(NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer), status );
+            NtTerminateProcess( GetCurrentProcess(), status );
+        }
         imports_fixup_done = TRUE;
     }
 
@@ -3044,28 +3023,35 @@ NTSTATUS attach_dlls( void *reserved )
     InsertHeadList( &tls_links, &NtCurrentTeb()->TlsLinks );
     RtlReleasePebLock();
 
-    if ((status = alloc_thread_tls()) != STATUS_SUCCESS) goto done;
-
     if (!(wm->ldr.Flags & LDR_PROCESS_ATTACHED))  /* first time around */
     {
-        if ((status = process_attach( wm, reserved )) != STATUS_SUCCESS)
+        if ((status = alloc_thread_tls()) != STATUS_SUCCESS)
+        {
+            ERR( "TLS init  failed when loading %s, status %x\n",
+                 debugstr_w(NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer), status );
+            NtTerminateProcess( GetCurrentProcess(), status );
+        }
+        if ((status = process_attach( wm, context )) != STATUS_SUCCESS)
         {
             if (last_failed_modref)
                 ERR( "%s failed to initialize, aborting\n",
                      debugstr_w(last_failed_modref->ldr.BaseDllName.Buffer) + 1 );
-            goto done;
+            ERR( "Initializing dlls for %s failed, status %x\n",
+                 debugstr_w(NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer), status );
+            NtTerminateProcess( GetCurrentProcess(), status );
         }
-        attach_implicitly_loaded_dlls( reserved );
+        attach_implicitly_loaded_dlls( context );
+        virtual_release_address_space();
     }
     else
     {
+        if ((status = alloc_thread_tls()) != STATUS_SUCCESS)
+            NtTerminateThread( GetCurrentThread(), status );
         thread_attach();
-        status = STATUS_SUCCESS;
     }
 
-done:
     RtlLeaveCriticalSection( &loader_section );
-    return status;
+    return STATUS_SUCCESS;
 }
 
 
@@ -3122,14 +3108,6 @@ static void load_global_options(void)
 }
 
 
-/***********************************************************************
- *           start_process
- */
-static void start_process( void *arg )
-{
-    call_thread_entry_point( kernel32_start_process, arg );
-}
-
 /******************************************************************
  *		LdrInitializeThunk (NTDLL.@)
  *
@@ -3141,7 +3119,6 @@ void WINAPI LdrInitializeThunk( void *kernel_start, ULONG_PTR unknown2,
     NTSTATUS status;
     WINE_MODREF *wm;
     PEB *peb = NtCurrentTeb()->Peb;
-    CONTEXT context = { 0 };
 
     kernel32_start_process = kernel_start;
     if (main_exe_file) NtClose( main_exe_file );  /* at this point the main module is created */
@@ -3172,21 +3149,13 @@ void WINAPI LdrInitializeThunk( void *kernel_start, ULONG_PTR unknown2,
     RemoveEntryList( &wm->ldr.InMemoryOrderModuleList );
     InsertHeadList( &peb->LdrData->InMemoryOrderModuleList, &wm->ldr.InMemoryOrderModuleList );
 
-    if ((status = virtual_alloc_thread_stack( NtCurrentTeb(), 0, 0 )) != STATUS_SUCCESS) goto error;
-    if ((status = server_init_process_done( &context )) != STATUS_SUCCESS) goto error;
-
-    status = wine_call_on_stack( attach_dlls, (void *)1, (char *)NtCurrentTeb()->Tib.StackBase - page_size );
-    if (status != STATUS_SUCCESS) goto error;
-
-    virtual_release_address_space();
-    virtual_clear_thread_stack();
-    if (context.ContextFlags) NtSetContextThread( GetCurrentThread(), &context );
-    wine_switch_to_stack( start_process, wm->ldr.EntryPoint, NtCurrentTeb()->Tib.StackBase );
-
-error:
-    ERR( "Main exe initialization for %s failed, status %x\n",
-         debugstr_w(peb->ProcessParameters->ImagePathName.Buffer), status );
-    NtTerminateProcess( GetCurrentProcess(), status );
+    if ((status = virtual_alloc_thread_stack( NtCurrentTeb(), 0, 0, 0 )) != STATUS_SUCCESS)
+    {
+        ERR( "Main exe initialization for %s failed, status %x\n",
+             debugstr_w(peb->ProcessParameters->ImagePathName.Buffer), status );
+        NtTerminateProcess( GetCurrentProcess(), status );
+    }
+    server_init_process_done();
 }
 
 

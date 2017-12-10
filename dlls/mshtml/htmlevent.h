@@ -64,14 +64,18 @@ typedef struct {
 
     nsIDOMEvent *nsevent;
     eventid_t event_id;
+    WCHAR *type;
     EventTarget *target;
+    EventTarget *current_target;
+    ULONGLONG time_stamp;
+    BOOL bubbles;
+    BOOL cancelable;
     BOOL prevent_default;
     BOOL stop_propagation;
     DOM_EVENT_PHASE phase;
 
     IHTMLEventObj *event_obj;
     BOOL no_event_obj;
-    unsigned in_fire_event;
 } DOMEvent;
 
 void check_event_attr(HTMLDocumentNode*,nsIDOMHTMLElement*) DECLSPEC_HIDDEN;

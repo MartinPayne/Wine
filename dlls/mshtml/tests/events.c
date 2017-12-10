@@ -2667,7 +2667,10 @@ static void test_iframe_connections(IHTMLDocument2 *doc)
 static void test_create_event(IHTMLDocument2 *doc)
 {
     IDocumentEvent *doc_event;
+    IEventTarget *event_target;
+    IHTMLElement *elem;
     IDOMEvent *event;
+    VARIANT_BOOL b;
     USHORT phase;
     BSTR str;
     HRESULT hres;
@@ -2692,6 +2695,30 @@ static void test_create_event(IHTMLDocument2 *doc)
 
     hres = IDOMEvent_stopPropagation(event);
     ok(hres == S_OK, "stopPropagation failed: %08x\n", hres);
+
+    str = (void*)0xdeadbeef;
+    hres = IDOMEvent_get_type(event, &str);
+    ok(hres == S_OK, "get_type failed: %08x\n", hres);
+    ok(!str, "type = %s\n", wine_dbgstr_w(str));
+
+    b = 0xdead;
+    hres = IDOMEvent_get_bubbles(event, &b);
+    ok(hres == S_OK, "get_bubbles failed: %08x\n", hres);
+    ok(!b, "bubbles = %x\n", b);
+
+    b = 0xdead;
+    hres = IDOMEvent_get_cancelable(event, &b);
+    ok(hres == S_OK, "get_cancelable failed: %08x\n", hres);
+    ok(!b, "cancelable = %x\n", b);
+
+    elem = doc_get_body(doc);
+    hres = IHTMLElement_QueryInterface(elem, &IID_IEventTarget, (void**)&event_target);
+    IHTMLElement_Release(elem);
+
+    hres = IEventTarget_dispatchEvent(event_target, NULL, &b);
+    ok(hres == E_INVALIDARG, "dispatchEvent failed: %08x\n", hres);
+
+    IEventTarget_Release(event_target);
 
     IDOMEvent_Release(event);
 
@@ -3129,6 +3156,7 @@ static void doc_load_string(IHTMLDocument2 *doc, const char *str)
 {
     IPersistStreamInit *init;
     IStream *stream;
+    HRESULT hres;
     HGLOBAL mem;
     SIZE_T len;
 
@@ -3138,9 +3166,11 @@ static void doc_load_string(IHTMLDocument2 *doc, const char *str)
     len = strlen(str);
     mem = GlobalAlloc(0, len);
     memcpy(mem, str, len);
-    CreateStreamOnHGlobal(mem, TRUE, &stream);
+    hres = CreateStreamOnHGlobal(mem, TRUE, &stream);
+    ok(hres == S_OK, "Failed to create a stream, hr %#x.\n", hres);
 
-    IHTMLDocument2_QueryInterface(doc, &IID_IPersistStreamInit, (void**)&init);
+    hres = IHTMLDocument2_QueryInterface(doc, &IID_IPersistStreamInit, (void**)&init);
+    ok(hres == S_OK, "Failed to get IPersistStreamInit, hr %#x.\n", hres);
 
     IPersistStreamInit_Load(init, stream);
     IPersistStreamInit_Release(init);

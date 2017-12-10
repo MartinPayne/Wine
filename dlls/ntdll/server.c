@@ -1430,7 +1430,7 @@ void server_init_process(void)
 /***********************************************************************
  *           server_init_process_done
  */
-NTSTATUS server_init_process_done( CONTEXT *context )
+void server_init_process_done(void)
 {
     PEB *peb = NtCurrentTeb()->Peb;
     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( peb->ImageBaseAddress );
@@ -1444,7 +1444,7 @@ NTSTATUS server_init_process_done( CONTEXT *context )
      * We do need the handlers in place by the time the request is over, so
      * we set them up here. If we segfault between here and the server call
      * something is very wrong... */
-    signal_init_process( context, entry );
+    signal_init_process();
 
     /* Signal the parent process to continue */
     SERVER_START_REQ( init_process_done )
@@ -1460,8 +1460,8 @@ NTSTATUS server_init_process_done( CONTEXT *context )
     }
     SERVER_END_REQ;
 
-    if (suspend) wait_suspend( context );
-    return status;
+    assert( !status );
+    signal_start_process( entry, suspend );
 }
 
 
@@ -1470,7 +1470,7 @@ NTSTATUS server_init_process_done( CONTEXT *context )
  *
  * Send an init thread request. Return 0 if OK.
  */
-size_t server_init_thread( void *entry_point )
+size_t server_init_thread( void *entry_point, BOOL *suspend )
 {
     static const char *cpu_names[] = { "x86", "x86_64", "PowerPC", "ARM", "ARM64" };
     static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
@@ -1511,6 +1511,7 @@ size_t server_init_thread( void *entry_point )
         info_size         = reply->info_size;
         server_start_time = reply->server_start;
         server_cpus       = reply->all_cpus;
+        *suspend          = reply->suspend;
     }
     SERVER_END_REQ;
 

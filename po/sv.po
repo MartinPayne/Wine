@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 2013-06-19 00:18+0300\n"
 "Last-Translator: Lauri Kenttä <lauri.kentta@gmail.com>\n"
@@ -121,7 +121,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "Wine kunde inte hitta paketet Gecko vilket krävs för att program med "
@@ -129,7 +129,7 @@ msgstr ""
 "automatiskt åt dig.\n"
 "\n"
 "Obs: Du rekommenderas att använda din distributions paket i stället. Se <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> för "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> för "
 "mer information."
 
 #: appwiz.rc:109 appwiz.rc:124
@@ -167,15 +167,15 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "Wine kunde inte hitta paketet wine-mono vilket krävs för att .NET-program "
 "ska fungera korrekt. Wine kan hämta och installera det automatiskt åt dig.\n"
 "\n"
 "Obs: Du rekommenderas att använda din distributions paket i stället. Se <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> för mer "
-"information."
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> för "
+"mer information."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12035,7 +12035,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12183,6 +12183,24 @@ msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG QUERY nyckelnamn [/v värdenamn | /ve] [/s]\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "reg: Invalid key name\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "reg: Ogiltigt nyckelnamn\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The registry value '%1' already exists. Do you want to overwrite it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "Värdet '%1' finns redan i registret. Vill du ersätta det?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -14650,11 +14668,11 @@ msgstr ""
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "Detta kan ha orsakats av ett fel i programmet eller en brist i Wine. Du kan "
-"söka på <a href=\"http://appdb.winehq.org\">Application Database</a> efter "
+"söka på <a href=\"https://appdb.winehq.org\">Application Database</a> efter "
 "tips om hur man kör detta program."
 
 #: winedbg.rc:61
@@ -14669,12 +14687,12 @@ msgstr "Detaljer om programfel"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 "Om denna problem inte presenterar sig i Windows och ännu inte har "
 "rapporterats, kan du spara detaljerna till ett fil med knappen \"Spara som\" "
-"och <a href=\"http://wiki.winehq.org/Bugs\">skicka en bugrapport</a> med "
+"och <a href=\"https://wiki.winehq.org/Bugs\">skicka en bugrapport</a> med "
 "filet som en bilaga."
 
 #: winedbg.rc:38

@@ -48,6 +48,8 @@
 # include <sys/ucontext.h>
 #endif
 
+#define NONAMELESSUNION
+#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -59,6 +61,7 @@
 #include "winnt.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(relay);
 
 static pthread_key_t teb_key;
 
@@ -117,12 +120,7 @@ static inline BOOL is_valid_frame( void *frame )
  */
 static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
 {
-#define C(n) context->X##n = REGn_sig(n,sigcontext)
-    /* Save normal registers */
-    C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
-    C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
-#undef C
+    DWORD i;
 
     context->ContextFlags = CONTEXT_FULL;
     context->Fp     = FP_sig(sigcontext);     /* Frame pointer */
@@ -130,6 +128,7 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
     context->Sp     = SP_sig(sigcontext);     /* Stack pointer */
     context->Pc     = PC_sig(sigcontext);     /* Program Counter */
     context->Cpsr   = PSTATE_sig(sigcontext); /* Current State Register */
+    for (i = 0; i <= 28; i++) context->u.X[i] = REGn_sig( i, sigcontext );
 }
 
 
@@ -140,18 +139,14 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
  */
 static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
 {
-#define C(n)  REGn_sig(n,sigcontext) = context->X##n
-    /* Restore normal registers */
-    C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
-    C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
-#undef C
+    DWORD i;
 
     FP_sig(sigcontext)     = context->Fp;     /* Frame pointer */
     LR_sig(sigcontext)     = context->Lr;     /* Link register */
     SP_sig(sigcontext)     = context->Sp;     /* Stack pointer */
     PC_sig(sigcontext)     = context->Pc;     /* Program Counter */
     PSTATE_sig(sigcontext) = context->Cpsr;   /* Current State Register */
+    for (i = 0; i <= 28; i++) REGn_sig( i, sigcontext ) = context->u.X[i];
 }
 
 
@@ -254,12 +249,20 @@ static void copy_context( CONTEXT *to, const CONTEXT *from, DWORD flags )
     }
     if (flags & CONTEXT_INTEGER)
     {
-#define C(n)  to->X##n = from->X##n
-    /* Restore normal registers */
-    C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
-    C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
-#undef C
+        memcpy( to->u.X, from->u.X, sizeof(to->u.X) );
+    }
+    if (flags & CONTEXT_FLOATING_POINT)
+    {
+        memcpy( to->V, from->V, sizeof(to->V) );
+        to->Fpcr = from->Fpcr;
+        to->Fpsr = from->Fpsr;
+    }
+    if (flags & CONTEXT_DEBUG_REGISTERS)
+    {
+        memcpy( to->Bcr, from->Bcr, sizeof(to->Bcr) );
+        memcpy( to->Bvr, from->Bvr, sizeof(to->Bvr) );
+        memcpy( to->Wcr, from->Wcr, sizeof(to->Wcr) );
+        memcpy( to->Wvr, from->Wvr, sizeof(to->Wvr) );
     }
 }
 
@@ -270,7 +273,7 @@ static void copy_context( CONTEXT *to, const CONTEXT *from, DWORD flags )
  */
 NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
 {
-    DWORD flags = from->ContextFlags & ~CONTEXT_ARM64;  /* get rid of CPU id */
+    DWORD i, flags = from->ContextFlags & ~CONTEXT_ARM64;  /* get rid of CPU id */
 
     memset( to, 0, sizeof(*to) );
     to->cpu = CPU_ARM64;
@@ -287,12 +290,22 @@ NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
     if (flags & CONTEXT_INTEGER)
     {
         to->flags |= SERVER_CTX_INTEGER;
-#define C(n)  to->integer.arm64_regs.x[n] = from->X##n
-    /* Restore normal registers */
-    C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
-    C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
-#undef C
+        for (i = 0; i <= 28; i++) to->integer.arm64_regs.x[i] = from->u.X[i];
+    }
+    if (flags & CONTEXT_FLOATING_POINT)
+    {
+        to->flags |= SERVER_CTX_FLOATING_POINT;
+        for (i = 0; i < 64; i++) to->fp.arm64_regs.d[i] = from->V[i / 2].D[i % 2];
+        to->fp.arm64_regs.fpcr = from->Fpcr;
+        to->fp.arm64_regs.fpsr = from->Fpsr;
+    }
+    if (flags & CONTEXT_DEBUG_REGISTERS)
+    {
+        to->flags |= SERVER_CTX_DEBUG_REGISTERS;
+        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->debug.arm64_regs.bcr[i] = from->Bcr[i];
+        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->debug.arm64_regs.bvr[i] = from->Bvr[i];
+        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->debug.arm64_regs.wcr[i] = from->Wcr[i];
+        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->debug.arm64_regs.wvr[i] = from->Wvr[i];
     }
     return STATUS_SUCCESS;
 }
@@ -305,6 +318,8 @@ NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
  */
 NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
 {
+    DWORD i;
+
     if (from->cpu != CPU_ARM64) return STATUS_INVALID_PARAMETER;
 
     to->ContextFlags = CONTEXT_ARM64;
@@ -320,13 +335,23 @@ NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
     if (from->flags & SERVER_CTX_INTEGER)
     {
         to->ContextFlags |= CONTEXT_INTEGER;
-#define C(n)  to->X##n = from->integer.arm64_regs.x[n]
-    /* Restore normal registers */
-    C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
-    C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
-#undef C
-     }
+        for (i = 0; i <= 28; i++) to->u.X[i] = from->integer.arm64_regs.x[i];
+    }
+    if (from->flags & SERVER_CTX_FLOATING_POINT)
+    {
+        to->ContextFlags |= CONTEXT_FLOATING_POINT;
+        for (i = 0; i < 64; i++) to->V[i / 2].D[i % 2] = from->fp.arm64_regs.d[i];
+        to->Fpcr = from->fp.arm64_regs.fpcr;
+        to->Fpsr = from->fp.arm64_regs.fpsr;
+    }
+    if (from->flags & SERVER_CTX_DEBUG_REGISTERS)
+    {
+        to->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->Bcr[i] = from->debug.arm64_regs.bcr[i];
+        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->Bvr[i] = from->debug.arm64_regs.bvr[i];
+        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->Wcr[i] = from->debug.arm64_regs.wcr[i];
+        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->Wvr[i] = from->debug.arm64_regs.wvr[i];
+    }
     return STATUS_SUCCESS;
 }
 
@@ -817,14 +842,8 @@ NTSTATUS signal_alloc_thread( TEB **teb )
  */
 void signal_free_thread( TEB *teb )
 {
-    SIZE_T size;
+    SIZE_T size = 0;
 
-    if (teb->DeallocationStack)
-    {
-        size = 0;
-        NtFreeVirtualMemory( GetCurrentProcess(), &teb->DeallocationStack, &size, MEM_RELEASE );
-    }
-    size = 0;
     NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
 }
 
@@ -852,7 +871,7 @@ void signal_init_thread( TEB *teb )
 /**********************************************************************
  *		signal_init_process
  */
-void signal_init_process( CONTEXT *context, LPTHREAD_START_ROUTINE entry )
+void signal_init_process(void)
 {
     struct sigaction sig_act;
 
@@ -881,8 +900,6 @@ void signal_init_process( CONTEXT *context, LPTHREAD_START_ROUTINE entry )
     sig_act.sa_sigaction = trap_handler;
     if (sigaction( SIGTRAP, &sig_act, NULL ) == -1) goto error;
 #endif
-
-    /* FIXME: set the initial context */
     return;
 
  error:
@@ -943,10 +960,11 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 /***********************************************************************
  *           call_thread_entry_point
  */
-void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
+static void WINAPI call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
 {
     __TRY
     {
+        TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", entry, arg );
         exit_thread( entry( arg ));
     }
     __EXCEPT(unhandled_exception_filter)
@@ -955,6 +973,64 @@ void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
     }
     __ENDTRY
     abort();  /* should not be reached */
+}
+
+typedef void (WINAPI *thread_start_func)(LPTHREAD_START_ROUTINE,void *);
+
+struct startup_info
+{
+    thread_start_func      start;
+    LPTHREAD_START_ROUTINE entry;
+    void                  *arg;
+    BOOL                   suspend;
+};
+
+/***********************************************************************
+ *           thread_startup
+ */
+static void thread_startup( void *param )
+{
+    CONTEXT context = { 0 };
+    struct startup_info *info = param;
+
+    /* build the initial context */
+    context.ContextFlags = CONTEXT_FULL;
+    context.u.s.X0 = (DWORD_PTR)info->entry;
+    context.u.s.X1 = (DWORD_PTR)info->arg;
+    context.Sp = (DWORD_PTR)NtCurrentTeb()->Tib.StackBase;
+    context.Pc = (DWORD_PTR)info->start;
+
+    attach_dlls( &context, info->suspend );
+
+    ((thread_start_func)context.Pc)( (LPTHREAD_START_ROUTINE)context.u.s.X0, (void *)context.u.s.X1 );
+}
+
+/***********************************************************************
+ *           signal_start_thread
+ *
+ * Thread startup sequence:
+ * signal_start_thread()
+ *   -> thread_startup()
+ *     -> call_thread_entry_point()
+ */
+void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend )
+{
+    struct startup_info info = { call_thread_entry_point, entry, arg, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+}
+
+/**********************************************************************
+ *		signal_start_process
+ *
+ * Process startup sequence:
+ * signal_start_process()
+ *   -> thread_startup()
+ *     -> kernel32_start_process()
+ */
+void signal_start_process( LPTHREAD_START_ROUTINE entry, BOOL suspend )
+{
+    struct startup_info info = { kernel32_start_process, entry, NtCurrentTeb()->Peb, suspend };
+    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
 }
 
 /***********************************************************************

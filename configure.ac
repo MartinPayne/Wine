@@ -6,7 +6,7 @@ m4_define(WINE_VERSION,regexp(m4_include(VERSION),[version \([-.0-9A-Za-z]+\)],[
 
 dnl autoconf versions before 2.62 don't handle source dir symlinks correctly
 AC_PREREQ(2.62)
-AC_INIT([Wine],[WINE_VERSION],[wine-devel@winehq.org],[wine],[http://www.winehq.org])
+AC_INIT([Wine],[WINE_VERSION],[wine-devel@winehq.org],[wine],[https://www.winehq.org])
 AC_CONFIG_SRCDIR(server/atom.c)
 AC_CONFIG_HEADERS(include/config.h)
 AC_CONFIG_AUX_DIR(tools)
@@ -23,8 +23,8 @@ m4_ifdef([AS_VAR_IF],,[AC_DEFUN([AS_VAR_IF],
    AS_IF([test "x$as_val" = x""$2], [$3], [$4])])])])dnl
 dnl autoconf versions before 2.64 don't have AC_PACKAGE_URL
 m4_ifdef([AC_PACKAGE_URL],,
-  [AC_DEFINE([PACKAGE_URL], ["http://www.winehq.org"], [Define to the home page for this package.])
-   AC_SUBST([PACKAGE_URL], ["http://www.winehq.org"])])dnl
+  [AC_DEFINE([PACKAGE_URL], ["https://www.winehq.org"], [Define to the home page for this package.])
+   AC_SUBST([PACKAGE_URL], ["https://www.winehq.org"])])dnl
 
 dnl **** Command-line arguments ****
 
@@ -43,6 +43,7 @@ AC_ARG_WITH(cups,      AS_HELP_STRING([--without-cups],[do not use CUPS]))
 AC_ARG_WITH(curses,    AS_HELP_STRING([--without-curses],[do not use (n)curses]),
             [if test "x$withval" = "xno"; then ac_cv_header_ncurses_h=no; ac_cv_header_curses_h=no; fi])
 AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic device support)]))
+AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
@@ -177,13 +178,29 @@ case $host in
                       [AC_MSG_RESULT([yes])],
                       [AC_MSG_RESULT([no])
                        AC_MSG_ERROR([You need a target with Thumb support to build Wine for ARM.])])
-    CFLAGS="$CFLAGS -marm"
-    AC_SUBST(TARGETFLAGS,"-marm")
-    AC_MSG_CHECKING([whether $CC supports floating point])
-    WINE_TRY_ASM_LINK(["vmrs r2,fpscr"],,,
-                      [AC_MSG_RESULT([yes])],
-                      [AC_MSG_RESULT([no])
-                       AC_MSG_ERROR([You need a target with floating point support to build Wine for ARM.])])
+    case $with_float_abi in
+      soft|softfp|hard)
+        float_abi=$with_float_abi ;;
+      *)
+        case $host_os in
+          *eabihf)
+            float_abi=hard ;;
+          *)
+            float_abi=softfp
+            saved_CFLAGS=$CFLAGS
+            CFLAGS="$CFLAGS -marm -mfloat-abi=$float_abi"
+            AC_MSG_CHECKING([whether $CC supports -mfloat-abi=$float_abi])
+            WINE_TRY_ASM_LINK(["vmrs r2,fpscr"],,,
+                              [AC_MSG_RESULT([yes])],
+                              [AC_MSG_RESULT([no])
+                               float_abi=soft
+                               WINE_WARNING([Floating point is not supported for this target. The resulting build won't be compatible with Windows ARM binaries.])])
+            CFLAGS=$saved_CFLAGS
+        esac
+        ;;
+    esac
+    CFLAGS="$CFLAGS -marm -mfloat-abi=$float_abi"
+    AC_SUBST(TARGETFLAGS,"-marm -mfloat-abi=$float_abi")
     ;;
   i[[3456789]]86*)
     enable_win16=${enable_win16:-yes}
@@ -396,7 +413,7 @@ AC_CHECK_HEADERS(\
 	AudioUnit/AudioComponent.h \
 	CL/cl.h \
 	Carbon/Carbon.h \
-	CommonCrypto/CommonDigest.h \
+	CommonCrypto/CommonCryptor.h \
 	CoreAudio/CoreAudio.h \
 	CoreServices/CoreServices.h \
 	DiskArbitration/DiskArbitration.h \
@@ -525,7 +542,7 @@ AC_CHECK_HEADERS(\
 	valgrind/valgrind.h \
 	zlib.h
 )
-AC_HEADER_MAJOR()
+WINE_HEADER_MAJOR()
 AC_HEADER_STAT()
 
 dnl **** Checks for headers that depend on other ones ****
@@ -3206,7 +3223,8 @@ WINE_CONFIG_DLL(hlink,,[clean,implib])
 WINE_CONFIG_TEST(dlls/hlink/tests)
 WINE_CONFIG_DLL(hnetcfg,,[clean])
 WINE_CONFIG_TEST(dlls/hnetcfg/tests)
-WINE_CONFIG_DLL(httpapi)
+WINE_CONFIG_DLL(httpapi,,[implib])
+WINE_CONFIG_TEST(dlls/httpapi/tests)
 WINE_CONFIG_DLL(iccvid,,[clean])
 WINE_CONFIG_DLL(icmp)
 WINE_CONFIG_DLL(ieframe,,[clean,implib])
@@ -3593,6 +3611,7 @@ WINE_CONFIG_DLL(wbemdisp,,[clean])
 WINE_CONFIG_TEST(dlls/wbemdisp/tests)
 WINE_CONFIG_DLL(wbemprox,,[clean])
 WINE_CONFIG_TEST(dlls/wbemprox/tests)
+WINE_CONFIG_DLL(wdscore)
 WINE_CONFIG_DLL(webservices,,[implib])
 WINE_CONFIG_TEST(dlls/webservices/tests)
 WINE_CONFIG_DLL(wer,,[implib])
@@ -3905,8 +3924,10 @@ else
     WINE_APPEND_RULE(
 [install install-lib::
 	\$(INSTALL_DATA) $srcdir/loader/l_intl.nls \$(DESTDIR)\$(datadir)/wine/l_intl.nls
-uninstall::
-	\$(RM) \$(DESTDIR)\$(datadir)/wine/l_intl.nls])
+.PHONY: l_intl.nls/uninstall
+l_intl.nls/uninstall::
+	\$(RM) \$(DESTDIR)\$(datadir)/wine/l_intl.nls
+__uninstall__: l_intl.nls/uninstall])
     case $host_os in
       cygwin*|mingw32*|darwin*|macosx*|linux-android*) ;;
       *) WINE_APPEND_RULE(

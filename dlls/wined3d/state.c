@@ -611,9 +611,7 @@ void state_alpha_test(struct wined3d_context *context, const struct wined3d_stat
 
 void state_clipping(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    const struct wined3d_gl_info *gl_info = context->gl_info;
-    unsigned int clipplane_count = gl_info->limits.user_clip_distances;
-    unsigned int i, enable_mask, disable_mask;
+    unsigned int enable_mask;
 
     if (use_vs(state) && !context->d3d_info->vs_clipping)
     {
@@ -626,7 +624,7 @@ void state_clipping(struct wined3d_context *context, const struct wined3d_state 
          * disables all clip planes because of that - don't do anything here
          * and keep them disabled. */
         if (state->render_states[WINED3D_RS_CLIPPLANEENABLE] && !warned++)
-            FIXME("Clipping not supported with vertex shaders\n");
+            FIXME("Clipping not supported with vertex shaders.\n");
         return;
     }
 
@@ -636,39 +634,12 @@ void state_clipping(struct wined3d_context *context, const struct wined3d_state 
      * need to update the clipping field from ffp_vertex_settings. */
     context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_VERTEX;
 
-    /* TODO: Keep track of previously enabled clipplanes to avoid unnecessary resetting
-     * of already set values
-     */
-
     /* If enabling / disabling all
      * TODO: Is this correct? Doesn't D3DRS_CLIPPING disable clipping on the viewport frustrum?
      */
-    if (state->render_states[WINED3D_RS_CLIPPING])
-    {
-        enable_mask = state->render_states[WINED3D_RS_CLIPPLANEENABLE];
-        disable_mask = ~state->render_states[WINED3D_RS_CLIPPLANEENABLE];
-    }
-    else
-    {
-        enable_mask = 0;
-        disable_mask = ~0u;
-    }
-
-    if (clipplane_count < 32)
-    {
-        enable_mask &= (1u << clipplane_count) - 1;
-        disable_mask &= (1u << clipplane_count) - 1;
-    }
-
-    for (i = 0; enable_mask && i < clipplane_count; enable_mask >>= 1, ++i)
-        if (enable_mask & 1)
-            gl_info->gl_ops.gl.p_glEnable(GL_CLIP_DISTANCE0 + i);
-    checkGLcall("clip plane enable");
-
-    for (i = 0; disable_mask && i < clipplane_count; disable_mask >>= 1, ++i)
-        if (disable_mask & 1)
-            gl_info->gl_ops.gl.p_glDisable(GL_CLIP_DISTANCE0 + i);
-    checkGLcall("clip plane disable");
+    enable_mask = state->render_states[WINED3D_RS_CLIPPING] ?
+            state->render_states[WINED3D_RS_CLIPPLANEENABLE] : 0;
+    context_enable_clip_distances(context, enable_mask);
 }
 
 static void state_specularenable(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -1721,7 +1692,7 @@ static void state_depthbias(struct wined3d_context *context, const struct wined3
             || state->render_states[WINED3D_RS_DEPTHBIAS])
     {
         const struct wined3d_rendertarget_view *depth = state->fb->depth_stencil;
-        float scale;
+        float factor, units, scale;
 
         union
         {
@@ -1732,43 +1703,39 @@ static void state_depthbias(struct wined3d_context *context, const struct wined3
         scale_bias.d = state->render_states[WINED3D_RS_SLOPESCALEDEPTHBIAS];
         const_bias.d = state->render_states[WINED3D_RS_DEPTHBIAS];
 
-        gl_info->gl_ops.gl.p_glEnable(GL_POLYGON_OFFSET_FILL);
-        checkGLcall("glEnable(GL_POLYGON_OFFSET_FILL)");
-
         if (context->d3d_info->wined3d_creation_flags & WINED3D_LEGACY_DEPTH_BIAS)
         {
-            float bias = -(float)const_bias.d;
-            gl_info->gl_ops.gl.p_glPolygonOffset(bias, bias);
-            checkGLcall("glPolygonOffset");
+            factor = units = -(float)const_bias.d;
         }
         else
         {
             if (depth)
             {
-                if (depth->format_flags & WINED3DFMT_FLAG_FLOAT)
-                    scale = gl_info->float_polyoffset_scale;
-                else
-                    scale = gl_info->fixed_polyoffset_scale;
+                scale = depth->format->depth_bias_scale;
 
                 TRACE("Depth format %s, using depthbias scale of %.8e.\n",
-                      debug_d3dformat(depth->format->id), scale);
+                        debug_d3dformat(depth->format->id), scale);
             }
             else
             {
                 /* The context manager will reapply this state on a depth stencil change */
-                TRACE("No depth stencil, using depthbias scale of 0.0.\n");
+                TRACE("No depth stencil, using depth bias scale of 0.0.\n");
                 scale = 0.0f;
             }
 
-            gl_info->gl_ops.gl.p_glPolygonOffset(scale_bias.f, const_bias.f * scale);
-            checkGLcall("glPolygonOffset(...)");
+            factor = scale_bias.f;
+            units = const_bias.f * scale;
         }
+
+        gl_info->gl_ops.gl.p_glEnable(GL_POLYGON_OFFSET_FILL);
+        gl_info->gl_ops.gl.p_glPolygonOffset(factor, units);
     }
     else
     {
         gl_info->gl_ops.gl.p_glDisable(GL_POLYGON_OFFSET_FILL);
-        checkGLcall("glDisable(GL_POLYGON_OFFSET_FILL)");
     }
+
+    checkGLcall("depth bias");
 }
 
 static void state_zvisible(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -4535,22 +4502,19 @@ static void vertexdeclaration(struct wined3d_context *context, const struct wine
     }
     else
     {
-        if(!context->last_was_vshader) {
+        if (!context->last_was_vshader)
+        {
             static BOOL warned = FALSE;
             if (!context->d3d_info->vs_clipping)
             {
                 /* Disable all clip planes to get defined results on all drivers. See comment in the
                  * state_clipping state handler
                  */
-                for (i = 0; i < gl_info->limits.user_clip_distances; ++i)
-                {
-                    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE0 + i);
-                    checkGLcall("glDisable(GL_CLIP_PLANE0 + i)");
-                }
+                context_enable_clip_distances(context, 0);
 
                 if (!warned && state->render_states[WINED3D_RS_CLIPPLANEENABLE])
                 {
-                    FIXME("Clipping not supported with vertex shaders\n");
+                    FIXME("Clipping not supported with vertex shaders.\n");
                     warned = TRUE;
                 }
             }
@@ -5261,30 +5225,6 @@ static const struct StateEntryTemplate vp_ffp_states[] =
     { STATE_CLIPPLANE(5),                                 { STATE_CLIPPLANE(5),                                 clipplane           }, WINED3D_GL_EXT_NONE             },
     { STATE_CLIPPLANE(6),                                 { STATE_CLIPPLANE(6),                                 clipplane           }, WINED3D_GL_EXT_NONE             },
     { STATE_CLIPPLANE(7),                                 { STATE_CLIPPLANE(7),                                 clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(8),                                 { STATE_CLIPPLANE(8),                                 clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(9),                                 { STATE_CLIPPLANE(9),                                 clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(10),                                { STATE_CLIPPLANE(10),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(11),                                { STATE_CLIPPLANE(11),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(12),                                { STATE_CLIPPLANE(12),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(13),                                { STATE_CLIPPLANE(13),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(14),                                { STATE_CLIPPLANE(14),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(15),                                { STATE_CLIPPLANE(15),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(16),                                { STATE_CLIPPLANE(16),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(17),                                { STATE_CLIPPLANE(17),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(18),                                { STATE_CLIPPLANE(18),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(19),                                { STATE_CLIPPLANE(19),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(20),                                { STATE_CLIPPLANE(20),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(21),                                { STATE_CLIPPLANE(21),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(22),                                { STATE_CLIPPLANE(22),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(23),                                { STATE_CLIPPLANE(23),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(24),                                { STATE_CLIPPLANE(24),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(25),                                { STATE_CLIPPLANE(25),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(26),                                { STATE_CLIPPLANE(26),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(27),                                { STATE_CLIPPLANE(27),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(28),                                { STATE_CLIPPLANE(28),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(29),                                { STATE_CLIPPLANE(29),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(30),                                { STATE_CLIPPLANE(30),                                clipplane           }, WINED3D_GL_EXT_NONE             },
-    { STATE_CLIPPLANE(31),                                { STATE_CLIPPLANE(31),                                clipplane           }, WINED3D_GL_EXT_NONE             },
       /* Lights */
     { STATE_LIGHT_TYPE,                                   { STATE_LIGHT_TYPE,                                   state_nop           }, WINED3D_GL_EXT_NONE             },
     { STATE_ACTIVELIGHT(0),                               { STATE_ACTIVELIGHT(0),                               light               }, WINED3D_GL_EXT_NONE             },

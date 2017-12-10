@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: N/A\n"
 "Last-Translator: Automatically generated\n"
@@ -122,7 +122,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "O Wine não conseguiu encontrar o pacote Gecko que é necessário para "
@@ -130,7 +130,7 @@ msgstr ""
 "automaticamente efetuar o download e instalá-lo por si.\n"
 "\n"
 "Nota: é recomendável usar os pacotes da sua distribuição em vez disso. Veja "
-"<a href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> "
+"<a href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> "
 "para mais detalhes."
 
 #: appwiz.rc:109 appwiz.rc:124
@@ -168,7 +168,7 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "O Wine não conseguiu encontrar o pacote wine-mono que é necessário para "
@@ -176,8 +176,8 @@ msgstr ""
 "automaticamente efetuar o download e instalá-lo por si.\n"
 "\n"
 "Nota: é recomendável usar os pacotes da sua distribuição em vez disso. Veja "
-"<a href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> para "
-"mais detalhes."
+"<a href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> "
+"para mais detalhes."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12191,7 +12191,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12359,6 +12359,24 @@ msgstr "Erro: Incapaz de adicionar chaves à máquina remota\n"
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG QUERY nome_chave [/v nome_valor | /ve] [/s]\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "Erro: Nome de chave inválido\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The specified file already exists. Do you want to replace it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "O ficheiro especificado já existe. Deseja substituí-lo?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -14886,11 +14904,11 @@ msgstr ""
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "Isto pode ser causado por um problema no programa ou uma deficiência no "
-"Wine. Pode querer visitar a <a href='http://appdb.winehq.org'>Base de Dados "
+"Wine. Pode querer visitar a <a href='https://appdb.winehq.org'>Base de Dados "
 "de Aplicações</a> para dicas de como correr esta aplicação."
 
 #: winedbg.rc:61
@@ -14905,7 +14923,7 @@ msgstr "Detalhes do erro no programa"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 

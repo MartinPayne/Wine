@@ -21,9 +21,8 @@
 #include "wine/port.h"
 
 #include <stdarg.h>
-#ifdef HAVE_COMMONCRYPTO_COMMONDIGEST_H
-#include <CommonCrypto/CommonDigest.h>
-#include <CommonCrypto/CommonHMAC.h>
+#ifdef HAVE_COMMONCRYPTO_COMMONCRYPTOR_H
+#include <CommonCrypto/CommonCryptor.h>
 #elif defined(SONAME_LIBGNUTLS)
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
@@ -46,7 +45,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(bcrypt);
 
 static HINSTANCE instance;
 
-#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONDIGEST_H)
+#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static void *libgnutls_handle;
@@ -121,7 +120,7 @@ static void gnutls_uninitialize(void)
     wine_dlclose( libgnutls_handle, NULL, 0 );
     libgnutls_handle = NULL;
 }
-#endif /* HAVE_GNUTLS_CIPHER_INIT && !HAVE_COMMONCRYPTO_COMMONDIGEST_H */
+#endif /* HAVE_GNUTLS_CIPHER_INIT && !HAVE_COMMONCRYPTO_COMMONCRYPTOR_H */
 
 NTSTATUS WINAPI BCryptEnumAlgorithms(ULONG dwAlgOperations, ULONG *pAlgCount,
                                      BCRYPT_ALGORITHM_IDENTIFIER **ppAlgList, ULONG dwFlags)
@@ -145,6 +144,8 @@ struct object
 enum alg_id
 {
     ALG_ID_AES,
+    ALG_ID_MD2,
+    ALG_ID_MD4,
     ALG_ID_MD5,
     ALG_ID_RNG,
     ALG_ID_SHA1,
@@ -163,6 +164,8 @@ static const struct {
     const WCHAR *alg_name;
 } alg_props[] = {
     /* ALG_ID_AES    */ {  654,    0,    0, BCRYPT_AES_ALGORITHM },
+    /* ALG_ID_MD2    */ {  270,   16,  128, BCRYPT_MD2_ALGORITHM },
+    /* ALG_ID_MD4    */ {  270,   16,  512, BCRYPT_MD4_ALGORITHM },
     /* ALG_ID_MD5    */ {  274,   16,  512, BCRYPT_MD5_ALGORITHM },
     /* ALG_ID_RNG    */ {    0,    0,    0, BCRYPT_RNG_ALGORITHM },
     /* ALG_ID_SHA1   */ {  278,   20,  512, BCRYPT_SHA1_ALGORITHM },
@@ -235,6 +238,8 @@ NTSTATUS WINAPI BCryptOpenAlgorithmProvider( BCRYPT_ALG_HANDLE *handle, LPCWSTR 
     }
 
     if (!strcmpW( id, BCRYPT_AES_ALGORITHM )) alg_id = ALG_ID_AES;
+    else if (!strcmpW( id, BCRYPT_MD2_ALGORITHM )) alg_id = ALG_ID_MD2;
+    else if (!strcmpW( id, BCRYPT_MD4_ALGORITHM )) alg_id = ALG_ID_MD4;
     else if (!strcmpW( id, BCRYPT_MD5_ALGORITHM )) alg_id = ALG_ID_MD5;
     else if (!strcmpW( id, BCRYPT_RNG_ALGORITHM )) alg_id = ALG_ID_RNG;
     else if (!strcmpW( id, BCRYPT_SHA1_ALGORITHM )) alg_id = ALG_ID_SHA1;
@@ -287,6 +292,8 @@ struct hash_impl
 {
     union
     {
+        MD2_CTX md2;
+        MD4_CTX md4;
         MD5_CTX md5;
         SHA_CTX sha1;
         SHA256_CTX sha256;
@@ -298,6 +305,14 @@ static NTSTATUS hash_init( struct hash_impl *hash, enum alg_id alg_id )
 {
     switch (alg_id)
     {
+    case ALG_ID_MD2:
+        md2_init( &hash->u.md2 );
+        break;
+
+    case ALG_ID_MD4:
+        MD4Init( &hash->u.md4 );
+        break;
+
     case ALG_ID_MD5:
         MD5Init( &hash->u.md5 );
         break;
@@ -330,6 +345,14 @@ static NTSTATUS hash_update( struct hash_impl *hash, enum alg_id alg_id,
 {
     switch (alg_id)
     {
+    case ALG_ID_MD2:
+        md2_update( &hash->u.md2, input, size );
+        break;
+
+    case ALG_ID_MD4:
+        MD4Update( &hash->u.md4, input, size );
+        break;
+
     case ALG_ID_MD5:
         MD5Update( &hash->u.md5, input, size );
         break;
@@ -362,6 +385,15 @@ static NTSTATUS hash_finish( struct hash_impl *hash, enum alg_id alg_id,
 {
     switch (alg_id)
     {
+    case ALG_ID_MD2:
+        md2_finalize( &hash->u.md2, output );
+        break;
+
+    case ALG_ID_MD4:
+        MD4Final( &hash->u.md4 );
+        memcpy( output, hash->u.md4.digest, 16 );
+        break;
+
     case ALG_ID_MD5:
         MD5Final( &hash->u.md5 );
         memcpy( output, hash->u.md5.digest, 16 );
@@ -698,7 +730,16 @@ NTSTATUS WINAPI BCryptHash( BCRYPT_ALG_HANDLE algorithm, UCHAR *secret, ULONG se
     return BCryptDestroyHash( handle );
 }
 
-#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONDIGEST_H)
+#if defined(HAVE_GNUTLS_CIPHER_INIT) || defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
+static ULONG get_block_size( enum alg_id alg )
+{
+    ULONG ret = 0, size = sizeof(ret);
+    get_alg_property( alg, BCRYPT_BLOCK_LENGTH, (UCHAR *)&ret, sizeof(ret), &size );
+    return ret;
+}
+#endif
+
+#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
 struct key
 {
     struct object      hdr;
@@ -708,13 +749,6 @@ struct key
     UCHAR             *secret;
     ULONG              secret_len;
 };
-
-static ULONG get_block_size( enum alg_id alg )
-{
-    ULONG ret = 0, size = sizeof(ret);
-    get_alg_property( alg, BCRYPT_BLOCK_LENGTH, (UCHAR *)&ret, sizeof(ret), &size );
-    return ret;
-}
 
 static NTSTATUS key_init( struct key *key, enum alg_id id, const UCHAR *secret, ULONG secret_len )
 {
@@ -821,6 +855,114 @@ static NTSTATUS key_decrypt( struct key *key, const UCHAR *input, ULONG input_le
 static NTSTATUS key_destroy( struct key *key )
 {
     if (key->handle) pgnutls_cipher_deinit( key->handle );
+    HeapFree( GetProcessHeap(), 0, key->secret );
+    HeapFree( GetProcessHeap(), 0, key );
+    return STATUS_SUCCESS;
+}
+#elif defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
+struct key
+{
+    struct object  hdr;
+    enum alg_id    alg_id;
+    ULONG          block_size;
+    CCCryptorRef   ref_encrypt;
+    CCCryptorRef   ref_decrypt;
+    UCHAR         *secret;
+    ULONG          secret_len;
+};
+
+static NTSTATUS key_init( struct key *key, enum alg_id id, const UCHAR *secret, ULONG secret_len )
+{
+    UCHAR *buffer;
+
+    switch (id)
+    {
+    case ALG_ID_AES:
+        break;
+
+    default:
+        FIXME( "algorithm %u not supported\n", id );
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (!(key->block_size = get_block_size( id ))) return STATUS_INVALID_PARAMETER;
+    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, secret_len ))) return STATUS_NO_MEMORY;
+    memcpy( buffer, secret, secret_len );
+
+    key->alg_id      = id;
+    key->ref_encrypt = NULL;        /* initialized on first use */
+    key->ref_decrypt = NULL;
+    key->secret      = buffer;
+    key->secret_len  = secret_len;
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS key_set_params( struct key *key, UCHAR *iv, ULONG iv_len )
+{
+    CCCryptorStatus status;
+
+    if (key->ref_encrypt)
+    {
+        CCCryptorRelease( key->ref_encrypt );
+        key->ref_encrypt = NULL;
+    }
+    if (key->ref_decrypt)
+    {
+        CCCryptorRelease( key->ref_decrypt );
+        key->ref_decrypt = NULL;
+    }
+
+    if ((status = CCCryptorCreateWithMode( kCCEncrypt, kCCModeCBC, kCCAlgorithmAES, ccNoPadding, iv,
+                                           key->secret, key->secret_len, NULL, 0, 0, 0, &key->ref_encrypt )) != kCCSuccess)
+    {
+        WARN( "CCCryptorCreateWithMode failed %d\n", status );
+        return STATUS_INTERNAL_ERROR;
+    }
+    if ((status = CCCryptorCreateWithMode( kCCDecrypt, kCCModeCBC, kCCAlgorithmAES, ccNoPadding, iv,
+                                           key->secret, key->secret_len, NULL, 0, 0, 0, &key->ref_decrypt )) != kCCSuccess)
+    {
+        WARN( "CCCryptorCreateWithMode failed %d\n", status );
+        CCCryptorRelease( key->ref_encrypt );
+        key->ref_encrypt = NULL;
+        return STATUS_INTERNAL_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS key_encrypt( struct key *key, const UCHAR *input, ULONG input_len, UCHAR *output,
+                             ULONG output_len  )
+{
+    CCCryptorStatus status;
+
+    if ((status = CCCryptorUpdate( key->ref_encrypt, input, input_len, output, output_len, NULL  )) != kCCSuccess)
+    {
+        WARN( "CCCryptorUpdate failed %d\n", status );
+        return STATUS_INTERNAL_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS key_decrypt( struct key *key, const UCHAR *input, ULONG input_len, UCHAR *output,
+                             ULONG output_len )
+{
+    CCCryptorStatus status;
+
+    if ((status = CCCryptorUpdate( key->ref_decrypt, input, input_len, output, output_len, NULL  )) != kCCSuccess)
+    {
+        WARN( "CCCryptorUpdate failed %d\n", status );
+        return STATUS_INTERNAL_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS key_destroy( struct key *key )
+{
+    if (key->ref_encrypt) CCCryptorRelease( key->ref_encrypt );
+    if (key->ref_decrypt) CCCryptorRelease( key->ref_decrypt );
     HeapFree( GetProcessHeap(), 0, key->secret );
     HeapFree( GetProcessHeap(), 0, key );
     return STATUS_SUCCESS;
@@ -1033,14 +1175,14 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
     case DLL_PROCESS_ATTACH:
         instance = hinst;
         DisableThreadLibraryCalls( hinst );
-#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONDIGEST_H)
+#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
         gnutls_initialize();
 #endif
         break;
 
     case DLL_PROCESS_DETACH:
         if (reserved) break;
-#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONDIGEST_H)
+#if defined(HAVE_GNUTLS_CIPHER_INIT) && !defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
         gnutls_uninitialize();
 #endif
         break;

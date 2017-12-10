@@ -8540,7 +8540,7 @@ static void test_swapchain_views(void)
     U(srv_desc).Texture2D.MostDetailedMip = 0;
     U(srv_desc).Texture2D.MipLevels = 1;
     hr = ID3D10Device_CreateShaderResourceView(device, (ID3D10Resource *)test_context.backbuffer, &srv_desc, &srv);
-    todo_wine ok(hr == E_INVALIDARG, "Got unexpected hr %#x.\n", hr);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#x.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10ShaderResourceView_Release(srv);
 
@@ -9712,6 +9712,98 @@ static void test_sm4_continuec_instruction(void)
     check_texture_color(test_context.backbuffer, 0xff00ff00, 0);
     ID3D10PixelShader_Release(ps);
 
+    release_test_context(&test_context);
+}
+
+static void test_sm4_discard_instruction(void)
+{
+    ID3D10PixelShader *ps_discard_nz, *ps_discard_z;
+    struct d3d10core_test_context test_context;
+    ID3D10Device *device;
+    ID3D10Buffer *cb;
+    unsigned int i;
+    HRESULT hr;
+
+    static const DWORD ps_discard_nz_code[] =
+    {
+#if 0
+        uint data;
+
+        float4 main() : SV_Target
+        {
+            if (data)
+                discard;
+            return float4(0.0f, 0.5f, 0.0f, 1.0f);
+        }
+#endif
+        0x43425844, 0xfa7e5758, 0xd8716ffc, 0x5ad6a940, 0x2b99bba2, 0x00000001, 0x000000d0, 0x00000003,
+        0x0000002c, 0x0000003c, 0x00000070, 0x4e475349, 0x00000008, 0x00000000, 0x00000008, 0x4e47534f,
+        0x0000002c, 0x00000001, 0x00000008, 0x00000020, 0x00000000, 0x00000000, 0x00000003, 0x00000000,
+        0x0000000f, 0x545f5653, 0x65677261, 0xabab0074, 0x52444853, 0x00000058, 0x00000040, 0x00000016,
+        0x04000059, 0x00208e46, 0x00000000, 0x00000001, 0x03000065, 0x001020f2, 0x00000000, 0x0404000d,
+        0x0020800a, 0x00000000, 0x00000000, 0x08000036, 0x001020f2, 0x00000000, 0x00004002, 0x00000000,
+        0x3f000000, 0x00000000, 0x3f800000, 0x0100003e,
+    };
+    static const DWORD ps_discard_z_code[] =
+    {
+#if 0
+        uint data;
+
+        float4 main() : SV_Target
+        {
+            if (!data)
+                discard;
+            return float4(0.0f, 1.0f, 0.0f, 1.0f);
+        }
+#endif
+        0x43425844, 0x5c4dd108, 0x1eb43558, 0x7c02c98c, 0xd81eb34c, 0x00000001, 0x000000d0, 0x00000003,
+        0x0000002c, 0x0000003c, 0x00000070, 0x4e475349, 0x00000008, 0x00000000, 0x00000008, 0x4e47534f,
+        0x0000002c, 0x00000001, 0x00000008, 0x00000020, 0x00000000, 0x00000000, 0x00000003, 0x00000000,
+        0x0000000f, 0x545f5653, 0x65677261, 0xabab0074, 0x52444853, 0x00000058, 0x00000040, 0x00000016,
+        0x04000059, 0x00208e46, 0x00000000, 0x00000001, 0x03000065, 0x001020f2, 0x00000000, 0x0400000d,
+        0x0020800a, 0x00000000, 0x00000000, 0x08000036, 0x001020f2, 0x00000000, 0x00004002, 0x00000000,
+        0x3f800000, 0x00000000, 0x3f800000, 0x0100003e,
+    };
+    static const float white[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    static const struct uvec4 values[] =
+    {
+        {0x0000000},
+        {0x0000001},
+        {0x8000000},
+        {0xfffffff},
+    };
+
+    if (!init_test_context(&test_context))
+        return;
+
+    device = test_context.device;
+
+    cb = create_buffer(device, D3D10_BIND_CONSTANT_BUFFER, sizeof(*values), NULL);
+    ID3D10Device_PSSetConstantBuffers(device, 0, 1, &cb);
+
+    hr = ID3D10Device_CreatePixelShader(device, ps_discard_nz_code, sizeof(ps_discard_nz_code), &ps_discard_nz);
+    ok(SUCCEEDED(hr), "Failed to create discard_nz pixel shader, hr %#x.\n", hr);
+    hr = ID3D10Device_CreatePixelShader(device, ps_discard_z_code, sizeof(ps_discard_z_code), &ps_discard_z);
+    ok(SUCCEEDED(hr), "Failed to create discard_z pixel shader, hr %#x.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        ID3D10Device_UpdateSubresource(device, (ID3D10Resource *)cb, 0, NULL, &values[i], 0, 0);
+
+        ID3D10Device_ClearRenderTargetView(device, test_context.backbuffer_rtv, white);
+        ID3D10Device_PSSetShader(device, ps_discard_nz);
+        draw_quad(&test_context);
+        check_texture_color(test_context.backbuffer, values[i].x ? 0xffffffff : 0xff007f00, 1);
+
+        ID3D10Device_ClearRenderTargetView(device, test_context.backbuffer_rtv, white);
+        ID3D10Device_PSSetShader(device, ps_discard_z);
+        draw_quad(&test_context);
+        check_texture_color(test_context.backbuffer, values[i].x ? 0xff00ff00 : 0xffffffff, 1);
+    }
+
+    ID3D10Buffer_Release(cb);
+    ID3D10PixelShader_Release(ps_discard_nz);
+    ID3D10PixelShader_Release(ps_discard_z);
     release_test_context(&test_context);
 }
 
@@ -12929,6 +13021,141 @@ static void test_stream_output_resume(void)
     release_test_context(&test_context);
 }
 
+static void test_format_compatibility(void)
+{
+    ID3D10Texture2D *dst_texture, *src_texture;
+    D3D10_SUBRESOURCE_DATA resource_data;
+    D3D10_TEXTURE2D_DESC texture_desc;
+    struct resource_readback rb;
+    DWORD colour, expected;
+    ID3D10Device *device;
+    unsigned int i, j;
+    ULONG refcount;
+    HRESULT hr;
+
+    static const struct
+    {
+        DXGI_FORMAT src_format;
+        DXGI_FORMAT dst_format;
+        size_t texel_size;
+        BOOL success;
+    }
+    test_data[] =
+    {
+        {DXGI_FORMAT_R8G8B8A8_TYPELESS,   DXGI_FORMAT_R8G8B8A8_UNORM,      4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,      DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UINT,       4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UINT,       DXGI_FORMAT_R8G8B8A8_SNORM,      4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_SNORM,      DXGI_FORMAT_R8G8B8A8_SINT,       4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_SINT,       DXGI_FORMAT_R8G8B8A8_TYPELESS,   4, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,      DXGI_FORMAT_B8G8R8A8_UNORM,      4, FALSE},
+        {DXGI_FORMAT_R8G8B8A8_UINT,       DXGI_FORMAT_R16G16_UINT,         4, FALSE},
+        {DXGI_FORMAT_R16G16_TYPELESS,     DXGI_FORMAT_R16G16_FLOAT,        4, TRUE},
+        {DXGI_FORMAT_R16G16_FLOAT,        DXGI_FORMAT_R16G16_UNORM,        4, TRUE},
+        {DXGI_FORMAT_R16G16_UNORM,        DXGI_FORMAT_R16G16_UINT,         4, TRUE},
+        {DXGI_FORMAT_R16G16_UINT,         DXGI_FORMAT_R16G16_SNORM,        4, TRUE},
+        {DXGI_FORMAT_R16G16_SNORM,        DXGI_FORMAT_R16G16_SINT,         4, TRUE},
+        {DXGI_FORMAT_R16G16_SINT,         DXGI_FORMAT_R16G16_TYPELESS,     4, TRUE},
+        {DXGI_FORMAT_R16G16_TYPELESS,     DXGI_FORMAT_R32_TYPELESS,        4, FALSE},
+        {DXGI_FORMAT_R32G32_TYPELESS,     DXGI_FORMAT_R32G32_FLOAT,        8, TRUE},
+        {DXGI_FORMAT_R32G32_FLOAT,        DXGI_FORMAT_R32G32_UINT,         8, TRUE},
+        {DXGI_FORMAT_R32G32_UINT,         DXGI_FORMAT_R32G32_SINT,         8, TRUE},
+        {DXGI_FORMAT_R32G32_SINT,         DXGI_FORMAT_R32G32_TYPELESS,     8, TRUE},
+    };
+    static const DWORD initial_data[16] = {0};
+    static const DWORD bitmap_data[] =
+    {
+        0xff0000ff, 0xff00ffff, 0xff00ff00, 0xffffff00,
+        0xffff0000, 0xffff00ff, 0xff000000, 0xff7f7f7f,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xff000000,
+        0xffffffff, 0xff000000, 0xff000000, 0xff000000,
+    };
+
+    if (!(device = create_device()))
+    {
+        skip("Failed to create device.\n");
+        return;
+    }
+
+    texture_desc.Height = 4;
+    texture_desc.MipLevels = 1;
+    texture_desc.ArraySize = 1;
+    texture_desc.SampleDesc.Count = 1;
+    texture_desc.SampleDesc.Quality = 0;
+    texture_desc.BindFlags = D3D10_BIND_SHADER_RESOURCE;
+    texture_desc.CPUAccessFlags = 0;
+    texture_desc.MiscFlags = 0;
+
+    for (i = 0; i < ARRAY_SIZE(test_data); ++i)
+    {
+        unsigned int x, y, texel_dwords;
+        D3D10_BOX box;
+
+        texture_desc.Width = sizeof(bitmap_data) / (texture_desc.Height * test_data[i].texel_size);
+        texture_desc.Format = test_data[i].src_format;
+        texture_desc.Usage = D3D10_USAGE_IMMUTABLE;
+
+        resource_data.pSysMem = bitmap_data;
+        resource_data.SysMemPitch = texture_desc.Width * test_data[i].texel_size;
+        resource_data.SysMemSlicePitch = 0;
+
+        hr = ID3D10Device_CreateTexture2D(device, &texture_desc, &resource_data, &src_texture);
+        ok(SUCCEEDED(hr), "Failed to create source texture, hr %#x.\n", hr);
+
+        texture_desc.Format = test_data[i].dst_format;
+        texture_desc.Usage = D3D10_USAGE_DEFAULT;
+
+        resource_data.pSysMem = initial_data;
+
+        hr = ID3D10Device_CreateTexture2D(device, &texture_desc, &resource_data, &dst_texture);
+        if (FAILED(hr) && test_data[i].dst_format == DXGI_FORMAT_B8G8R8A8_UNORM)
+        {
+            skip("B8G8R8A8_UNORM not supported, skipping test.\n");
+            ID3D10Texture2D_Release(src_texture);
+            continue;
+        }
+        ok(SUCCEEDED(hr), "Failed to create destination texture, hr %#x.\n", hr);
+
+        set_box(&box, 0, 0, 0, texture_desc.Width - 1, texture_desc.Height - 1, 1);
+        ID3D10Device_CopySubresourceRegion(device, (ID3D10Resource *)dst_texture, 0, 1, 1, 0,
+                (ID3D10Resource *)src_texture, 0, &box);
+
+        texel_dwords = test_data[i].texel_size / sizeof(DWORD);
+        get_texture_readback(dst_texture, 0, &rb);
+        for (j = 0; j < ARRAY_SIZE(bitmap_data); ++j)
+        {
+            x = j % 4;
+            y = j / 4;
+            colour = get_readback_color(&rb, x, y);
+            expected = test_data[i].success && x >= texel_dwords && y
+                    ? bitmap_data[j - (4 + texel_dwords)] : initial_data[j];
+            ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    i, colour, x, y, expected);
+        }
+        release_resource_readback(&rb);
+
+        ID3D10Device_CopyResource(device, (ID3D10Resource *)dst_texture, (ID3D10Resource *)src_texture);
+
+        get_texture_readback(dst_texture, 0, &rb);
+        for (j = 0; j < ARRAY_SIZE(bitmap_data); ++j)
+        {
+            x = j % 4;
+            y = j / 4;
+            colour = get_readback_color(&rb, x, y);
+            expected = test_data[i].success ? bitmap_data[j] : initial_data[j];
+            ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    i, colour, x, y, expected);
+        }
+        release_resource_readback(&rb);
+
+        ID3D10Texture2D_Release(dst_texture);
+        ID3D10Texture2D_Release(src_texture);
+    }
+
+    refcount = ID3D10Device_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+}
+
 START_TEST(device)
 {
     test_feature_level();
@@ -12979,6 +13206,7 @@ START_TEST(device)
     test_sm4_if_instruction();
     test_sm4_breakc_instruction();
     test_sm4_continuec_instruction();
+    test_sm4_discard_instruction();
     test_create_input_layout();
     test_input_assembler();
     test_null_sampler();
@@ -13001,4 +13229,5 @@ START_TEST(device)
     test_geometry_shader();
     test_stream_output();
     test_stream_output_resume();
+    test_format_compatibility();
 }

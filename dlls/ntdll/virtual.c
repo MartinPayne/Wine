@@ -1758,7 +1758,7 @@ NTSTATUS virtual_create_builtin_view( void *module )
 /***********************************************************************
  *           virtual_alloc_thread_stack
  */
-NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commit_size )
+NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commit_size, SIZE_T extra_size )
 {
     struct file_view *view;
     NTSTATUS status;
@@ -1778,7 +1778,7 @@ NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commi
 
     server_enter_uninterrupted_section( &csVirtual, &sigset );
 
-    if ((status = map_view( &view, NULL, size, 0xffff, 0,
+    if ((status = map_view( &view, NULL, size + extra_size, 0xffff, 0,
                             VPROT_READ | VPROT_WRITE | VPROT_COMMITTED )) != STATUS_SUCCESS)
         goto done;
 
@@ -1792,6 +1792,23 @@ NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commi
                     VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
     mprotect_range( view->base, 2 * page_size, 0, 0 );
     VIRTUAL_DEBUG_DUMP_VIEW( view );
+
+    if (extra_size)
+    {
+        struct file_view *extra_view;
+
+        /* shrink the first view and create a second one for the extra size */
+        /* this allows the app to free the stack without freeing the thread start portion */
+        view->size -= extra_size;
+        status = create_view( &extra_view, (char *)view->base + view->size, extra_size,
+                              VPROT_READ | VPROT_WRITE | VPROT_COMMITTED );
+        if (status != STATUS_SUCCESS)
+        {
+            unmap_area( (char *)view->base + view->size, extra_size );
+            delete_view( view );
+            goto done;
+        }
+    }
 
     /* note: limit is lower than base since the stack grows down */
     teb->DeallocationStack = view->base;
@@ -1808,13 +1825,13 @@ done:
  *
  * Clear the stack contents before calling the main entry point, some broken apps need that.
  */
-void virtual_clear_thread_stack(void)
+void virtual_clear_thread_stack( void *stack_end )
 {
     void *stack = NtCurrentTeb()->Tib.StackLimit;
-    size_t size = (char *)NtCurrentTeb()->Tib.StackBase - (char *)NtCurrentTeb()->Tib.StackLimit;
+    size_t size = (char *)stack_end - (char *)stack;
 
-    wine_anon_mmap( stack, size - page_size, PROT_READ | PROT_WRITE, MAP_FIXED );
-    if (force_exec_prot) mprotect( stack, size - page_size, PROT_READ | PROT_WRITE | PROT_EXEC );
+    wine_anon_mmap( stack, size, PROT_READ | PROT_WRITE, MAP_FIXED );
+    if (force_exec_prot) mprotect( stack, size, PROT_READ | PROT_WRITE | PROT_EXEC );
 }
 
 

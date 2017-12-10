@@ -47,12 +47,11 @@
 #include "wine/exception.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(thread);
-WINE_DECLARE_DEBUG_CHANNEL(relay);
 
 struct _KUSER_SHARED_DATA *user_shared_data = NULL;
 
 PUNHANDLED_EXCEPTION_FILTER unhandled_exception_filter = NULL;
-LPTHREAD_START_ROUTINE kernel32_start_process = NULL;
+void (WINAPI *kernel32_start_process)(LPTHREAD_START_ROUTINE,void*) = NULL;
 
 /* info passed to a starting thread */
 struct startup_info
@@ -273,6 +272,7 @@ HANDLE thread_init(void)
 {
     TEB *teb;
     void *addr;
+    BOOL suspend;
     SIZE_T size, info_size;
     HANDLE exe_file = 0;
     LARGE_INTEGER now;
@@ -360,7 +360,7 @@ HANDLE thread_init(void)
 
     /* setup the server connection */
     server_init_process();
-    info_size = server_init_thread( peb );
+    info_size = server_init_thread( peb, &suspend );
 
     /* create the process heap */
     if (!(peb->ProcessHeap = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL )))
@@ -400,6 +400,28 @@ HANDLE thread_init(void)
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
 
     return exe_file;
+}
+
+
+/***********************************************************************
+ *           free_thread_data
+ */
+static void free_thread_data( TEB *teb )
+{
+    struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
+    SIZE_T size;
+
+    if (teb->DeallocationStack)
+    {
+        size = 0;
+        NtFreeVirtualMemory( GetCurrentProcess(), &teb->DeallocationStack, &size, MEM_RELEASE );
+    }
+    if (thread_data->start_stack)
+    {
+        size = 0;
+        NtFreeVirtualMemory( GetCurrentProcess(), &thread_data->start_stack, &size, MEM_RELEASE );
+    }
+    signal_free_thread( teb );
 }
 
 
@@ -456,7 +478,7 @@ void exit_thread( int status )
         if (thread_data->pthread_id)
         {
             pthread_join( thread_data->pthread_id, NULL );
-            signal_free_thread( teb );
+            free_thread_data( teb );
         }
     }
 
@@ -469,30 +491,13 @@ void exit_thread( int status )
 
 
 /***********************************************************************
- *           thread_startup
- */
-static void thread_startup( void *param )
-{
-    struct startup_info *info = param;
-    PRTL_THREAD_START_ROUTINE func = info->entry_point;
-    void *arg = info->entry_arg;
-
-    attach_dlls( (void *)1 );
-
-    if (TRACE_ON(relay))
-        DPRINTF( "%04x:Starting thread proc %p (arg=%p)\n", GetCurrentThreadId(), func, arg );
-
-    call_thread_entry_point( (LPTHREAD_START_ROUTINE)func, arg );
-}
-
-
-/***********************************************************************
  *           start_thread
  *
  * Startup routine for a newly created thread.
  */
 static void start_thread( struct startup_info *info )
 {
+    BOOL suspend;
     TEB *teb = info->teb;
     struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     struct debug_info debug_info;
@@ -503,9 +508,8 @@ static void start_thread( struct startup_info *info )
     thread_data->pthread_id = pthread_self();
 
     signal_init_thread( teb );
-    server_init_thread( info->entry_point );
-
-    wine_switch_to_stack( thread_startup, info, teb->Tib.StackBase );
+    server_init_thread( info->entry_point, &suspend );
+    signal_start_thread( (LPTHREAD_START_ROUTINE)info->entry_point, info->entry_arg, suspend );
 }
 
 
@@ -606,16 +610,19 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
     info->entry_point = start;
     info->entry_arg   = param;
 
+    if ((status = virtual_alloc_thread_stack( teb, stack_reserve, stack_commit, PTHREAD_STACK_MIN )))
+        goto error;
+
     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     thread_data->request_fd  = request_pipe[1];
     thread_data->reply_fd    = -1;
     thread_data->wait_fd[0]  = -1;
     thread_data->wait_fd[1]  = -1;
-
-    if ((status = virtual_alloc_thread_stack( teb, stack_reserve, stack_commit ))) goto error;
+    thread_data->start_stack = (char *)teb->Tib.StackBase;
 
     pthread_attr_init( &attr );
-    pthread_attr_setstacksize( &attr, PTHREAD_STACK_MIN );
+    pthread_attr_setstack( &attr, teb->DeallocationStack,
+                         (char *)teb->Tib.StackBase + PTHREAD_STACK_MIN - (char *)teb->DeallocationStack );
     pthread_attr_setscope( &attr, PTHREAD_SCOPE_SYSTEM ); /* force creating a kernel thread */
     interlocked_xchg_add( &nb_threads, 1 );
     if (pthread_create( &pthread_id, &attr, (void * (*)(void *))start_thread, info ))
@@ -635,7 +642,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
     return STATUS_SUCCESS;
 
 error:
-    if (teb) signal_free_thread( teb );
+    if (teb) free_thread_data( teb );
     if (handle) NtClose( handle );
     pthread_sigmask( SIG_SETMASK, &sigset, NULL );
     close( request_pipe[1] );

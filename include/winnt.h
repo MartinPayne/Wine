@@ -1648,6 +1648,9 @@ typedef struct _CONTEXT
 #define EXCEPTION_WRITE_FAULT   1
 #define EXCEPTION_EXECUTE_FAULT 8
 
+#define ARM_MAX_BREAKPOINTS     8
+#define ARM_MAX_WATCHPOINTS     1
+
 typedef struct _RUNTIME_FUNCTION
 {
     DWORD BeginAddress;
@@ -1687,46 +1690,49 @@ typedef struct _UNWIND_HISTORY_TABLE
     UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
 } UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
 
-typedef struct _CONTEXT {
-	/* The flags values within this flag control the contents of
-	   a CONTEXT record.
+typedef struct _NEON128
+{
+    ULONGLONG Low;
+    LONGLONG High;
+} NEON128, *PNEON128;
 
-	   If the context record is used as an input parameter, then
-	   for each portion of the context record controlled by a flag
-	   whose value is set, it is assumed that that portion of the
-	   context record contains valid context. If the context record
-	   is being used to modify a thread's context, then only that
-	   portion of the threads context will be modified.
-
-	   If the context record is used as an IN OUT parameter to capture
-	   the context of a thread, then only those portions of the thread's
-	   context corresponding to set flags will be returned.
-
-	   The context record is never used as an OUT only parameter. */
-
-	ULONG ContextFlags;
-
-	/* This section is specified/returned if the ContextFlags word contains
-	   the flag CONTEXT_INTEGER. */
-	ULONG R0;
-	ULONG R1;
-	ULONG R2;
-	ULONG R3;
-	ULONG R4;
-	ULONG R5;
-	ULONG R6;
-	ULONG R7;
-	ULONG R8;
-	ULONG R9;
-	ULONG R10;
-	ULONG Fp;
-	ULONG Ip;
-
-	/* These are selected by CONTEXT_CONTROL */
-	ULONG Sp;
-	ULONG Lr;
-	ULONG Pc;
-	ULONG Cpsr;
+typedef struct _CONTEXT
+{
+    ULONG ContextFlags;             /* 000 */
+    /* CONTEXT_INTEGER */
+    ULONG R0;                       /* 004 */
+    ULONG R1;                       /* 008 */
+    ULONG R2;                       /* 00c */
+    ULONG R3;                       /* 010 */
+    ULONG R4;                       /* 014 */
+    ULONG R5;                       /* 018 */
+    ULONG R6;                       /* 01c */
+    ULONG R7;                       /* 020 */
+    ULONG R8;                       /* 024 */
+    ULONG R9;                       /* 028 */
+    ULONG R10;                      /* 02c */
+    ULONG R11;                      /* 030 */
+    ULONG R12;                      /* 034 */
+    /* CONTEXT_CONTROL */
+    ULONG Sp;                       /* 038 */
+    ULONG Lr;                       /* 03c */
+    ULONG Pc;                       /* 040 */
+    ULONG Cpsr;                     /* 044 */
+    /* CONTEXT_FLOATING_POINT */
+    ULONG Fpscr;                    /* 048 */
+    ULONG Padding;                  /* 04c */
+    union
+    {
+        NEON128 Q[16];
+        ULONGLONG D[32];
+        ULONG S[32];
+    } DUMMYUNIONNAME;               /* 050 */
+    /* CONTEXT_DEBUG_REGISTERS */
+    ULONG Bvr[ARM_MAX_BREAKPOINTS]; /* 150 */
+    ULONG Bcr[ARM_MAX_BREAKPOINTS]; /* 170 */
+    ULONG Wvr[ARM_MAX_WATCHPOINTS]; /* 190 */
+    ULONG Wcr[ARM_MAX_WATCHPOINTS]; /* 194 */
+    ULONG Padding2[2];              /* 198 */
 } CONTEXT;
 
 BOOLEAN CDECL            RtlAddFunctionTable(RUNTIME_FUNCTION*,DWORD,DWORD);
@@ -1755,6 +1761,9 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry(ULONG_PTR,DWORD*,UNWIND_HISTORY_
 #define EXCEPTION_READ_FAULT    0
 #define EXCEPTION_WRITE_FAULT   1
 #define EXCEPTION_EXECUTE_FAULT 8
+
+#define ARM64_MAX_BREAKPOINTS   8
+#define ARM64_MAX_WATCHPOINTS   2
 
 typedef struct _RUNTIME_FUNCTION
 {
@@ -1795,50 +1804,74 @@ typedef struct _UNWIND_HISTORY_TABLE
     UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
 } UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
 
-typedef struct _CONTEXT {
-    ULONG ContextFlags;
-    ULONG Cpsr;
+typedef union _NEON128
+{
+    struct
+    {
+        ULONGLONG Low;
+        LONGLONG High;
+    } DUMMYSTRUCTNAME;
+    double D[2];
+    float S[4];
+    WORD  H[8];
+    BYTE  B[16];
+} NEON128, *PNEON128;
 
-    /* This section is specified/returned if the ContextFlags word contains
-       the flag CONTEXT_INTEGER. */
-    ULONGLONG X0;
-    ULONGLONG X1;
-    ULONGLONG X2;
-    ULONGLONG X3;
-    ULONGLONG X4;
-    ULONGLONG X5;
-    ULONGLONG X6;
-    ULONGLONG X7;
-    ULONGLONG X8;
-    ULONGLONG X9;
-    ULONGLONG X10;
-    ULONGLONG X11;
-    ULONGLONG X12;
-    ULONGLONG X13;
-    ULONGLONG X14;
-    ULONGLONG X15;
-    ULONGLONG X16;
-    ULONGLONG X17;
-    ULONGLONG X18;
-    ULONGLONG X19;
-    ULONGLONG X20;
-    ULONGLONG X21;
-    ULONGLONG X22;
-    ULONGLONG X23;
-    ULONGLONG X24;
-    ULONGLONG X25;
-    ULONGLONG X26;
-    ULONGLONG X27;
-    ULONGLONG X28;
-
-    /* These are selected by CONTEXT_CONTROL */
-    ULONGLONG Fp;
-    ULONGLONG Lr;
-    ULONGLONG Sp;
-    ULONGLONG Pc;
-
-    /* These are selected by CONTEXT_FLOATING_POINT */
-    /* FIXME */
+typedef struct _CONTEXT
+{
+    ULONG ContextFlags;                 /* 000 */
+    /* CONTEXT_INTEGER */
+    ULONG Cpsr;                         /* 004 */
+    union
+    {
+        struct
+        {
+            DWORD64 X0;                 /* 008 */
+            DWORD64 X1;                 /* 010 */
+            DWORD64 X2;                 /* 018 */
+            DWORD64 X3;                 /* 020 */
+            DWORD64 X4;                 /* 028 */
+            DWORD64 X5;                 /* 030 */
+            DWORD64 X6;                 /* 038 */
+            DWORD64 X7;                 /* 040 */
+            DWORD64 X8;                 /* 048 */
+            DWORD64 X9;                 /* 050 */
+            DWORD64 X10;                /* 058 */
+            DWORD64 X11;                /* 060 */
+            DWORD64 X12;                /* 068 */
+            DWORD64 X13;                /* 070 */
+            DWORD64 X14;                /* 078 */
+            DWORD64 X15;                /* 080 */
+            DWORD64 X16;                /* 088 */
+            DWORD64 X17;                /* 090 */
+            DWORD64 X18;                /* 098 */
+            DWORD64 X19;                /* 0a0 */
+            DWORD64 X20;                /* 0a8 */
+            DWORD64 X21;                /* 0b0 */
+            DWORD64 X22;                /* 0b8 */
+            DWORD64 X23;                /* 0c0 */
+            DWORD64 X24;                /* 0c8 */
+            DWORD64 X25;                /* 0d0 */
+            DWORD64 X26;                /* 0d8 */
+            DWORD64 X27;                /* 0e0 */
+            DWORD64 X28;                /* 0e8 */
+        } DUMMYSTRUCTNAME;
+        DWORD64 X[29];                  /* 008 */
+    } DUMMYUNIONNAME;
+    /* CONTEXT_CONTROL */
+    DWORD64 Fp;                         /* 0f0 */
+    DWORD64 Lr;                         /* 0f8 */
+    DWORD64 Sp;                         /* 100 */
+    DWORD64 Pc;                         /* 108 */
+    /* CONTEXT_FLOATING_POINT */
+    NEON128 V[32];                      /* 110 */
+    DWORD Fpcr;                         /* 310 */
+    DWORD Fpsr;                         /* 314 */
+    /* CONTEXT_DEBUG_REGISTERS */
+    DWORD Bcr[ARM64_MAX_BREAKPOINTS];   /* 318 */
+    DWORD64 Bvr[ARM64_MAX_BREAKPOINTS]; /* 338 */
+    DWORD Wcr[ARM64_MAX_WATCHPOINTS];   /* 378 */
+    DWORD64 Wvr[ARM64_MAX_WATCHPOINTS]; /* 380 */
 } CONTEXT;
 
 #endif /* __aarch64__ */

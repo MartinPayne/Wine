@@ -26,17 +26,17 @@
 @ stub EvtIntSysprepCleanup
 @ stub EvtIntWriteXmlEventToLocalLogfile
 @ stub EvtNext
-@ stub EvtNextChannelPath
+@ stdcall EvtNextChannelPath(ptr long ptr ptr)
 @ stub EvtNextEventMetadata
 @ stub EvtNextPublisherId
 @ stdcall EvtOpenChannelConfig(ptr wstr long)
-@ stub EvtOpenChannelEnum
+@ stdcall EvtOpenChannelEnum(ptr long)
 @ stub EvtOpenEventMetadataEnum
-@ stub EvtOpenLog
+@ stdcall EvtOpenLog(ptr wstr long)
 @ stub EvtOpenPublisherEnum
 @ stub EvtOpenPublisherMetadata
-@ stub EvtOpenSession
-@ stub EvtQuery
+@ stdcall EvtOpenSession(long ptr long long)
+@ stdcall EvtQuery(ptr wstr wstr long)
 @ stub EvtRender
 @ stub EvtSaveChannelConfig
 @ stub EvtSeek

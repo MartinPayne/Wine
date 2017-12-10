@@ -928,7 +928,6 @@ enum wined3d_shader_byte_code_format
 #define WINED3DPRESENT_INTERVAL_FOUR                            0x00000008
 #define WINED3DPRESENT_INTERVAL_IMMEDIATE                       0x80000000
 
-#define WINED3DMAXUSERCLIPPLANES                                32
 #define WINED3DCLIPPLANE0                                       (1u << 0)
 #define WINED3DCLIPPLANE1                                       (1u << 1)
 #define WINED3DCLIPPLANE2                                       (1u << 2)
@@ -1307,6 +1306,7 @@ enum wined3d_shader_byte_code_format
 #define WINED3D_LEGACY_UNBOUND_RESOURCE_COLOR                   0x00000400
 #define WINED3D_NO_PRIMITIVE_RESTART                            0x00000800
 #define WINED3D_LEGACY_CUBEMAP_FILTERING                        0x00001000
+#define WINED3D_NORMALIZED_DEPTH_BIAS                           0x00002000
 
 #define WINED3D_RESZ_CODE                                       0x7fa05000
 
@@ -1538,6 +1538,7 @@ enum wined3d_shader_byte_code_format
 #define WINED3D_TEXTURE_CREATE_DISCARD                          0x00000002
 #define WINED3D_TEXTURE_CREATE_GET_DC_LENIENT                   0x00000004
 #define WINED3D_TEXTURE_CREATE_GET_DC                           0x00000008
+#define WINED3D_TEXTURE_CREATE_GENERATE_MIPMAPS                 0x00000010
 
 #define WINED3D_APPEND_ALIGNED_ELEMENT                          0xffffffff
 
@@ -2609,6 +2610,7 @@ HRESULT __cdecl wined3d_shader_resource_view_create(const struct wined3d_view_de
         struct wined3d_resource *resource, void *parent, const struct wined3d_parent_ops *parent_ops,
         struct wined3d_shader_resource_view **view);
 ULONG __cdecl wined3d_shader_resource_view_decref(struct wined3d_shader_resource_view *view);
+void __cdecl wined3d_shader_resource_view_generate_mipmaps(struct wined3d_shader_resource_view *view);
 void * __cdecl wined3d_shader_resource_view_get_parent(const struct wined3d_shader_resource_view *view);
 ULONG __cdecl wined3d_shader_resource_view_incref(struct wined3d_shader_resource_view *view);
 
@@ -2661,7 +2663,6 @@ HRESULT __cdecl wined3d_texture_create(struct wined3d_device *device, const stru
         void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_texture **texture);
 struct wined3d_texture * __cdecl wined3d_texture_from_resource(struct wined3d_resource *resource);
 ULONG __cdecl wined3d_texture_decref(struct wined3d_texture *texture);
-void __cdecl wined3d_texture_generate_mipmaps(struct wined3d_texture *texture);
 enum wined3d_texture_filter_type __cdecl wined3d_texture_get_autogen_filter_type(const struct wined3d_texture *texture);
 HRESULT __cdecl wined3d_texture_get_dc(struct wined3d_texture *texture, unsigned int sub_resource_idx, HDC *dc);
 DWORD __cdecl wined3d_texture_get_level_count(const struct wined3d_texture *texture);

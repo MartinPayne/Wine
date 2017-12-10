@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: N/A\n"
 "Last-Translator: Automatically generated\n"
@@ -122,7 +122,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "Wine није успео да пронађе Gecko пакет који је неопходан за исправно "
@@ -130,7 +130,7 @@ msgstr ""
 "инсталира програм.\n"
 "\n"
 "Напомена: препоручујемо Вам да користите расподељене пакете. Погледајте "
-"http://wiki.winehq.org/Gecko за више информација."
+"https://wiki.winehq.org/Gecko за више информација."
 
 #: appwiz.rc:109 appwiz.rc:124
 msgid "&Install"
@@ -170,7 +170,7 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "Wine није успео да пронађе Gecko пакет који је неопходан за исправно "
@@ -178,7 +178,7 @@ msgstr ""
 "инсталира програм.\n"
 "\n"
 "Напомена: препоручујемо Вам да користите расподељене пакете. Погледајте "
-"http://wiki.winehq.org/Gecko за више информација."
+"https://wiki.winehq.org/Gecko за више информација."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12159,7 +12159,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12316,6 +12316,22 @@ msgstr "Желите ли да избришете „%1“?"
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
+
+#: reg.rc:70
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr ""
+
+#: reg.rc:71
+#, fuzzy
+msgid "reg: Invalid system key [%1]\n"
+msgstr "Неисправна синтакса.\n"
+
+#: reg.rc:72
+#, fuzzy
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr ""
+"Датотека већ постоји.\n"
+"Желите ли да је замените?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -14824,14 +14840,14 @@ msgstr ""
 #, fuzzy
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "Узрок овоме може бити проблем у програму или недостатак у Wine-у. Проверите "
-"http://appdb.winehq.org за савете о покретању овог програма.\n"
+"https://appdb.winehq.org за савете о покретању овог програма.\n"
 "\n"
 "Ако овај проблем није присутан под Windows-ом и још увек није пријављен, "
-"пријавите га на http://bugs.winehq.org."
+"пријавите га на https://bugs.winehq.org."
 
 #: winedbg.rc:61
 #, fuzzy
@@ -14847,7 +14863,7 @@ msgstr "Програмска грешка"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 

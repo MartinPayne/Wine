@@ -2279,9 +2279,9 @@ static void test_redundant_mode_set(void)
 {
     DDSURFACEDESC2 surface_desc = {0};
     IDirectDraw7 *ddraw;
+    RECT q, r, s;
     HWND window;
     HRESULT hr;
-    RECT r, s;
     ULONG ref;
 
     window = CreateWindowA("static", "ddraw_test", WS_OVERLAPPEDWINDOW,
@@ -2299,7 +2299,8 @@ static void test_redundant_mode_set(void)
             U1(U4(surface_desc).ddpfPixelFormat).dwRGBBitCount, 0, 0);
     ok(SUCCEEDED(hr), "SetDisplayMode failed, hr %#x.\n", hr);
 
-    GetWindowRect(window, &r);
+    GetWindowRect(window, &q);
+    r = q;
     r.right /= 2;
     r.bottom /= 2;
     SetWindowPos(window, HWND_TOP, r.left, r.top, r.right, r.bottom, 0);
@@ -2311,7 +2312,8 @@ static void test_redundant_mode_set(void)
     ok(SUCCEEDED(hr), "SetDisplayMode failed, hr %#x.\n", hr);
 
     GetWindowRect(window, &s);
-    ok(EqualRect(&r, &s), "Expected %s, got %s.\n", wine_dbgstr_rect(&r), wine_dbgstr_rect(&s));
+    ok(EqualRect(&r, &s) || broken(EqualRect(&q, &s) /* Windows 10 */),
+            "Expected %s, got %s.\n", wine_dbgstr_rect(&r), wine_dbgstr_rect(&s));
 
     ref = IDirectDraw7_Release(ddraw);
     ok(ref == 0, "The ddraw object was not properly freed: refcount %u.\n", ref);
@@ -13297,6 +13299,76 @@ static void test_compute_sphere_visibility(void)
     DestroyWindow(window);
 }
 
+static void test_clip_planes_limits(void)
+{
+    IDirect3DDevice7 *device;
+    D3DDEVICEDESC7 caps;
+    unsigned int i;
+    ULONG refcount;
+    float plane[4];
+    HWND window;
+    DWORD state;
+    HRESULT hr;
+
+    window = create_window();
+    if (!(device = create_device(window, DDSCL_NORMAL)))
+    {
+        skip("Failed to create 3D device.\n");
+        DestroyWindow(window);
+        return;
+    }
+
+    memset(&caps, 0, sizeof(caps));
+    hr = IDirect3DDevice7_GetCaps(device, &caps);
+    ok(SUCCEEDED(hr), "Failed to get device caps, hr %#x.\n", hr);
+
+    trace("Max user clip planes: %u.\n", caps.wMaxUserClipPlanes);
+
+    for (i = 0; i < D3DMAXUSERCLIPPLANES; ++i)
+    {
+        memset(plane, 0xff, sizeof(plane));
+        hr = IDirect3DDevice7_GetClipPlane(device, i, plane);
+        ok(hr == D3D_OK, "Failed to get clip plane %u, hr %#x.\n", i, hr);
+        ok(!plane[0] && !plane[1] && !plane[2] && !plane[3],
+                "Got unexpected plane %u: %.8e, %.8e, %.8e, %.8e.\n",
+                i, plane[0], plane[1], plane[2], plane[3]);
+    }
+
+    plane[0] = 2.0f;
+    plane[1] = 8.0f;
+    plane[2] = 5.0f;
+    for (i = 0; i < D3DMAXUSERCLIPPLANES; ++i)
+    {
+        plane[3] = i;
+        hr = IDirect3DDevice7_SetClipPlane(device, i, plane);
+        ok(hr == D3D_OK, "Failed to set clip plane %u, hr %#x.\n", i, hr);
+    }
+    for (i = 0; i < D3DMAXUSERCLIPPLANES; ++i)
+    {
+        memset(plane, 0xff, sizeof(plane));
+        hr = IDirect3DDevice7_GetClipPlane(device, i, plane);
+        ok(hr == D3D_OK, "Failed to get clip plane %u, hr %#x.\n", i, hr);
+        ok(plane[0] == 2.0f && plane[1] == 8.0f && plane[2] == 5.0f && plane[3] == i,
+                "Got unexpected plane %u: %.8e, %.8e, %.8e, %.8e.\n",
+                i, plane[0], plane[1], plane[2], plane[3]);
+    }
+
+    hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPLANEENABLE, 0xffffffff);
+    ok(SUCCEEDED(hr), "Failed to set render state, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_GetRenderState(device, D3DRENDERSTATE_CLIPPLANEENABLE, &state);
+    ok(SUCCEEDED(hr), "Failed to get render state, hr %#x.\n", hr);
+    ok(state == 0xffffffff, "Got unexpected state %#x.\n", state);
+    hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPLANEENABLE, 0x80000000);
+    ok(SUCCEEDED(hr), "Failed to set render state, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_GetRenderState(device, D3DRENDERSTATE_CLIPPLANEENABLE, &state);
+    ok(SUCCEEDED(hr), "Failed to get render state, hr %#x.\n", hr);
+    ok(state == 0x80000000, "Got unexpected state %#x.\n", state);
+
+    refcount = IDirect3DDevice7_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+    DestroyWindow(window);
+}
+
 START_TEST(ddraw7)
 {
     HMODULE module = GetModuleHandleA("ddraw.dll");
@@ -13414,4 +13486,5 @@ START_TEST(ddraw7)
     test_ck_operation();
     test_vb_refcount();
     test_compute_sphere_visibility();
+    test_clip_planes_limits();
 }

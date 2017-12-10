@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 1/7/2013\n"
 "Last-Translator: Mosaab Alzoubi\n"
@@ -119,14 +119,14 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "لم نتمكّن من إيجاد حزمة آلة جيكو واللّازمة لعمل التطبيقاتالحاوية على ترميزات "
 "الويب بشكلٍ سليم . بإمكاننا تحميل الحزمةتلقائيًا ثمّ تثبيتها من أجلك .\n"
 "\n"
-"ملاحظة: من المفضّل استخدام الحزم التي توفرها توزيعتك . انظر <a href=\"http://"
-"wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> لتفاصيلٍ أكثر."
+"ملاحظة: من المفضّل استخدام الحزم التي توفرها توزيعتك . انظر <a href=\"https://"
+"wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> لتفاصيلٍ أكثر."
 
 #: appwiz.rc:109 appwiz.rc:124
 msgid "&Install"
@@ -163,14 +163,14 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "لم نتمكّن من إيجاد حزمة آلة مونو واللّازمة لعمل التطبيقاتالحاوية على ترميزات "
 "دوتنت بشكلٍ سليم . بإمكاننا تحميل الحزمةتلقائيًا ثمّ تثبيتها من أجلك .\n"
 "\n"
-"ملاحظة: من المفضّل استخدام الحزم التي توفرها توزيعتك . انظر <a href=\"http://"
-"wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> لتفاصيلٍ أكثر."
+"ملاحظة: من المفضّل استخدام الحزم التي توفرها توزيعتك . انظر <a href=\"https://"
+"wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> لتفاصيلٍ أكثر."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12367,7 +12367,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12533,6 +12533,24 @@ msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG QUERY اسم المفتاح [/v اسم القيمة | /ve] [/s]\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "خطأ : اسم المفتاح غير سليم\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The specified file already exists. Do you want to replace it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "الملف المحدد موجود بالفعل ، هل ترغب باستبداله ؟"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -15025,11 +15043,11 @@ msgstr "حصلت مشكلة كبيرة في البرنامج %s ويجب إغل�
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "يحدث هذا بسبب مشكلة في البرنامج أو بسبب عائق يحول دون تشغيله بواين ،يمكنك "
-"مراجعة قاعدة بيانات <a href=\"http://appdb.winehq.org\"> التطبيقات </a> للح "
+"مراجعة قاعدة بيانات <a href=\"https://appdb.winehq.org\"> التطبيقات </a> للح "
 "صول على النصائح اللازمة لتشغيل التطبيق."
 
 #: winedbg.rc:61
@@ -15044,12 +15062,12 @@ msgstr "تفاصيل خطأ البرنامج"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 "إذا كانت المشكلة غير موجودة عند تشغيل البرنامج في بيئة وندوز ، وفي حال لم "
 "يتم التبليغ عنها مسبقًا يمكنك حفظ التفاصيل بالضغط على زر \"الحفظ كـ\" ثمّ <a "
-"href=\"http://wiki.winehq.org/Bugs\">أبلغ عن العلّة</a> وأرفق الملف الذي "
+"href=\"https://wiki.winehq.org/Bugs\">أبلغ عن العلّة</a> وأرفق الملف الذي "
 "حفظته في إبلاغك."
 
 #: winedbg.rc:38

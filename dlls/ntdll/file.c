@@ -1041,7 +1041,6 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     TRACE( "(%p,%p,%p,%p,%p,%p,0x%08x,%p,%p),partial stub!\n",
            file, event, apc, apc_user, io_status, segments, length, offset, key);
 
-    if (length % page_size) return STATUS_INVALID_PARAMETER;
     if (!io_status) return STATUS_ACCESS_VIOLATION;
 
     status = server_get_unix_fd( file, FILE_READ_DATA, &unix_handle,
@@ -1060,9 +1059,9 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     {
         if (offset && offset->QuadPart != FILE_USE_FILE_POINTER_POSITION)
             result = pread( unix_handle, (char *)segments->Buffer + pos,
-                            page_size - pos, offset->QuadPart + total );
+                            min( length - pos, page_size - pos ), offset->QuadPart + total );
         else
-            result = read( unix_handle, (char *)segments->Buffer + pos, page_size - pos );
+            result = read( unix_handle, (char *)segments->Buffer + pos, min( length - pos, page_size - pos ) );
 
         if (result == -1)
         {
@@ -1070,11 +1069,7 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
             status = FILE_GetNtStatus();
             break;
         }
-        if (!result)
-        {
-            status = STATUS_END_OF_FILE;
-            break;
-        }
+        if (!result) break;
         total += result;
         length -= result;
         if ((pos += result) == page_size)
@@ -1084,26 +1079,27 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
         }
     }
 
+    if (total == 0) status = STATUS_END_OF_FILE;
+
     send_completion = cvalue != 0;
 
- error:
     if (needs_close) close( unix_handle );
-    if (status == STATUS_SUCCESS)
-    {
-        io_status->u.Status = status;
-        io_status->Information = total;
-        TRACE("= SUCCESS (%u)\n", total);
-        if (event) NtSetEvent( event, NULL );
-        if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
-                                   (ULONG_PTR)apc_user, (ULONG_PTR)io_status, 0 );
-    }
-    else
-    {
-        TRACE("= 0x%08x\n", status);
-        if (status != STATUS_PENDING && event) NtResetEvent( event, NULL );
-    }
 
+    io_status->u.Status = status;
+    io_status->Information = total;
+    TRACE("= 0x%08x (%u)\n", status, total);
+    if (event) NtSetEvent( event, NULL );
+    if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
+                               (ULONG_PTR)apc_user, (ULONG_PTR)io_status, 0 );
     if (send_completion) NTDLL_AddCompletion( file, cvalue, status, total );
+
+    return STATUS_PENDING;
+
+error:
+    if (needs_close) close( unix_handle );
+
+    TRACE("= 0x%08x\n", status);
+    if (event) NtResetEvent( event, NULL );
 
     return status;
 }

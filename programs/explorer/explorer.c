@@ -51,7 +51,7 @@ static int default_width;
 static int default_height;
 
 
-static const WCHAR EXPLORER_CLASS[] = {'W','I','N','E','_','E','X','P','L','O','R','E','R','\0'};
+static const WCHAR EXPLORER_CLASS[] = {'E','x','p','l','o','r','e','r','W','C','l','a','s','s',0};
 static const WCHAR PATH_BOX_NAME[] = {'\0'};
 
 HINSTANCE explorer_hInstance;
@@ -259,10 +259,32 @@ static void update_path_box(explorer_info *info)
 static HRESULT WINAPI IExplorerBrowserEventsImpl_fnOnNavigationComplete(IExplorerBrowserEvents *iface, PCIDLIST_ABSOLUTE pidl)
 {
     IExplorerBrowserEventsImpl *This = impl_from_IExplorerBrowserEvents(iface);
+    IShellFolder *parent;
+    PCUITEMID_CHILD child_pidl;
+    HRESULT hres;
+    STRRET strret;
+    WCHAR *name;
+
     ILFree(This->info->pidl);
     This->info->pidl = ILClone(pidl);
     update_path_box(This->info);
-    return S_OK;
+
+    hres = SHBindToParent(pidl, &IID_IShellFolder, (void **)&parent, &child_pidl);
+    if (SUCCEEDED(hres))
+    {
+        hres = IShellFolder_GetDisplayNameOf(parent, child_pidl, SHGDN_FORADDRESSBAR, &strret);
+        if (SUCCEEDED(hres))
+            hres = StrRetToStrW(&strret, child_pidl, &name);
+        if (SUCCEEDED(hres))
+        {
+            SetWindowTextW(This->info->main_window, name);
+            CoTaskMemFree(name);
+        }
+
+        IShellFolder_Release(parent);
+    }
+
+    return hres;
 }
 
 static HRESULT WINAPI IExplorerBrowserEventsImpl_fnOnNavigationFailed(IExplorerBrowserEvents *iface, PCIDLIST_ABSOLUTE pidl)

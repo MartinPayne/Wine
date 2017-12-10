@@ -227,6 +227,12 @@ static void test_add(void)
     run_reg_exe("reg add /?", &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
+    run_reg_exe("reg add /h", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg add -H", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
     err = RegDeleteKeyA(HKEY_CURRENT_USER, KEY_BASE);
     ok(err == ERROR_SUCCESS || err == ERROR_FILE_NOT_FOUND, "got %d\n", err);
 
@@ -608,6 +614,12 @@ static void test_delete(void)
     run_reg_exe("reg delete /?", &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
+    run_reg_exe("reg delete /h", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg delete -H", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
     add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
     add_value(hkey, "foo", REG_DWORD, &deadbeef, sizeof(deadbeef));
     add_value(hkey, "bar", REG_DWORD, &deadbeef, sizeof(deadbeef));
@@ -658,6 +670,12 @@ static void test_query(void)
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
 
     run_reg_exe("reg query /?", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg query /h", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg query -H", &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
     /* Create a test key */
@@ -846,6 +864,12 @@ static void test_import(void)
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
 
     run_reg_exe("reg import /?", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg import /h", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg import -H", &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
     run_reg_exe("reg import missing.reg", &r);
@@ -4289,7 +4313,7 @@ static BOOL compare_export_(unsigned line, const char *filename, const char *exp
         lok(!lstrcmpW(fbuf, wstr), "export data does not match expected data\n");
 
     ret = DeleteFileA(filename);
-    todo_wine lok(ret, "DeleteFile failed: %u\n", GetLastError());
+    lok(ret, "DeleteFile failed: %u\n", GetLastError());
 
 exit:
     HeapFree(GetProcessHeap(), 0, fbuf);
@@ -4389,7 +4413,13 @@ static void test_export(void)
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
 
     run_reg_exe("reg export /?", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg export /h", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    run_reg_exe("reg export -H", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
     run_reg_exe("reg export \\\\remote-pc\\HKLM\\Wine file.reg", &r);
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
@@ -4422,7 +4452,7 @@ static void test_export(void)
     add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
 
     os_version = GetVersion();
     major_version = LOBYTE(LOWORD(os_version));
@@ -4437,12 +4467,12 @@ static void test_export(void)
         ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
 
         run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg /y", &r);
-        todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+        ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
     }
     else /* Windows XP (32-bit) and older */
         win_skip("File overwrite flag [/y] not supported; skipping position tests\n");
 
-    todo_wine ok(compare_export("file.reg", empty_key_test, 0), "compare_export() failed\n");
+    ok(compare_export("file.reg", empty_key_test, 0), "compare_export() failed\n");
 
     /* Test registry export with a simple data structure */
     dword = 0x100;
@@ -4450,8 +4480,8 @@ static void test_export(void)
     add_value(hkey, "String", REG_SZ, "Your text here...", 18);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", simple_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", simple_test, 0), "compare_export() failed\n");
 
     /* Test registry export with a complex data structure */
     add_key(hkey, "Subkey1", &subkey);
@@ -4488,8 +4518,8 @@ static void test_export(void)
     RegCloseKey(hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", complex_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", complex_test, 0), "compare_export() failed\n");
 
     err = delete_tree(HKEY_CURRENT_USER, KEY_BASE);
     ok(err == ERROR_SUCCESS, "delete_tree() failed: %d\n", err);
@@ -4502,8 +4532,8 @@ static void test_export(void)
     RegCloseKey(subkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", key_order_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", key_order_test, 0), "compare_export() failed\n");
 
     delete_key(hkey, "Subkey1");
     delete_key(hkey, "Subkey2");
@@ -4517,8 +4547,8 @@ static void test_export(void)
     RegCloseKey(hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", value_order_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", value_order_test, TODO_REG_COMPARE), "compare_export() failed\n");
 
     delete_key(HKEY_CURRENT_USER, KEY_BASE);
 
@@ -4535,8 +4565,8 @@ static void test_export(void)
     RegCloseKey(hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", empty_hex_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", empty_hex_test, 0), "compare_export() failed\n");
 
     delete_key(HKEY_CURRENT_USER, KEY_BASE);
 
@@ -4553,8 +4583,8 @@ static void test_export(void)
     RegCloseKey(hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", empty_hex_test2, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", empty_hex_test2, 0), "compare_export() failed\n");
 
     delete_key(HKEY_CURRENT_USER, KEY_BASE);
 
@@ -4572,8 +4602,8 @@ static void test_export(void)
     RegCloseKey(hkey);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine ok(compare_export("file.reg", hex_types_test, 0), "compare_export() failed\n");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    ok(compare_export("file.reg", hex_types_test, 0), "compare_export() failed\n");
 
     delete_key(HKEY_CURRENT_USER, KEY_BASE);
 }

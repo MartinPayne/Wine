@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Wine\n"
-"Report-Msgid-Bugs-To: http://bugs.winehq.org\n"
+"Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 2013-04-15 10:56+0900\n"
 "Last-Translator: YunSong Hwang <hys545@dreamwiz.com>\n"
@@ -120,7 +120,7 @@ msgid ""
 "install it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> for "
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> for "
 "details."
 msgstr ""
 "Wine은 HTML 임베딩 프로그램이 정상적으로 작동하기 위해서 필요로 하는 Gecko 패"
@@ -128,8 +128,8 @@ msgstr ""
 "니다.\n"
 "\n"
 "주위:당신의 배포판의 패키지를 대신 사용하는 것을 추천합니다. 자세한 것은 <a "
-"href=\"http://wiki.winehq.org/Gecko\">http://wiki.winehq.org/Gecko</a> 보십시"
-"오."
+"href=\"https://wiki.winehq.org/Gecko\">https://wiki.winehq.org/Gecko</a> 보십"
+"시오."
 
 #: appwiz.rc:109 appwiz.rc:124
 msgid "&Install"
@@ -166,7 +166,7 @@ msgid ""
 "it for you.\n"
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> for "
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> for "
 "details."
 msgstr ""
 "Wine은 닷넷 응용프로그램을 제대로 실행시키기 위해 필요한 wine-mono 패키지를 "
@@ -175,8 +175,8 @@ msgstr ""
 "\n"
 "Note: it is recommended to use your distribution's packages instead. See <a "
 "주의:당신의 배포판의 패키지를 대신 사용하는 것을 추천합니다.자세한 것은<a "
-"href=\"http://wiki.winehq.org/Mono\">http://wiki.winehq.org/Mono</a> 을 보십"
-"시오."
+"href=\"https://wiki.winehq.org/Mono\">https://wiki.winehq.org/Mono</a> 을 보"
+"십시오."
 
 #: appwiz.rc:31
 msgid "Add/Remove Programs"
@@ -12394,7 +12394,7 @@ msgid ""
 "  REG [operation] [parameters]\n"
 "\n"
 "Supported operations:\n"
-"  ADD | DELETE | IMPORT | QUERY\n"
+"  ADD | DELETE | IMPORT | EXPORT | QUERY\n"
 "\n"
 "For help on a specific operation, type:\n"
 "  REG [operation] /?\n"
@@ -12558,6 +12558,24 @@ msgstr "오류: 원격 머신에  키를 더하는 것은 가능하지 않습니
 #: reg.rc:69
 msgid "reg: Unrecognized escape sequence [\\%1!c!]\n"
 msgstr ""
+
+#: reg.rc:70
+#, fuzzy
+#| msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
+msgid "REG EXPORT key_name file.reg [/y]\n"
+msgstr "REG QUERY 키 이름 [/v 값| /ve] [/s]\n"
+
+#: reg.rc:71
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "reg: Invalid system key [%1]\n"
+msgstr "오류: 올바르지 않은 키 이름\n"
+
+#: reg.rc:72
+#, fuzzy
+#| msgid "The specified file already exists. Do you want to replace it?"
+msgid "The file '%1' already exists. Do you want to overwrite it?"
+msgstr "지정된 파일은 이미 존재합니다.덮어 쓰시겠습니까?"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -15041,11 +15059,11 @@ msgstr ""
 #: winedbg.rc:58
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
-"may want to check the <a href=\"http://appdb.winehq.org\">Application "
+"may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 msgstr ""
 "이 문제는 프로그램의 문제나 Wine의 결함으로 인해 발생할 수 있습니다. 당신은 "
-"실행한 프로그램에 대하여   <a href=\"http://appdb.winehq.org\">Application "
+"실행한 프로그램에 대하여   <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> 에서 관련 팁을 살펴 볼 수 있습니다."
 
 #: winedbg.rc:61
@@ -15060,12 +15078,12 @@ msgstr "자세한 프로그램 에러"
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "
-"button, then <a href=\"http://wiki.winehq.org/Bugs\">file a bug report</a> "
+"button, then <a href=\"https://wiki.winehq.org/Bugs\">file a bug report</a> "
 "and attach that file to the report."
 msgstr ""
 "만약 이 문제가 윈도우즈에는 존재하지 않고 아직 보고되지 않았다면,당신은  \"다"
 "른 이름으로 저장\" 버튼을 사용해서 자세한 정보를 파일로 저장해서, <a href="
-"\"http://wiki.winehq.org/Bugs\">버그 보고 파일</a>로 가서보고서에 파일을 같"
+"\"https://wiki.winehq.org/Bugs\">버그 보고 파일</a>로 가서보고서에 파일을 같"
 "이 올리수 있습니다."
 
 #: winedbg.rc:38

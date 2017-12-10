@@ -949,7 +949,7 @@ void CDECL wined3d_device_release_focus_window(struct wined3d_device *device)
 
 static void device_init_swapchain_state(struct wined3d_device *device, struct wined3d_swapchain *swapchain)
 {
-    BOOL ds_enable = !!swapchain->desc.enable_auto_depth_stencil;
+    BOOL ds_enable = swapchain->desc.enable_auto_depth_stencil;
     unsigned int i;
 
     if (device->fb.render_targets)
@@ -963,7 +963,6 @@ static void device_init_swapchain_state(struct wined3d_device *device, struct wi
     }
 
     wined3d_device_set_depth_stencil_view(device, ds_enable ? device->auto_depth_stencil_view : NULL);
-    wined3d_device_set_render_state(device, WINED3D_RS_ZENABLE, ds_enable);
 }
 
 static void wined3d_device_delete_opengl_contexts_cs(void *object)
@@ -1757,7 +1756,6 @@ HRESULT CDECL wined3d_device_set_clip_plane(struct wined3d_device *device,
 {
     TRACE("device %p, plane_idx %u, plane %p.\n", device, plane_idx, plane);
 
-    /* Validate plane_idx. */
     if (plane_idx >= device->adapter->gl_info.limits.user_clip_distances)
     {
         TRACE("Application has requested clipplane this device doesn't support.\n");
@@ -1786,7 +1784,6 @@ HRESULT CDECL wined3d_device_get_clip_plane(const struct wined3d_device *device,
 {
     TRACE("device %p, plane_idx %u, plane %p.\n", device, plane_idx, plane);
 
-    /* Validate plane_idx. */
     if (plane_idx >= device->adapter->gl_info.limits.user_clip_distances)
     {
         TRACE("Application has requested clipplane this device doesn't support.\n");

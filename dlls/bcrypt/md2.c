@@ -1,6 +1,5 @@
 /*
- * dlls/rsaenh/md2.c
- * MD2 (RFC 1319) hash function implementation by Tom St Denis 
+ * MD2 (RFC 1319) hash function implementation by Tom St Denis
  *
  * Copyright 2004 Michael Jung
  * Based on public domain code by Tom St Denis (tomstdenis@iahu.ca)
@@ -21,14 +20,15 @@
  */
 
 /*
- * This file contains code from the LibTomCrypt cryptographic 
+ * This file contains code from the LibTomCrypt cryptographic
  * library written by Tom St Denis (tomstdenis@iahu.ca). LibTomCrypt
  * is in the public domain. The code in this file is tailored to
  * special requirements. Take a look at http://libtomcrypt.org for the
- * original version. 
+ * original version.
  */
 
-#include "tomcrypt.h"
+#include <assert.h>
+#include "bcrypt_internal.h"
 
 static const unsigned char PI_SUBST[256] = {
   41, 46, 67, 201, 162, 216, 124, 1, 61, 54, 84, 161, 236, 240, 6,
@@ -52,61 +52,59 @@ static const unsigned char PI_SUBST[256] = {
 };
 
 /* adds 16 bytes to the checksum */
-static void md2_update_chksum(md2_state *md2)
+static void md2_update_chksum(MD2_CTX *md2)
 {
-   int j;
-   unsigned char L;
-   L = md2->chksum[15];
-   for (j = 0; j < 16; j++) {
+    int j;
+    unsigned char L;
+    L = md2->chksum[15];
+    for (j = 0; j < 16; j++) {
 
-/* caution, the RFC says its "C[j] = S[M[i*16+j] xor L]" but the reference source code [and test vectors] say 
+/* caution, the RFC says its "C[j] = S[M[i*16+j] xor L]" but the reference source code [and test vectors] say
    otherwise.
 */
-       L = (md2->chksum[j] ^= PI_SUBST[(int)(md2->buf[j] ^ L)] & 255);
-   }
+        L = (md2->chksum[j] ^= PI_SUBST[(int)(md2->buf[j] ^ L)] & 255);
+    }
 }
 
-static void md2_compress(md2_state *md2)
+static void md2_compress(MD2_CTX *md2)
 {
-   int j, k;
-   unsigned char t;
-   
-   /* copy block */
-   for (j = 0; j < 16; j++) {
-       md2->X[16+j] = md2->buf[j];
-       md2->X[32+j] = md2->X[j] ^ md2->X[16+j];
-   }
+    int j, k;
+    unsigned char t;
 
-   t = 0;
+    /* copy block */
+    for (j = 0; j < 16; j++) {
+        md2->X[16+j] = md2->buf[j];
+        md2->X[32+j] = md2->X[j] ^ md2->X[16+j];
+    }
 
-   /* do 18 rounds */
-   for (j = 0; j < 18; j++) {
-       for (k = 0; k < 48; k++) {
-           t = (md2->X[k] ^= PI_SUBST[(int)(t & 255)]);
-       }
-       t = (t + (unsigned char)j) & 255;
-   }
+    t = 0;
+
+    /* do 18 rounds */
+    for (j = 0; j < 18; j++) {
+        for (k = 0; k < 48; k++) {
+            t = (md2->X[k] ^= PI_SUBST[(int)(t & 255)]);
+        }
+        t = (t + (unsigned char)j) & 255;
+    }
 }
 
-int md2_init(md2_state *md2)
+void md2_init(MD2_CTX *md2)
 {
-   /* MD2 uses a zero'ed state... */
-   memset(md2->X, 0, sizeof(md2->X));
-   memset(md2->chksum, 0, sizeof(md2->chksum));
-   memset(md2->buf, 0, sizeof(md2->buf));
-   md2->curlen = 0;
-   return CRYPT_OK;
+    /* MD2 uses a zero'ed state... */
+    memset(md2->X, 0, sizeof(md2->X));
+    memset(md2->chksum, 0, sizeof(md2->chksum));
+    memset(md2->buf, 0, sizeof(md2->buf));
+    md2->curlen = 0;
 }
 
-int md2_process(md2_state *md2, const unsigned char *buf, unsigned long len)
+void md2_update(MD2_CTX *md2, const unsigned char *buf, ULONG len)
 {
     unsigned long n;
-    
-    if (md2->curlen > sizeof(md2->buf)) {                            
-       return CRYPT_INVALID_ARG;                                                           
-    }                                                                                       
+
+    assert(md2->curlen <= sizeof(md2->buf));
+
     while (len > 0) {
-        n = MIN(len, (16 - md2->curlen));
+        n = min(len, (16 - md2->curlen));
         memcpy(md2->buf + md2->curlen, buf, (size_t)n);
         md2->curlen += n;
         buf         += n;
@@ -119,16 +117,13 @@ int md2_process(md2_state *md2, const unsigned char *buf, unsigned long len)
             md2->curlen = 0;
         }
     }
-    return CRYPT_OK;
 }
 
-int md2_done(md2_state * md2, unsigned char *hash)
+void md2_finalize(MD2_CTX * md2, unsigned char *hash)
 {
     unsigned long i, k;
 
-    if (md2->curlen >= sizeof(md2->buf)) {
-       return CRYPT_INVALID_ARG;
-    }
+    assert(md2->curlen <= sizeof(md2->buf));
 
     /* pad the message */
     k = 16 - md2->curlen;
@@ -146,6 +141,4 @@ int md2_done(md2_state * md2, unsigned char *hash)
 
     /* output is lower 16 bytes of X */
     memcpy(hash, md2->X, 16);
-
-    return CRYPT_OK;
 }

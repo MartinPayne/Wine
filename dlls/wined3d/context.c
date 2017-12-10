@@ -2323,10 +2323,13 @@ static void set_blit_dimension(const struct wined3d_gl_info *gl_info, UINT width
                -1.0,         -1.0, -1.0, 1.0,
     };
 
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_PROJECTION);
-    checkGLcall("glMatrixMode(GL_PROJECTION)");
-    gl_info->gl_ops.gl.p_glLoadMatrixd(projection);
-    checkGLcall("glLoadMatrixd");
+    if (gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
+    {
+        gl_info->gl_ops.gl.p_glMatrixMode(GL_PROJECTION);
+        checkGLcall("glMatrixMode(GL_PROJECTION)");
+        gl_info->gl_ops.gl.p_glLoadMatrixd(projection);
+        checkGLcall("glLoadMatrixd");
+    }
     gl_info->gl_ops.gl.p_glViewport(0, 0, width, height);
     checkGLcall("glViewport");
 }
@@ -2352,6 +2355,33 @@ static void context_get_rt_size(const struct wined3d_context *context, SIZE *siz
     size->cy = wined3d_texture_get_level_height(rt, level);
 }
 
+void context_enable_clip_distances(struct wined3d_context *context, unsigned int enable_mask)
+{
+    const struct wined3d_gl_info *gl_info = context->gl_info;
+    unsigned int clip_distance_count = gl_info->limits.user_clip_distances;
+    unsigned int i, disable_mask, current_mask;
+
+    disable_mask = ~enable_mask;
+    enable_mask &= (1u << clip_distance_count) - 1;
+    disable_mask &= (1u << clip_distance_count) - 1;
+    current_mask = context->clip_distance_mask;
+    context->clip_distance_mask = enable_mask;
+
+    enable_mask &= ~current_mask;
+    for (i = 0; enable_mask; enable_mask >>= 1, ++i)
+    {
+        if (enable_mask & 1)
+            gl_info->gl_ops.gl.p_glEnable(GL_CLIP_DISTANCE0 + i);
+    }
+    disable_mask &= current_mask;
+    for (i = 0; disable_mask; disable_mask >>= 1, ++i)
+    {
+        if (disable_mask & 1)
+            gl_info->gl_ops.gl.p_glDisable(GL_CLIP_DISTANCE0 + i);
+    }
+    checkGLcall("toggle clip distances");
+}
+
 /*****************************************************************************
  * SetupForBlit
  *
@@ -2371,10 +2401,10 @@ static void context_get_rt_size(const struct wined3d_context *context, SIZE *siz
 /* Context activation is done by the caller. */
 static void SetupForBlit(const struct wined3d_device *device, struct wined3d_context *context)
 {
-    int i;
     const struct wined3d_gl_info *gl_info = context->gl_info;
     DWORD sampler;
     SIZE rt_size;
+    int i;
 
     TRACE("Setting up context %p for blitting\n", context);
 
@@ -2395,17 +2425,46 @@ static void SetupForBlit(const struct wined3d_device *device, struct wined3d_con
     }
     context->last_was_blit = TRUE;
 
-    /* Disable all textures. The caller can then bind a texture it wants to blit
-     * from
-     *
-     * The blitting code uses (for now) the fixed function pipeline, so make sure to reset all fixed
-     * function texture unit. No need to care for higher samplers
-     */
-    for (i = gl_info->limits.textures - 1; i > 0 ; --i)
+    if (gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
     {
-        sampler = context->rev_tex_unit_map[i];
-        context_active_texture(context, gl_info, i);
+        /* Disable all textures. The caller can then bind a texture it wants to blit
+         * from
+         *
+         * The blitting code uses (for now) the fixed function pipeline, so make sure to reset all fixed
+         * function texture unit. No need to care for higher samplers
+         */
+        for (i = gl_info->limits.textures - 1; i > 0 ; --i)
+        {
+            sampler = context->rev_tex_unit_map[i];
+            context_active_texture(context, gl_info, i);
 
+            if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+            {
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
+                checkGLcall("glDisable GL_TEXTURE_CUBE_MAP_ARB");
+            }
+            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
+            checkGLcall("glDisable GL_TEXTURE_3D");
+            if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+            {
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
+                checkGLcall("glDisable GL_TEXTURE_RECTANGLE_ARB");
+            }
+            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
+            checkGLcall("glDisable GL_TEXTURE_2D");
+
+            gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+            checkGLcall("glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);");
+
+            if (sampler != WINED3D_UNMAPPED_STAGE)
+            {
+                if (sampler < MAX_TEXTURES)
+                    context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
+                context_invalidate_state(context, STATE_SAMPLER(sampler));
+            }
+        }
+
+        context_active_texture(context, gl_info, 0);
         if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
         {
             gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
@@ -2422,50 +2481,43 @@ static void SetupForBlit(const struct wined3d_device *device, struct wined3d_con
         checkGLcall("glDisable GL_TEXTURE_2D");
 
         gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-        checkGLcall("glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);");
 
-        if (sampler != WINED3D_UNMAPPED_STAGE)
+        gl_info->gl_ops.gl.p_glMatrixMode(GL_TEXTURE);
+        checkGLcall("glMatrixMode(GL_TEXTURE)");
+        gl_info->gl_ops.gl.p_glLoadIdentity();
+        checkGLcall("glLoadIdentity()");
+
+        if (gl_info->supported[EXT_TEXTURE_LOD_BIAS])
         {
-            if (sampler < MAX_TEXTURES)
-                context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
-            context_invalidate_state(context, STATE_SAMPLER(sampler));
+            gl_info->gl_ops.gl.p_glTexEnvf(GL_TEXTURE_FILTER_CONTROL_EXT,
+                    GL_TEXTURE_LOD_BIAS_EXT, 0.0f);
+            checkGLcall("glTexEnvf GL_TEXTURE_LOD_BIAS_EXT ...");
         }
+
+        /* Setup transforms */
+        gl_info->gl_ops.gl.p_glMatrixMode(GL_MODELVIEW);
+        checkGLcall("glMatrixMode(GL_MODELVIEW)");
+        gl_info->gl_ops.gl.p_glLoadIdentity();
+        checkGLcall("glLoadIdentity()");
+        context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_WORLD_MATRIX(0)));
+
+        /* Other misc states */
+        gl_info->gl_ops.gl.p_glDisable(GL_ALPHA_TEST);
+        checkGLcall("glDisable(GL_ALPHA_TEST)");
+        context_invalidate_state(context, STATE_RENDER(WINED3D_RS_ALPHATESTENABLE));
+        gl_info->gl_ops.gl.p_glDisable(GL_LIGHTING);
+        checkGLcall("glDisable GL_LIGHTING");
+        context_invalidate_state(context, STATE_RENDER(WINED3D_RS_LIGHTING));
+        glDisableWINE(GL_FOG);
+        checkGLcall("glDisable GL_FOG");
+        context_invalidate_state(context, STATE_RENDER(WINED3D_RS_FOGENABLE));
     }
+
     if (gl_info->supported[ARB_SAMPLER_OBJECTS])
         GL_EXTCALL(glBindSampler(0, 0));
     context_active_texture(context, gl_info, 0);
 
     sampler = context->rev_tex_unit_map[0];
-
-    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
-    {
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
-        checkGLcall("glDisable GL_TEXTURE_CUBE_MAP_ARB");
-    }
-    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
-    checkGLcall("glDisable GL_TEXTURE_3D");
-    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-    {
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
-        checkGLcall("glDisable GL_TEXTURE_RECTANGLE_ARB");
-    }
-    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
-    checkGLcall("glDisable GL_TEXTURE_2D");
-
-    gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_TEXTURE);
-    checkGLcall("glMatrixMode(GL_TEXTURE)");
-    gl_info->gl_ops.gl.p_glLoadIdentity();
-    checkGLcall("glLoadIdentity()");
-
-    if (gl_info->supported[EXT_TEXTURE_LOD_BIAS])
-    {
-        gl_info->gl_ops.gl.p_glTexEnvf(GL_TEXTURE_FILTER_CONTROL_EXT,
-                GL_TEXTURE_LOD_BIAS_EXT, 0.0f);
-        checkGLcall("glTexEnvf GL_TEXTURE_LOD_BIAS_EXT ...");
-    }
-
     if (sampler != WINED3D_UNMAPPED_STAGE)
     {
         if (sampler < MAX_TEXTURES)
@@ -2477,18 +2529,9 @@ static void SetupForBlit(const struct wined3d_device *device, struct wined3d_con
     }
 
     /* Other misc states */
-    gl_info->gl_ops.gl.p_glDisable(GL_ALPHA_TEST);
-    checkGLcall("glDisable(GL_ALPHA_TEST)");
-    context_invalidate_state(context, STATE_RENDER(WINED3D_RS_ALPHATESTENABLE));
-    gl_info->gl_ops.gl.p_glDisable(GL_LIGHTING);
-    checkGLcall("glDisable GL_LIGHTING");
-    context_invalidate_state(context, STATE_RENDER(WINED3D_RS_LIGHTING));
     gl_info->gl_ops.gl.p_glDisable(GL_DEPTH_TEST);
     checkGLcall("glDisable GL_DEPTH_TEST");
     context_invalidate_state(context, STATE_RENDER(WINED3D_RS_ZENABLE));
-    glDisableWINE(GL_FOG);
-    checkGLcall("glDisable GL_FOG");
-    context_invalidate_state(context, STATE_RENDER(WINED3D_RS_FOGENABLE));
     gl_info->gl_ops.gl.p_glDisable(GL_BLEND);
     checkGLcall("glDisable GL_BLEND");
     context_invalidate_state(context, STATE_RENDER(WINED3D_RS_ALPHABLENDENABLE));
@@ -2520,22 +2563,10 @@ static void SetupForBlit(const struct wined3d_device *device, struct wined3d_con
         checkGLcall("glDisable(GL_COLOR_SUM_EXT)");
     }
 
-    /* Setup transforms */
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_MODELVIEW);
-    checkGLcall("glMatrixMode(GL_MODELVIEW)");
-    gl_info->gl_ops.gl.p_glLoadIdentity();
-    checkGLcall("glLoadIdentity()");
-    context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_WORLD_MATRIX(0)));
-
     context->last_was_rhw = TRUE;
     context_invalidate_state(context, STATE_VDECL); /* because of last_was_rhw = TRUE */
 
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE0); checkGLcall("glDisable(clip plane 0)");
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE1); checkGLcall("glDisable(clip plane 1)");
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE2); checkGLcall("glDisable(clip plane 2)");
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE3); checkGLcall("glDisable(clip plane 3)");
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE4); checkGLcall("glDisable(clip plane 4)");
-    gl_info->gl_ops.gl.p_glDisable(GL_CLIP_PLANE5); checkGLcall("glDisable(clip plane 5)");
+    context_enable_clip_distances(context, 0);
     context_invalidate_state(context, STATE_RENDER(WINED3D_RS_CLIPPING));
 
     /* FIXME: Make draw_textured_quad() able to work with a upper left origin. */
@@ -3990,6 +4021,16 @@ void context_apply_compute_state(struct wined3d_context *context,
         context->update_compute_unordered_access_view_bindings = 0;
         context->update_unordered_access_view_bindings = 1;
     }
+
+    /* Updates to currently bound render targets aren't necessarily coherent
+     * between the graphics and compute pipelines. Unbind any currently bound
+     * FBO here to ensure preceding updates to its attachments by the graphics
+     * pipeline are visible to the compute pipeline.
+     *
+     * Without this, the bloom effect in Nier:Automata is too bright on the
+     * Mesa radeonsi driver, and presumably on other Mesa based drivers. */
+    context_bind_fbo(context, GL_FRAMEBUFFER, 0);
+    context_invalidate_state(context, STATE_FRAMEBUFFER);
 
     context->last_was_blit = FALSE;
 }

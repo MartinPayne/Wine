@@ -38,14 +38,12 @@ struct edit_notify {
 
 static struct edit_notify notifications;
 
-static BOOL (WINAPI *pEndMenu) (void);
 static BOOL (WINAPI *pGetMenuBarInfo)(HWND,LONG,LONG,PMENUBARINFO);
 
 static void init_function_pointers(void)
 {
     HMODULE hdll = GetModuleHandleA("user32");
 
-    pEndMenu = (void*)GetProcAddress(hdll, "EndMenu");
     pGetMenuBarInfo = (void*)GetProcAddress(hdll, "GetMenuBarInfo");
 }
 
@@ -2294,7 +2292,7 @@ static LRESULT CALLBACK edit4_wnd_procA(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             if (hWnd != (HWND)lParam)
             {
                 got_wm_capturechanged = TRUE;
-                pEndMenu();
+                EndMenu();
             }
             break;
     }
@@ -2337,7 +2335,7 @@ static LRESULT CALLBACK edit_proc_proxy(HWND hWnd, UINT msg, WPARAM wParam, LPAR
                 ok(!mbi.fFocused, "mbi.fFocused = TRUE\n");
             }
 
-            pEndMenu();
+            EndMenu();
             break;
         }
     }
@@ -2735,6 +2733,7 @@ static void test_EM_GETHANDLE(void)
 {
     static const char str0[] = "untouched";
     static const char str1[] = "1111+1111+1111#";
+    static const char str1_1[] = "2111+1111+1111#";
     static const char str2[] = "2222-2222-2222-2222#";
     static const char str3[] = "3333*3333*3333*3333*3333#";
     CHAR    current[42];
@@ -2781,6 +2780,44 @@ static void test_EM_GETHANDLE(void)
     len = lstrlenA(buffer);
     ok((len == lstrlenA(str1)) && !lstrcmpA(buffer, str1),
         "got %d and \"%s\" (expected %d and \"%s\")\n", len, buffer, lstrlenA(str1), str1);
+    LocalUnlock(hmem);
+
+    /* See if WM_GETTEXTLENGTH/WM_GETTEXT still work. */
+    len = SendMessageA(hEdit, WM_GETTEXTLENGTH, 0, 0);
+    ok(len == lstrlenA(str1), "Unexpected text length %d.\n", len);
+
+    lstrcpyA(current, str0);
+    r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
+    ok((r == lstrlenA(str1)) && !lstrcmpA(current, str1),
+        "Unexpected retval %d and text \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str1), str1);
+
+    /* Application altered buffer contents, see if WM_GETTEXTLENGTH/WM_GETTEXT pick that up. */
+    buffer = LocalLock(hmem);
+    ok(buffer != NULL, "got %p (expected != NULL)\n", buffer);
+    buffer[0] = '2';
+    LocalUnlock(hmem);
+
+    len = SendMessageA(hEdit, WM_GETTEXTLENGTH, 0, 0);
+    ok(len == lstrlenA(str1_1), "Unexpected text length %d.\n", len);
+
+    lstrcpyA(current, str0);
+    r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
+    ok((r == lstrlenA(str1_1)) && !lstrcmpA(current, str1_1),
+        "Unexpected retval %d and text \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str1_1), str1_1);
+
+    /* See if WM_SETTEXT/EM_REPLACESEL work. */
+    r = SendMessageA(hEdit, WM_SETTEXT, 0, (LPARAM)str1);
+    ok(r, "Failed to set text.\n");
+
+    buffer = LocalLock(hmem);
+    ok(buffer != NULL && buffer[0] == '1', "Unexpected buffer contents\n");
+    LocalUnlock(hmem);
+
+    r = SendMessageA(hEdit, EM_REPLACESEL, 0, (LPARAM)str1_1);
+    ok(r, "Failed to replace selection.\n");
+
+    buffer = LocalLock(hmem);
+    ok(buffer != NULL && buffer[0] == '2', "Unexpected buffer contents\n");
     LocalUnlock(hmem);
 
     /* use LocalAlloc first to get a different handle */
@@ -2946,11 +2983,7 @@ START_TEST(edit)
     test_child_edit_wmkeydown();
     test_fontsize();
     test_dialogmode();
-    if (pEndMenu)
-        test_contextmenu();
-    else
-        win_skip("EndMenu is not available\n");
-
+    test_contextmenu();
     test_EM_GETHANDLE();
     test_paste();
 

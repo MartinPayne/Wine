@@ -1233,9 +1233,8 @@ static HRESULT CALLBACK dict_cb( void *state, const WS_XML_STRING *str, BOOL *fo
 static HRESULT init_writer( struct channel *channel )
 {
     WS_XML_WRITER_BUFFER_OUTPUT buf = {{WS_XML_WRITER_OUTPUT_TYPE_BUFFER}};
-    WS_XML_WRITER_TEXT_ENCODING text = {{WS_XML_WRITER_ENCODING_TYPE_TEXT}};
+    WS_XML_WRITER_TEXT_ENCODING text = {{WS_XML_WRITER_ENCODING_TYPE_TEXT}, WS_CHARSET_UTF8};
     WS_XML_WRITER_BINARY_ENCODING bin = {{WS_XML_WRITER_ENCODING_TYPE_BINARY}};
-    WS_XML_WRITER_ENCODING *encoding;
     HRESULT hr;
 
     if (!channel->writer && (hr = WsCreateWriter( NULL, 0, &channel->writer, NULL )) != S_OK) return hr;
@@ -1243,29 +1242,23 @@ static HRESULT init_writer( struct channel *channel )
     switch (channel->encoding)
     {
     case WS_ENCODING_XML_UTF8:
-        text.charSet = WS_CHARSET_UTF8;
-        encoding = &text.encoding;
-        break;
+        return WsSetOutput( channel->writer, &text.encoding, &buf.output, NULL, 0, NULL );
 
     case WS_ENCODING_XML_BINARY_SESSION_1:
-        if ((hr = writer_enable_lookup( channel->writer )) != S_OK) return hr;
         clear_dict( &channel->dict_send );
         bin.staticDictionary           = (WS_XML_DICTIONARY *)&dict_builtin_static.dict;
         bin.dynamicStringCallback      = dict_cb;
         bin.dynamicStringCallbackState = &channel->dict_send;
-        encoding = &bin.encoding;
-        break;
+        if ((hr = WsSetOutput( channel->writer, &bin.encoding, &buf.output, NULL, 0, NULL )) != S_OK) return hr;
+        return writer_enable_lookup( channel->writer );
 
     case WS_ENCODING_XML_BINARY_1:
-        encoding = &bin.encoding;
-        break;
+        return WsSetOutput( channel->writer, &bin.encoding, &buf.output, NULL, 0, NULL );
 
     default:
         FIXME( "unhandled encoding %u\n", channel->encoding );
         return WS_E_NOT_SUPPORTED;
     }
-
-    return WsSetOutput( channel->writer, encoding, &buf.output, NULL, 0, NULL );
 }
 
 /**************************************************************************
@@ -1847,7 +1840,7 @@ struct receive_message
     void                          *value;
     ULONG                          size;
     ULONG                         *index;
-    const WS_ASYNC_CONTEXT        *ctx;
+    WS_ASYNC_CONTEXT               ctx;
 };
 
 static void receive_message_proc( struct task *task )
@@ -1858,9 +1851,9 @@ static void receive_message_proc( struct task *task )
     hr = receive_message( r->channel, r->msg, r->desc, r->count, r->option, r->read_option, r->heap, r->value,
                           r->size, r->index );
 
-    TRACE( "calling %p(%08x)\n", r->ctx->callback, hr );
-    r->ctx->callback( hr, WS_LONG_CALLBACK, r->ctx->callbackState );
-    TRACE( "%p returned\n", r->ctx->callback );
+    TRACE( "calling %p(%08x)\n", r->ctx.callback, hr );
+    r->ctx.callback( hr, WS_LONG_CALLBACK, r->ctx.callbackState );
+    TRACE( "%p returned\n", r->ctx.callback );
 }
 
 static HRESULT queue_receive_message( struct channel *channel, WS_MESSAGE *msg, const WS_MESSAGE_DESCRIPTION **desc,
@@ -1882,7 +1875,7 @@ static HRESULT queue_receive_message( struct channel *channel, WS_MESSAGE *msg, 
     r->value       = value;
     r->size        = size;
     r->index       = index;
-    r->ctx         = ctx;
+    r->ctx         = *ctx;
     return queue_task( &channel->recv_q, &r->task );
 }
 

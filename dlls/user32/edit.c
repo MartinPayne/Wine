@@ -342,9 +342,10 @@ static INT EDIT_CallWordBreakProc(EDITSTATE *es, INT start, INT index, INT count
 	    {
 		EDITWORDBREAKPROCW wbpW = (EDITWORDBREAKPROCW)es->word_break_proc;
 
-		TRACE_(relay)("(UNICODE wordbrk=%p,str=%s,idx=%d,cnt=%d,act=%d)\n",
+		TRACE_(relay)("\1Call wordbreakW %p (str=%s,idx=%d,cnt=%d,act=%d)\n",
 			es->word_break_proc, debugstr_wn(es->text + start, count), index, count, action);
 		ret = wbpW(es->text + start, index, count, action);
+		TRACE_(relay)("\1Ret wordbreakW %p retval=%d\n", es->word_break_proc, ret );
 	    }
 	    else
 	    {
@@ -355,10 +356,11 @@ static INT EDIT_CallWordBreakProc(EDITSTATE *es, INT start, INT index, INT count
 		countA = WideCharToMultiByte(CP_ACP, 0, es->text + start, count, NULL, 0, NULL, NULL);
 		textA = HeapAlloc(GetProcessHeap(), 0, countA);
 		WideCharToMultiByte(CP_ACP, 0, es->text + start, count, textA, countA, NULL, NULL);
-		TRACE_(relay)("(ANSI wordbrk=%p,str=%s,idx=%d,cnt=%d,act=%d)\n",
+		TRACE_(relay)("\1Call wordbreakA %p(str=%s,idx=%d,cnt=%d,act=%d)\n",
 			es->word_break_proc, debugstr_an(textA, countA), index, countA, action);
 		ret = wbpA(textA, index, countA, action);
 		HeapFree(GetProcessHeap(), 0, textA);
+		TRACE_(relay)("\1Ret wordbreakA %p retval=%d\n", es->word_break_proc, ret );
 	    }
         }
 	else
@@ -1262,8 +1264,6 @@ static inline void text_buffer_changed(EDITSTATE *es)
  */
 static void EDIT_LockBuffer(EDITSTATE *es)
 {
-        if (es->hlocapp) return;
-
 	if (!es->text) {
 
 	    if(!es->hloc32W) return;
@@ -1304,8 +1304,6 @@ static void EDIT_LockBuffer(EDITSTATE *es)
  */
 static void EDIT_UnlockBuffer(EDITSTATE *es, BOOL force)
 {
-        if (es->hlocapp) return;
-
 	/* Edit window might be already destroyed */
 	if(!IsWindow(es->hwndSelf))
 	{
@@ -1321,7 +1319,6 @@ static void EDIT_UnlockBuffer(EDITSTATE *es, BOOL force)
 		ERR("es->text == 0 ... please report\n");
 		return;
 	}
-
 	if (force || (es->lock_count == 1)) {
 	    if (es->hloc32W) {
 		UINT countA = 0;
@@ -5203,7 +5200,8 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		break;
 	}
 
-	if (IsWindow(hwnd) && es) EDIT_UnlockBuffer(es, FALSE);
+        if (IsWindow(hwnd) && es && msg != EM_GETHANDLE)
+            EDIT_UnlockBuffer(es, FALSE);
 
         TRACE("hwnd=%p msg=%x (%s) -- 0x%08lx\n", hwnd, msg, SPY_GetMsgName(msg, hwnd), result);
 
