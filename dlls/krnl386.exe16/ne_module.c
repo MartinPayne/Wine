@@ -600,7 +600,7 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
     /* check to be able to fall back to loading OS/2 programs as DOS */
     if ((ne_header->ne_exetyp != 0x02 /* Windows */)
         && (ne_header->ne_exetyp != 0x00 /* Unknown - possible early 1.x or 2.x app */)
-        && (ne_header->ne_ver != 0x04 /* link4 version 4 - possible early 1.x or 2.x app */))
+        && (ne_header->ne_ver == 0x04 /* link4 version 4.x has no ne_exetyp field - possible early 1.x app */))
         return ERROR_BAD_FORMAT;
 
     size = sizeof(NE_MODULE) +
@@ -648,12 +648,10 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
 
     pModule->ne_flags &= ~(NE_FFLAGS_BUILTIN | NE_FFLAGS_WIN32);
 
-    /* link4 version 4 doesn't set a meaningful expected version in NE header. Assume Windows 1.01. */
-    if (ne_header->ne_ver == 0x04)
+    /* The original NE spec (which link4 version 4.x follows) doesn't have an ne_expver field and reserves it for
+       future use. Other early executables have the version set to 0.0. Assume Windows 1.01 in either case. */
+    if ((ne_header->ne_ver == 0x04) || (ne_header->ne_expver == 0x0000))
         pModule->ne_expver = 0x0101;
-    /* If linker major version is not 4 but expected Windows version isn't set, assume Windows 2.01. */
-    else if (ne_header->ne_expver == 0x0000)
-        pModule->ne_expver = 0x0201;
 
     /* Get the segment table */
 
@@ -665,11 +663,22 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
     {
         memcpy( pData, pSeg, sizeof(*pSeg) );
 
-        /* The original NE spec (which link4 version 4.x follows) uses 0xF000 for discardable segements. The upper bits
-           were later used for things like marking the segment as 32 bit, so the extra bits must be masked off to
-           prevent Wine from trying to load the segment as 32 bit. */
+        /* The original NE spec (which link4 version 4.x follows) uses the top four bits of the segment flags to set a
+           discard priority (0 = not discardable, 15 = highest priority). Later specs repurpose the top three bits and
+           use a single bit for the discardable flag. The top three bits must be masked off and discardable flag set
+           appropriately, otherwise a discard priority could get misinterpreted as a 32 bit segment flag which results
+           in an application crash. */
         if (ne_header->ne_ver == 0x04)
-            ((struct ne_segment_table_entry_s*)pData)->seg_flags &= 0x1FFF;
+        {
+            WORD* seg_flags;
+            BOOL isDiscardable;
+
+            seg_flags = (WORD*)(pData + FIELD_OFFSET(SEGTABLEENTRY, flags));
+            isDiscardable = ((*seg_flags & 0xF000) > 0);
+
+            if (isDiscardable)
+                *seg_flags = ((*seg_flags & 0x0FFF) | NE_SEGFLAGS_DISCARDABLE);
+        }
 
         pData += sizeof(SEGTABLEENTRY);
     }
@@ -710,34 +719,31 @@ static HMODULE16 build_module( const void *mapping, SIZE_T mapping_size, LPCSTR 
                        ne_header->ne_enttab - ne_header->ne_imptab )) goto failed;
     pData += ne_header->ne_enttab - ne_header->ne_imptab;
 
-    /* If the executable type is unknown or the linker version is 4.x, it is necessary to check the import table to
-       determine whether this is a Windows application or an OS/2 or Multitasking DOS 4 application. */
-    if (((ne_header->ne_exetyp == 0x00) || (ne_header->ne_ver == 0x04)) && pModule->ne_modtab)
+    /* If the linker version is 4.x or the executable type is unknown, it is necessary to check the import table for
+       known Windows and OS/2 libraries to determine whether it's a Windows executable. Executables with no module table
+       or which don't import known Windows or OS/2 libraries are also assumed to be Windows. */
+    if (((ne_header->ne_ver == 0x04) || (ne_header->ne_exetyp == 0x00)) && pModule->ne_modtab)
     {
         WORD* pModuleTable;
-        BYTE* pImportTable;
+        LPCSTR pImportTable;
+        int i;
         BOOL importsDosCalls = FALSE;
         BOOL importsKernel = FALSE;
-        int i;
 
         /* Get address of module table and import table from their offsets */
         pModuleTable = (WORD*)(((BYTE*)pModule) + pModule->ne_modtab);
-        pImportTable = ((BYTE*)pModule) + pModule->ne_imptab;
+        pImportTable = (LPCSTR)(((BYTE*)pModule) + pModule->ne_imptab);
 
         /* Look for imports from DOSCALLS and KERNEL */
         for (i = 0; i < pModule->ne_cmod; i++)
         {
-            BYTE len;
-            char* moduleName;
+            /* Module name is a Pascal string with byte length prefix */
+            LPCSTR module = pImportTable + pModuleTable[i];
 
-            /* Module name is a Pascal string so first byte is the length of the string */
-            len = *(pImportTable + pModuleTable[i]);
-            moduleName = (char*)(pImportTable + pModuleTable[i] + 1);
-
-            if (!importsDosCalls && !strncmp("DOSCALLS", moduleName, len))
+            if (!importsDosCalls && !strncmp("DOSCALLS", &module[1], module[0]))
                 importsDosCalls = TRUE;
 
-            else if (!importsKernel && !strncmp("KERNEL", moduleName, len))
+            else if (!importsKernel && !strncmp("KERNEL", &module[1], module[0]))
                 importsKernel = TRUE;
 
             if (importsDosCalls && importsKernel)
@@ -843,7 +849,6 @@ static BOOL NE_LoadDLLs( NE_MODULE *pModule )
             /* Append .DLL to name if no extension present */
             if (!(p = strrchr( buffer, '.')) || strchr( p, '/' ) || strchr( p, '\\'))
                     strcat( buffer, (GetExeVersion16() >= 0x0300) ? ".DLL" : ".EXE" );
-
             if ((hDLL = MODULE_LoadModule16( buffer, TRUE, TRUE )) < 32)
             {
                 /* FIXME: cleanup what was done */
