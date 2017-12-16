@@ -48,6 +48,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(thread);
 
+#ifndef PTHREAD_STACK_MIN
+#define PTHREAD_STACK_MIN 16384
+#endif
+
 struct _KUSER_SHARED_DATA *user_shared_data = NULL;
 
 PUNHANDLED_EXCEPTION_FILTER unhandled_exception_filter = NULL;
@@ -426,13 +430,21 @@ static void free_thread_data( TEB *teb )
 
 
 /***********************************************************************
- *           terminate_thread
+ *           abort_thread
  */
-void terminate_thread( int status )
+void abort_thread( int status )
 {
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
     if (interlocked_xchg_add( &nb_threads, -1 ) <= 1) _exit( status );
+    signal_exit_thread( status );
+}
 
+
+/***********************************************************************
+ *           exit_thread
+ */
+void exit_thread( int status )
+{
     close( ntdll_get_thread_data()->wait_fd[0] );
     close( ntdll_get_thread_data()->wait_fd[1] );
     close( ntdll_get_thread_data()->reply_fd );
@@ -442,9 +454,9 @@ void terminate_thread( int status )
 
 
 /***********************************************************************
- *           exit_thread
+ *           RtlExitUserThread  (NTDLL.@)
  */
-void exit_thread( int status )
+void WINAPI RtlExitUserThread( ULONG status )
 {
     static void *prev_teb;
     TEB *teb;
@@ -463,7 +475,7 @@ void exit_thread( int status )
     if (interlocked_xchg_add( &nb_threads, -1 ) <= 1)
     {
         LdrShutdownProcess();
-        exit( status );
+        signal_exit_process( status );
     }
 
     LdrShutdownThread();
@@ -482,11 +494,7 @@ void exit_thread( int status )
         }
     }
 
-    close( ntdll_get_thread_data()->wait_fd[0] );
-    close( ntdll_get_thread_data()->wait_fd[1] );
-    close( ntdll_get_thread_data()->reply_fd );
-    close( ntdll_get_thread_data()->request_fd );
-    pthread_exit( UIntToPtr(status) );
+    signal_exit_thread( status );
 }
 
 

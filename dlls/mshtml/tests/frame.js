@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 André Hentschel
+ * Copyright 2017 Jacek Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,28 +16,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-import "objidl.idl";
+var global_value = "global value";
 
-[
-    object,
-    uuid(e1cd3524-03d7-11d2-9eed-006097d2d7cf),
-    pointer_default(unique),
-    local
-]
-interface INSSBuffer : IUnknown
-{
-    HRESULT GetLength(
-        [out] DWORD *pdwLength);
-    HRESULT SetLength(
-        [in] DWORD dwLength);
-
-    HRESULT GetMaxLength(
-        [out] DWORD *pdwLength);
-
-    HRESULT GetBuffer(
-        [out] BYTE **ppdwBuffer);
-
-    HRESULT GetBufferAndLength(
-        [out] BYTE **ppdwBuffer,
-        [out] DWORD *pdwLength);
-}
+var global_object = {
+    get_global_value: function() {
+        return global_value;
+    }
+};

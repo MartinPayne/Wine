@@ -270,14 +270,14 @@ static DWORD MODULE_Decide_OS2_OldWin(HANDLE hfile, const IMAGE_DOS_HEADER *mz, 
       || (!(modtab = HeapAlloc( GetProcessHeap(), 0, ne->ne_cmod*sizeof(WORD))))
       || (!(ReadFile(hfile, modtab, ne->ne_cmod*sizeof(WORD), &len, NULL)))
       || (len != ne->ne_cmod*sizeof(WORD)) )
-	goto broken;
+	goto done;
 
     /* read imported names table */
     if ( (SetFilePointer( hfile, mz->e_lfanew + ne->ne_imptab, NULL, SEEK_SET ) == -1)
       || (!(nametab = HeapAlloc( GetProcessHeap(), 0, ne->ne_enttab - ne->ne_imptab)))
       || (!(ReadFile(hfile, nametab, ne->ne_enttab - ne->ne_imptab, &len, NULL)))
       || (len != ne->ne_enttab - ne->ne_imptab) )
-	goto broken;
+	goto done;
 
     for (i=0; i < ne->ne_cmod; i++)
     {
@@ -291,12 +291,7 @@ static DWORD MODULE_Decide_OS2_OldWin(HANDLE hfile, const IMAGE_DOS_HEADER *mz, 
         }
     }
 
-    goto good;
-
-broken:
-    ERR("Hmm, an error occurred. Is this binary file broken?\n");
-
-good:
+done:
     HeapFree( GetProcessHeap(), 0, modtab);
     HeapFree( GetProcessHeap(), 0, nametab);
     SetFilePointer( hfile, currpos, NULL, SEEK_SET); /* restore filepos */

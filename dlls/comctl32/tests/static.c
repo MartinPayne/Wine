@@ -26,15 +26,14 @@
 
 #include "wine/test.h"
 
+#include "v6util.h"
+
 #define TODO_COUNT 1
 
 #define CTRL_ID 1995
 
 static HWND hMainWnd;
-
-#define expect_eq(expr, value, type, fmt) { type val = expr; ok(val == (value), #expr " expected " fmt " got " fmt "\n", (value), val); }
-
-static int g_nReceivedColorStatic = 0;
+static int g_nReceivedColorStatic;
 
 /* try to make sure pending X events have been processed before continuing */
 static void flush_events(void)
@@ -52,7 +51,7 @@ static void flush_events(void)
     }
 }
 
-static HWND build_static(DWORD style)
+static HWND create_static(DWORD style)
 {
     return CreateWindowA("static", "Test", WS_VISIBLE|WS_CHILD|style, 5, 5, 100, 100, hMainWnd, (HMENU)CTRL_ID, NULL, 0);
 }
@@ -78,12 +77,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 
 static void test_updates(int style, int flags)
 {
+    HWND hStatic = create_static(style);
     RECT r1 = {20, 20, 30, 30};
-    HWND hStatic = build_static(style);
     int exp;
 
     flush_events();
-    trace("Testing style 0x%x\n", style);
     g_nReceivedColorStatic = 0;
     /* during each update parent WndProc will test the WM_CTLCOLORSTATIC message */
     InvalidateRect(hMainWnd, NULL, FALSE);
@@ -95,29 +93,33 @@ static void test_updates(int style, int flags)
     InvalidateRect(hStatic, NULL, FALSE);
     UpdateWindow(hStatic);
 
-    if( (style & SS_TYPEMASK) == SS_BITMAP) {
-        HDC hdc = GetDC( hStatic);
-        COLORREF colour = GetPixel( hdc, 10, 10);
-        ok ( colour != 0, "pixel should NOT be painted black!\n");
+    if ((style & SS_TYPEMASK) == SS_BITMAP)
+    {
+        HDC hdc = GetDC(hStatic);
+        COLORREF colour = GetPixel(hdc, 10, 10);
+    todo_wine
+        ok(colour == 0, "Unexpected pixel color.\n");
         ReleaseDC(hStatic, hdc);
     }
+
     if (style != SS_ETCHEDHORZ && style != SS_ETCHEDVERT)
         exp = 4;
     else
         exp = 1; /* SS_ETCHED* seems to send WM_CTLCOLORSTATIC only sometimes */
 
     if (flags & TODO_COUNT)
-        todo_wine { expect_eq(g_nReceivedColorStatic, exp, int, "%d"); }
+    todo_wine
+        ok(g_nReceivedColorStatic == exp, "Unexpected WM_CTLCOLORSTATIC value %d\n", g_nReceivedColorStatic);
     else if ((style & SS_TYPEMASK) == SS_ICON || (style & SS_TYPEMASK) == SS_BITMAP)
-        ok( g_nReceivedColorStatic == exp, "expected %u got %u\n", exp, g_nReceivedColorStatic );
+        ok(g_nReceivedColorStatic == exp, "Unexpected %u got %u\n", exp, g_nReceivedColorStatic);
     else
-        expect_eq(g_nReceivedColorStatic, exp, int, "%d");
+        ok(g_nReceivedColorStatic == exp, "Unexpected WM_CTLCOLORSTATIC value %d\n", g_nReceivedColorStatic);
     DestroyWindow(hStatic);
 }
 
 static void test_set_text(void)
 {
-    HWND hStatic = build_static(SS_SIMPLE);
+    HWND hStatic = create_static(SS_SIMPLE);
     char buffA[10];
 
     GetWindowTextA(hStatic, buffA, sizeof(buffA));
@@ -132,8 +134,13 @@ static void test_set_text(void)
 
 START_TEST(static)
 {
-    static const char szClassName[] = "testclass";
-    WNDCLASSEXA  wndclass;
+    static const char classname[] = "testclass";
+    WNDCLASSEXA wndclass;
+    ULONG_PTR ctx_cookie;
+    HANDLE hCtx;
+
+    if (!load_v6_module(&ctx_cookie, &hCtx))
+        return;
 
     wndclass.cbSize         = sizeof(wndclass);
     wndclass.style          = CS_HREDRAW | CS_VREDRAW;
@@ -145,11 +152,12 @@ START_TEST(static)
     wndclass.hIconSm        = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
     wndclass.hCursor        = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     wndclass.hbrBackground  = GetStockObject(WHITE_BRUSH);
-    wndclass.lpszClassName  = szClassName;
+    wndclass.lpszClassName  = classname;
     wndclass.lpszMenuName   = NULL;
     RegisterClassExA(&wndclass);
 
-    hMainWnd = CreateWindowA(szClassName, "Test", WS_OVERLAPPEDWINDOW, 0, 0, 500, 500, NULL, NULL, GetModuleHandleA(NULL), NULL);
+    hMainWnd = CreateWindowA(classname, "Test", WS_OVERLAPPEDWINDOW, 0, 0, 500, 500, NULL, NULL,
+        GetModuleHandleA(NULL), NULL);
     ShowWindow(hMainWnd, SW_SHOW);
 
     test_updates(0, 0);
@@ -164,4 +172,6 @@ START_TEST(static)
     test_set_text();
 
     DestroyWindow(hMainWnd);
+
+    unload_v6_module(ctx_cookie, hCtx);
 }

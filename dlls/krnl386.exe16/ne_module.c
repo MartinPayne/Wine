@@ -846,9 +846,10 @@ static BOOL NE_LoadDLLs( NE_MODULE *pModule )
             /* its handle in the list of DLLs to initialize.   */
             HMODULE16 hDLL;
 
-            /* Append .DLL to name if no extension present */
+            /* Append .DLL (Windows >= 3.00) or .EXE (Windows < 3.00) to name if no extension present */
             if (!(p = strrchr( buffer, '.')) || strchr( p, '/' ) || strchr( p, '\\'))
                     strcat( buffer, (GetExeVersion16() >= 0x0300) ? ".DLL" : ".EXE" );
+
             if ((hDLL = MODULE_LoadModule16( buffer, TRUE, TRUE )) < 32)
             {
                 /* FIXME: cleanup what was done */

@@ -262,24 +262,10 @@ __ASM_GLOBAL_FUNC( __chkstk, "lsl r4, r4, #2\n\t"
 /* FIXME: Use the Stack instead of the actual register values */
 __ASM_STDCALL_FUNC( RtlCaptureContext, 4,
                     ".arm\n\t"
-                    "stmfd SP!, {r1}\n\t"
-                    "mov r1, #0x0200000\n\t"/* CONTEXT_ARM */
-                    "add r1, r1, #0x3\n\t"  /* CONTEXT_FULL */
-                    "str r1, [r0]\n\t"      /* context->ContextFlags */
-                    "ldmfd SP!, {r1}\n\t"
-                    "str r0, [r0, #0x4]\n\t"   /* context->R0 */
-                    "str r1, [r0, #0x8]\n\t"   /* context->R1 */
-                    "str r2, [r0, #0xc]\n\t"   /* context->R2 */
-                    "str r3, [r0, #0x10]\n\t"  /* context->R3 */
-                    "str r4, [r0, #0x14]\n\t"  /* context->R4 */
-                    "str r5, [r0, #0x18]\n\t"  /* context->R5 */
-                    "str r6, [r0, #0x1c]\n\t"  /* context->R6 */
-                    "str r7, [r0, #0x20]\n\t"  /* context->R7 */
-                    "str r8, [r0, #0x24]\n\t"  /* context->R8 */
-                    "str r9, [r0, #0x28]\n\t"  /* context->R9 */
-                    "str r10, [r0, #0x2c]\n\t" /* context->R10 */
-                    "str r11, [r0, #0x30]\n\t" /* context->R11 */
-                    "str IP, [r0, #0x34]\n\t"  /* context->R12 */
+                    "stmib r0, {r0-r12}\n\t"   /* context->R0..R12 */
+                    "mov r1, #0x0200000\n\t"   /* CONTEXT_ARM */
+                    "add r1, r1, #0x3\n\t"     /* CONTEXT_FULL */
+                    "str r1, [r0]\n\t"         /* context->ContextFlags */
                     "str SP, [r0, #0x38]\n\t"  /* context->Sp */
                     "str LR, [r0, #0x3c]\n\t"  /* context->Lr */
                     "str PC, [r0, #0x40]\n\t"  /* context->Pc */
@@ -294,26 +280,17 @@ __ASM_STDCALL_FUNC( RtlCaptureContext, 4,
  *
  * Set the new CPU context.
  */
-/* FIXME: What about the CPSR? */
-void set_cpu_context( const CONTEXT *context );
+void DECLSPEC_HIDDEN set_cpu_context( const CONTEXT *context );
 __ASM_GLOBAL_FUNC( set_cpu_context,
-                   "mov IP, r0\n\t"
-                   "ldr r0,  [IP, #0x4]\n\t"  /* context->R0 */
-                   "ldr r1,  [IP, #0x8]\n\t"  /* context->R1 */
-                   "ldr r2,  [IP, #0xc]\n\t"  /* context->R2 */
-                   "ldr r3,  [IP, #0x10]\n\t" /* context->R3 */
-                   "ldr r4,  [IP, #0x14]\n\t" /* context->R4 */
-                   "ldr r5,  [IP, #0x18]\n\t" /* context->R5 */
-                   "ldr r6,  [IP, #0x1c]\n\t" /* context->R6 */
-                   "ldr r7,  [IP, #0x20]\n\t" /* context->R7 */
-                   "ldr r8,  [IP, #0x24]\n\t" /* context->R8 */
-                   "ldr r9,  [IP, #0x28]\n\t" /* context->R9 */
-                   "ldr r10, [IP, #0x2c]\n\t" /* context->R10 */
-                   "ldr r11, [IP, #0x30]\n\t" /* context->R11 */
-                   "ldr SP,  [IP, #0x38]\n\t" /* context->R12 */
-                   "ldr LR,  [IP, #0x3c]\n\t" /* context->Lr */
-                   "ldr PC,  [IP, #0x40]\n\t" /* context->Pc */
-                   )
+                   ".arm\n\t"
+                   "ldr r1, [r0, #0x44]\n\t"  /* context->Cpsr */
+                   "msr CPSR_f, r1\n\t"
+                   "ldr r1, [r0, #0x40]\n\t"  /* context->Pc */
+                   "ldr lr, [r0, #0x3c]\n\t"  /* context->Lr */
+                   "ldr sp, [r0, #0x38]\n\t"  /* context->Sp */
+                   "push {r1}\n\t"
+                   "ldmib r0, {r0-r12}\n\t"   /* context->R0..R12 */
+                   "pop {pc}" )
 
 
 /***********************************************************************
@@ -1233,7 +1210,7 @@ static void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
     __TRY
     {
         TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", entry, arg );
-        exit_thread( entry( arg ));
+        RtlExitUserThread( entry( arg ));
     }
     __EXCEPT(unhandled_exception_filter)
     {
@@ -1243,35 +1220,43 @@ static void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg )
     abort();  /* should not be reached */
 }
 
-typedef void (WINAPI *thread_start_func)(LPTHREAD_START_ROUTINE,void *);
+extern void DECLSPEC_NORETURN start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend,
+                                            void *relay, TEB *teb );
+__ASM_GLOBAL_FUNC( start_thread,
+                   ".arm\n\t"
+                   "push {r4-r12,lr}\n\t"
+                   /* store exit frame */
+                   "ldr r4, [sp, #40]\n\t"    /* teb */
+                   "str sp, [r4, #0x1d4]\n\t" /* teb->SystemReserved2 */
+                   /* build initial context on thread stack */
+                   "ldr r4, [r4, #4]\n\t"     /* teb->Tib.StackBase */
+                   "sub r5, r4, #0x1a0\n\t"   /* sizeof(CONTEXT) */
+                   "mov ip, #0x0200000\n\t"   /* CONTEXT_ARM */
+                   "add ip, #0x3\n\t"         /* CONTEXT_FULL */
+                   "str ip, [r5]\n\t"         /* context->ContextFlags */
+                   "str r0, [r5, #0x4]\n\t"   /* context->R0 = entry */
+                   "str r1, [r5, #0x8]\n\t"   /* context->R1 = arg */
+                   "str r4, [r5, #0x38]\n\t"  /* context->Sp = stack */
+                   "str r3, [r5, #0x40]\n\t"  /* context->Pc = relay */
+                   /* switch to thread stack */
+                   "mov sp, r5\n\t"
+                   /* attach dlls */
+                   "mov r0, r5\n\t"  /* context */
+                   "mov r1, r2\n\t"  /* suspend */
+                   "bl " __ASM_NAME("attach_dlls") "\n\t"
+                   /* switch to the initial context */
+                   "mov r0, r5\n\t"
+                   "b " __ASM_NAME("set_cpu_context") )
 
-struct startup_info
-{
-    thread_start_func      start;
-    LPTHREAD_START_ROUTINE entry;
-    void                  *arg;
-    BOOL                   suspend;
-};
-
-/***********************************************************************
- *           thread_startup
- */
-static void thread_startup( void *param )
-{
-    CONTEXT context = { 0 };
-    struct startup_info *info = param;
-
-    /* build the initial context */
-    context.ContextFlags = CONTEXT_FULL;
-    context.R0 = (DWORD)info->entry;
-    context.R1 = (DWORD)info->arg;
-    context.Sp = (DWORD)NtCurrentTeb()->Tib.StackBase;
-    context.Pc = (DWORD)info->start;
-
-    attach_dlls( &context, info->suspend );
-
-    set_cpu_context( &context );
-}
+extern void DECLSPEC_NORETURN call_thread_exit_func( int status, void (*func)(int), TEB *teb );
+__ASM_GLOBAL_FUNC( call_thread_exit_func,
+                   ".arm\n\t"
+                   "ldr r3, [r2, #0x1d4]\n\t"  /* teb->SystemReserved2 */
+                   "mov ip, #0\n\t"
+                   "str ip, [r2, #0x1d4]\n\t"
+                   "cmp r3, ip\n\t"
+                   "movne sp, r3\n\t"
+                   "blx r1" )
 
 /***********************************************************************
  *           signal_start_thread
@@ -1283,8 +1268,7 @@ static void thread_startup( void *param )
  */
 void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend )
 {
-    struct startup_info info = { call_thread_entry_point, entry, arg, suspend };
-    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+    start_thread( entry, arg, suspend, call_thread_entry_point, NtCurrentTeb() );
 }
 
 /**********************************************************************
@@ -1297,24 +1281,23 @@ void signal_start_thread( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend 
  */
 void signal_start_process( LPTHREAD_START_ROUTINE entry, BOOL suspend )
 {
-    struct startup_info info = { kernel32_start_process, entry, NtCurrentTeb()->Peb, suspend };
-    wine_switch_to_stack( thread_startup, &info, NtCurrentTeb()->Tib.StackBase );
+    start_thread( entry, NtCurrentTeb()->Peb, suspend, kernel32_start_process, NtCurrentTeb() );
 }
 
 /***********************************************************************
- *           RtlExitUserThread  (NTDLL.@)
+ *           signal_exit_thread
  */
-void WINAPI RtlExitUserThread( ULONG status )
+void signal_exit_thread( int status )
 {
-    exit_thread( status );
+    call_thread_exit_func( status, exit_thread, NtCurrentTeb() );
 }
 
 /***********************************************************************
- *           abort_thread
+ *           signal_exit_process
  */
-void abort_thread( int status )
+void signal_exit_process( int status )
 {
-    terminate_thread( status );
+    call_thread_exit_func( status, exit, NtCurrentTeb() );
 }
 
 /**********************************************************************

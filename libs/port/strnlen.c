@@ -1,5 +1,7 @@
 /*
- * Copyright 2012 André Hentschel
+ * strnlen function
+ *
+ * Copyright 2017 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,28 +18,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-import "objidl.idl";
+#include "config.h"
+#include "wine/port.h"
 
-[
-    object,
-    uuid(e1cd3524-03d7-11d2-9eed-006097d2d7cf),
-    pointer_default(unique),
-    local
-]
-interface INSSBuffer : IUnknown
+#ifndef HAVE_STRNLEN
+size_t strnlen( const char *str, size_t maxlen )
 {
-    HRESULT GetLength(
-        [out] DWORD *pdwLength);
-    HRESULT SetLength(
-        [in] DWORD dwLength);
-
-    HRESULT GetMaxLength(
-        [out] DWORD *pdwLength);
-
-    HRESULT GetBuffer(
-        [out] BYTE **ppdwBuffer);
-
-    HRESULT GetBufferAndLength(
-        [out] BYTE **ppdwBuffer,
-        [out] DWORD *pdwLength);
+    const char *ptr = memchr( str, 0, maxlen );
+    if (!ptr) return maxlen;
+    return ptr - str;
 }
+#endif /* HAVE_STRNLEN */
