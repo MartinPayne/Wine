@@ -3152,7 +3152,7 @@ todo_wine
 
 static void test_SetActiveWindow(HWND hwnd)
 {
-    HWND hwnd2;
+    HWND hwnd2, ret;
 
     flush_events( TRUE );
     ShowWindow(hwnd, SW_HIDE);
@@ -3165,13 +3165,13 @@ static void test_SetActiveWindow(HWND hwnd)
     ShowWindow(hwnd, SW_SHOW);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
 
-    hwnd2 = SetActiveWindow(0);
-    ok(hwnd2 == hwnd, "SetActiveWindow returned %p instead of %p\n", hwnd2, hwnd);
+    ret = SetActiveWindow(0);
+    ok(ret == hwnd, "SetActiveWindow returned %p instead of %p\n", ret, hwnd);
     if (!GetActiveWindow())  /* doesn't always work on vista */
     {
         check_wnd_state(0, 0, 0, 0);
-        hwnd2 = SetActiveWindow(hwnd);
-        ok(hwnd2 == 0, "SetActiveWindow returned %p instead of 0\n", hwnd2);
+        ret = SetActiveWindow(hwnd);
+        ok(ret == 0, "SetActiveWindow returned %p instead of 0\n", ret);
     }
     check_wnd_state(hwnd, hwnd, hwnd, 0);
 
@@ -3194,6 +3194,9 @@ static void test_SetActiveWindow(HWND hwnd)
     hwnd2 = CreateWindowExA(0, "static", NULL, WS_POPUP|WS_VISIBLE, 0, 0, 0, 0, hwnd, 0, 0, NULL);
     check_wnd_state(hwnd2, hwnd2, hwnd2, 0);
 
+    SetActiveWindow(hwnd);
+    check_wnd_state(hwnd, hwnd, hwnd, 0);
+
     DestroyWindow(hwnd2);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
 
@@ -3205,6 +3208,31 @@ static void test_SetActiveWindow(HWND hwnd)
 
     DestroyWindow(hwnd2);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
+
+    /* try to activate the desktop */
+    SetLastError(0xdeadbeef);
+    ret = SetActiveWindow(GetDesktopWindow());
+    ok(ret == NULL, "expected NULL, got %p\n", ret);
+    todo_wine
+    ok(GetLastError() == 0xdeadbeef, "expected 0xdeadbeef, got %u\n", GetLastError());
+    check_wnd_state(hwnd, hwnd, hwnd, 0);
+
+    /* activating a child should activate the parent */
+    hwnd2 = CreateWindowExA(0, "MainWindowClass", "Child window", WS_CHILD, 0, 0, 0, 0, hwnd, 0, GetModuleHandleA(NULL), NULL);
+    check_wnd_state(hwnd, hwnd, hwnd, 0);
+    ret = SetActiveWindow(hwnd2);
+    ok(ret == hwnd, "expected %p, got %p\n", hwnd, ret);
+    check_wnd_state(hwnd, hwnd, hwnd, 0);
+    ret = SetActiveWindow(0);
+    ok(ret == hwnd, "expected %p, got %p\n", hwnd, ret);
+    if (!GetActiveWindow())
+    {
+        ret = SetActiveWindow(hwnd2);
+        ok(ret == NULL, "expected NULL, got %p\n", ret);
+        todo_wine
+        check_active_state(hwnd, hwnd, hwnd);
+    }
+    DestroyWindow(hwnd2);
 }
 
 struct create_window_thread_params
@@ -4011,6 +4039,8 @@ done:
 
     if (child) DestroyWindow(child);
     DestroyWindow(popup);
+
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE|SWP_NOMOVE);
 }
 
 static void test_validatergn(HWND hwnd)
@@ -6498,10 +6528,17 @@ static void test_ShowWindow(void)
 {
     HWND hwnd;
     DWORD style;
-    RECT rcMain, rc, rcMinimized;
+    RECT rcMain, rc, rcMinimized, rcClient, rcEmpty, rcMaximized, rcResized;
     LPARAM ret;
+    MONITORINFO mon_info;
 
-    SetRect(&rcMain, 120, 120, 210, 210);
+    SetRect(&rcClient, 0, 0, 90, 90);
+    rcMain = rcClient;
+    OffsetRect(&rcMain, 120, 120);
+    AdjustWindowRect(&rcMain, WS_CAPTION, 0);
+    SetRect(&rcMinimized, -32000, -32000, -32000 + GetSystemMetrics(SM_CXMINIMIZED),
+                                          -32000 + GetSystemMetrics(SM_CYMINIMIZED));
+    SetRectEmpty(&rcEmpty);
 
     hwnd = CreateWindowExA(0, "MainWindowClass", NULL,
                           WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
@@ -6511,6 +6548,12 @@ static void test_ShowWindow(void)
                           0, 0, 0, NULL);
     assert(hwnd);
 
+    mon_info.cbSize = sizeof(mon_info);
+    GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mon_info);
+    rcMaximized = mon_info.rcWork;
+    AdjustWindowRectEx(&rcMaximized, GetWindowLongA(hwnd, GWL_STYLE) & ~WS_BORDER,
+                       0, GetWindowLongA(hwnd, GWL_EXSTYLE));
+
     style = GetWindowLongA(hwnd, GWL_STYLE);
     ok(!(style & WS_DISABLED), "window should not be disabled\n");
     ok(!(style & WS_VISIBLE), "window should not be visible\n");
@@ -6519,6 +6562,9 @@ static void test_ShowWindow(void)
     GetWindowRect(hwnd, &rc);
     ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
        wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
 
     ret = ShowWindow(hwnd, SW_SHOW);
     ok(!ret, "not expected ret: %lu\n", ret);
@@ -6530,6 +6576,9 @@ static void test_ShowWindow(void)
     GetWindowRect(hwnd, &rc);
     ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
        wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
 
     ret = ShowWindow(hwnd, SW_MINIMIZE);
     ok(ret, "not expected ret: %lu\n", ret);
@@ -6538,8 +6587,14 @@ static void test_ShowWindow(void)
     ok(style & WS_VISIBLE, "window should be visible\n");
     ok(style & WS_MINIMIZE, "window should be minimized\n");
     ok(!(style & WS_MAXIMIZE), "window should not be maximized\n");
-    GetWindowRect(hwnd, &rcMinimized);
-    ok(!EqualRect(&rcMain, &rcMinimized), "rects shouldn't match\n");
+    GetWindowRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
     /* shouldn't be able to resize minimized windows */
     ret = SetWindowPos(hwnd, 0, 0, 0,
                        (rcMinimized.right - rcMinimized.left) * 2,
@@ -6547,7 +6602,45 @@ static void test_ShowWindow(void)
                        SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
     ok(ret, "not expected ret: %lu\n", ret);
     GetWindowRect(hwnd, &rc);
-    ok(EqualRect(&rc, &rcMinimized), "rects should match\n");
+    todo_wine
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
+
+    ShowWindow(hwnd, SW_RESTORE);
+    ok(ret, "not expected ret: %lu\n", ret);
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    ok(!(style & WS_DISABLED), "window should not be disabled\n");
+    ok(style & WS_VISIBLE, "window should be visible\n");
+    ok(!(style & WS_MINIMIZE), "window should not be minimized\n");
+    ok(!(style & WS_MAXIMIZE), "window should not be maximized\n");
+    GetWindowRect(hwnd, &rc);
+    ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
+       wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
+
+    ShowWindow(hwnd, SW_MAXIMIZE);
+    ok(ret, "not expected ret: %lu\n", ret);
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    ok(!(style & WS_DISABLED), "window should not be disabled\n");
+    ok(style & WS_VISIBLE, "window should be visible\n");
+    ok(!(style & WS_MINIMIZE), "window should be minimized\n");
+    ok(style & WS_MAXIMIZE, "window should not be maximized\n");
+    GetWindowRect(hwnd, &rc);
+    ok(EqualRect(&rcMaximized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMaximized), wine_dbgstr_rect(&rc));
+    /* maximized windows can be resized */
+    ret = SetWindowPos(hwnd, 0, 300, 300, 200, 200, SWP_NOACTIVATE | SWP_NOZORDER);
+    ok(ret, "not expected ret: %lu\n", ret);
+    SetRect(&rcResized, 300, 300, 500, 500);
+    GetWindowRect(hwnd, &rc);
+    ok(EqualRect(&rcResized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcResized), wine_dbgstr_rect(&rc));
 
     ShowWindow(hwnd, SW_RESTORE);
     ok(ret, "not expected ret: %lu\n", ret);
@@ -6575,6 +6668,9 @@ static void test_ShowWindow(void)
     GetWindowRect(hwnd, &rc);
     ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
        wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
 
     ret = DefWindowProcA(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
     ok(!ret, "not expected ret: %lu\n", ret);
@@ -6586,6 +6682,9 @@ static void test_ShowWindow(void)
     GetWindowRect(hwnd, &rc);
     ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
        wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
 
     ret = ShowWindow(hwnd, SW_MINIMIZE);
     ok(ret, "not expected ret: %lu\n", ret);
@@ -6595,7 +6694,13 @@ static void test_ShowWindow(void)
     ok(style & WS_MINIMIZE, "window should be minimized\n");
     ok(!(style & WS_MAXIMIZE), "window should not be maximized\n");
     GetWindowRect(hwnd, &rc);
-    ok(!EqualRect(&rcMain, &rc), "rects shouldn't match\n");
+    todo_wine
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
 
     ret = DefWindowProcA(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
     ok(!ret, "not expected ret: %lu\n", ret);
@@ -6605,7 +6710,13 @@ static void test_ShowWindow(void)
     ok(style & WS_MINIMIZE, "window should be minimized\n");
     ok(!(style & WS_MAXIMIZE), "window should not be maximized\n");
     GetWindowRect(hwnd, &rc);
-    ok(!EqualRect(&rcMain, &rc), "rects shouldn't match\n");
+    todo_wine
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
 
     ret = ShowWindow(hwnd, SW_RESTORE);
     ok(ret, "not expected ret: %lu\n", ret);
@@ -6617,6 +6728,9 @@ static void test_ShowWindow(void)
     GetWindowRect(hwnd, &rc);
     ok(EqualRect(&rcMain, &rc), "expected %s, got %s\n", wine_dbgstr_rect(&rcMain),
        wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    ok(EqualRect(&rcClient, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcClient), wine_dbgstr_rect(&rc));
 
     ret = DefWindowProcA(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
     ok(!ret, "not expected ret: %lu\n", ret);
@@ -6640,9 +6754,12 @@ static void test_ShowWindow(void)
     ok(style & WS_MINIMIZE, "window should be minimized\n");
     GetWindowRect(hwnd, &rc);
     todo_wine
-    ok((rc.left == -32000 || rc.left == 3000) &&
-       (rc.top == -32000 || rc.top == 3000),
-       "expected (-32000,-32000), got (%d,%d)\n", rc.left, rc.top);
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
     DestroyWindow(hwnd);
 
     hwnd = CreateWindowExA(0, "MainWindowClass", NULL,
@@ -6655,9 +6772,13 @@ static void test_ShowWindow(void)
     style = GetWindowLongA(hwnd, GWL_STYLE);
     ok(style & WS_MINIMIZE, "window should be minimized\n");
     GetWindowRect(hwnd, &rc);
-    ok((rc.left == -32000 || rc.left == 3000) &&
-       (rc.top == -32000 || rc.top == 3000),
-       "expected (-32000,-32000), got (%d,%d)\n", rc.left, rc.top);
+    todo_wine
+    ok(EqualRect(&rcMinimized, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcMinimized), wine_dbgstr_rect(&rc));
+    GetClientRect(hwnd, &rc);
+    todo_wine
+    ok(EqualRect(&rcEmpty, &rc), "expected %s, got %s\n",
+       wine_dbgstr_rect(&rcEmpty), wine_dbgstr_rect(&rc));
     DestroyWindow(hwnd);
 }
 
@@ -9826,6 +9947,185 @@ static void test_LockWindowUpdate(HWND parent)
     DestroyWindow(child);
 }
 
+static void test_hide_window(void)
+{
+    HWND hwnd, hwnd2, hwnd3;
+
+    hwnd = CreateWindowExA(0, "MainWindowClass", "Main window", WS_POPUP | WS_VISIBLE,
+                           100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    hwnd2 = CreateWindowExA(0, "MainWindowClass", "Main window 2", WS_POPUP | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    trace("hwnd = %p, hwnd2 = %p\n", hwnd, hwnd2);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+
+    /* test hiding two normal windows */
+    ShowWindow(hwnd2, SW_HIDE);
+    check_active_state(hwnd, hwnd, hwnd);
+    todo_wine
+    ok(GetWindow(hwnd, GW_HWNDNEXT) == hwnd2, "expected %p, got %p\n", hwnd2, GetWindow(hwnd, GW_HWNDNEXT));
+
+    ShowWindow(hwnd, SW_HIDE);
+    check_active_state(hwndMain, 0, hwndMain);
+    ok(GetWindow(hwnd, GW_HWNDNEXT) == hwnd2, "expected %p, got %p\n", hwnd2, GetWindow(hwnd, GW_HWNDNEXT));
+
+    ShowWindow(hwnd, SW_SHOW);
+    check_active_state(hwnd, hwnd, hwnd);
+
+    ShowWindow(hwnd2, SW_SHOW);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+
+    /* hide a non-active window */
+    ShowWindow(hwnd, SW_HIDE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    todo_wine
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+
+    /* hide a window in the middle */
+    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd2, SW_SHOW);
+    hwnd3 = CreateWindowExA(0, "MainWindowClass", "Main window 3", WS_POPUP | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    SetActiveWindow(hwnd2);
+    ShowWindow(hwnd2, SW_HIDE);
+    check_active_state(hwnd3, hwnd3, hwnd3);
+    todo_wine {
+    ok(GetWindow(hwnd3, GW_HWNDNEXT) == hwnd2, "expected %p, got %p\n", hwnd2, GetWindow(hwnd3, GW_HWNDNEXT));
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+    }
+
+    DestroyWindow(hwnd3);
+
+    /* hide a normal window when there is a topmost window */
+    hwnd3 = CreateWindowExA(WS_EX_TOPMOST, "MainWindowClass", "Topmost window 3", WS_POPUP|WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd2, SW_SHOW);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    ShowWindow(hwnd2, SW_HIDE);
+    todo_wine
+    check_active_state(hwnd3, hwnd3, hwnd3);
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+
+    /* hide a topmost window */
+    ShowWindow(hwnd2, SW_SHOW);
+    ShowWindow(hwnd3, SW_SHOW);
+    ShowWindow(hwnd3, SW_HIDE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    ok(GetWindow(hwnd2, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd2, GW_HWNDNEXT));
+
+    DestroyWindow(hwnd3);
+
+    /* hiding an owned window activates its owner */
+    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd2, SW_SHOW);
+    hwnd3 = CreateWindowExA(0, "MainWindowClass", "Owned window 3", WS_POPUP|WS_VISIBLE,
+                            100, 100, 200, 200, hwnd, 0, GetModuleHandleA(NULL), NULL);
+    ShowWindow(hwnd3, SW_HIDE);
+    check_active_state(hwnd, hwnd, hwnd);
+    todo_wine {
+    ok(GetWindow(hwnd3, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd3, GW_HWNDNEXT));
+    ok(GetWindow(hwnd, GW_HWNDNEXT) == hwnd2, "expected %p, got %p\n", hwnd2, GetWindow(hwnd, GW_HWNDNEXT));
+    }
+
+    /* hide an owner window */
+    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd2, SW_SHOW);
+    ShowWindow(hwnd3, SW_SHOW);
+    ShowWindow(hwnd, SW_HIDE);
+    check_active_state(hwnd3, hwnd3, hwnd3);
+    ok(GetWindow(hwnd3, GW_HWNDNEXT) == hwnd, "expected %p, got %p\n", hwnd, GetWindow(hwnd3, GW_HWNDNEXT));
+    ok(GetWindow(hwnd, GW_HWNDNEXT) == hwnd2, "expected %p, got %p\n", hwnd2, GetWindow(hwnd, GW_HWNDNEXT));
+
+    DestroyWindow(hwnd3);
+    DestroyWindow(hwnd2);
+    DestroyWindow(hwnd);
+}
+
+static void test_minimize_window(HWND hwndMain)
+{
+    HWND hwnd, hwnd2, hwnd3;
+
+    hwnd = CreateWindowExA(0, "MainWindowClass", "Main window", WS_POPUP | WS_VISIBLE,
+                           100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    hwnd2 = CreateWindowExA(0, "MainWindowClass", "Main window 2", WS_POPUP | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    trace("hwnd = %p, hwnd2 = %p\n", hwnd, hwnd2);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    /* test hiding two normal windows */
+    ShowWindow(hwnd2, SW_MINIMIZE);
+    todo_wine
+    check_active_state(hwnd, hwnd, hwnd);
+
+    ShowWindow(hwnd, SW_MINIMIZE);
+    todo_wine
+    if (GetActiveWindow() == 0)
+        check_active_state(0, 0, 0);
+
+    ShowWindow(hwnd, SW_RESTORE);
+    check_active_state(hwnd, hwnd, hwnd);
+
+    ShowWindow(hwnd2, SW_RESTORE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    /* hide a non-active window */
+    ShowWindow(hwnd, SW_MINIMIZE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    /* hide a window in the middle */
+    ShowWindow(hwnd, SW_RESTORE);
+    ShowWindow(hwnd2, SW_RESTORE);
+    hwnd3 = CreateWindowExA(0, "MainWindowClass", "Main window 3", WS_POPUP | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    SetActiveWindow(hwnd2);
+    ShowWindow(hwnd2, SW_MINIMIZE);
+    todo_wine
+    check_active_state(hwnd3, hwnd3, hwnd3);
+
+    DestroyWindow(hwnd3);
+
+    /* hide a normal window when there is a topmost window */
+    hwnd3 = CreateWindowExA(WS_EX_TOPMOST, "MainWindowClass", "Topmost window 3", WS_POPUP|WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, GetModuleHandleA(NULL), NULL);
+    ShowWindow(hwnd, SW_RESTORE);
+    ShowWindow(hwnd2, SW_RESTORE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+    ShowWindow(hwnd2, SW_MINIMIZE);
+    todo_wine
+    check_active_state(hwnd3, hwnd3, hwnd3);
+
+    /* hide a topmost window */
+    ShowWindow(hwnd2, SW_RESTORE);
+    ShowWindow(hwnd3, SW_RESTORE);
+    ShowWindow(hwnd3, SW_MINIMIZE);
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    DestroyWindow(hwnd3);
+
+    /* hide an owned window */
+    ShowWindow(hwnd, SW_RESTORE);
+    ShowWindow(hwnd2, SW_RESTORE);
+    hwnd3 = CreateWindowExA(0, "MainWindowClass", "Owned window 3", WS_POPUP|WS_VISIBLE,
+                            100, 100, 200, 200, hwnd, 0, GetModuleHandleA(NULL), NULL);
+    ShowWindow(hwnd3, SW_MINIMIZE);
+    todo_wine
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    /* hide an owner window */
+    ShowWindow(hwnd, SW_RESTORE);
+    ShowWindow(hwnd2, SW_RESTORE);
+    ShowWindow(hwnd3, SW_RESTORE);
+    ShowWindow(hwnd, SW_MINIMIZE);
+    todo_wine
+    check_active_state(hwnd2, hwnd2, hwnd2);
+
+    DestroyWindow(hwnd3);
+    DestroyWindow(hwnd2);
+    DestroyWindow(hwnd);
+}
+
 static void test_desktop( void )
 {
     HWND desktop = GetDesktopWindow();
@@ -10403,6 +10703,8 @@ START_TEST(win)
     test_deferwindowpos();
     test_LockWindowUpdate(hwndMain);
     test_desktop();
+    test_hide_window();
+    test_minimize_window(hwndMain);
 
     /* add the tests above this line */
     if (hhook) UnhookWindowsHookEx(hhook);

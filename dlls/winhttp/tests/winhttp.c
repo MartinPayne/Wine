@@ -319,7 +319,7 @@ static void test_SendRequest (void)
     static CHAR post_data[] = "mode=Test";
     static const char test_post[] = "mode => Test\0\n";
     HINTERNET session, request, connection;
-    DWORD header_len, optional_len, total_len, bytes_rw, size, err;
+    DWORD header_len, optional_len, total_len, bytes_rw, size, err, disable;
     DWORD_PTR context;
     BOOL ret;
     CHAR buffer[256];
@@ -348,6 +348,12 @@ static void test_SendRequest (void)
 
     context = 0xdeadbeef;
     ret = WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context));
+    ok(ret, "WinHttpSetOption failed: %u\n", GetLastError());
+
+    /* writing more data than promised by the content-length header causes an error when the connection
+       is resued, so disable keep-alive */
+    disable = WINHTTP_DISABLE_KEEP_ALIVE;
+    ret = WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disable, sizeof(disable));
     ok(ret, "WinHttpSetOption failed: %u\n", GetLastError());
 
     context++;
@@ -568,7 +574,7 @@ static void test_WinHttpAddHeaders(void)
     SetLastError(0xdeadbeef);
     ret = WinHttpAddRequestHeaders(request, test_headers[0], -1L, WINHTTP_ADDREQ_FLAG_ADD);
     err = GetLastError();
-    ok(ret, "WinHttpAddRequestHeader failed to add new header, got %d with error %u.\n", ret, err);
+    ok(ret, "WinHttpAddRequestHeaders failed to add new header, got %d with error %u.\n", ret, err);
     ok(err == ERROR_SUCCESS || broken(err == 0xdeadbeef) /* < win7 */, "got %u\n", err);
 
     index = 0;

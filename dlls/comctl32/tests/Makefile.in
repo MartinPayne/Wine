@@ -7,9 +7,11 @@ C_SRCS = \
 	combo.c \
 	datetime.c \
 	dpa.c \
+	edit.c \
 	header.c \
 	imagelist.c \
 	ipaddress.c \
+	listbox.c \
 	listview.c \
 	misc.c \
 	monthcal.c \

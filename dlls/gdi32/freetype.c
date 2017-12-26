@@ -7576,8 +7576,9 @@ static void scale_outline_font_metrics(const GdiFont *font, OUTLINETEXTMETRICW *
 
     scale_font_metrics(font, &potm->otmTextMetrics);
 
-#define SCALE_X(x) (x) = GDI_ROUND((double)(x) * (scale_x))
-#define SCALE_Y(y) (y) = GDI_ROUND((double)(y) * (scale_y))
+/* Windows scales these values as signed integers even if they are unsigned */
+#define SCALE_X(x) (x) = GDI_ROUND((int)(x) * (scale_x))
+#define SCALE_Y(y) (y) = GDI_ROUND((int)(y) * (scale_y))
 
     SCALE_Y(potm->otmAscent);
     SCALE_Y(potm->otmDescent);
@@ -7929,7 +7930,7 @@ static BOOL get_outline_text_metrics(GdiFont *font)
     font->potm->otmrcFontBox.bottom = SCALE_Y(ft_face->bbox.yMin);
     font->potm->otmMacAscent = TM.tmAscent;
     font->potm->otmMacDescent = -TM.tmDescent;
-    font->potm->otmMacLineGap = font->potm->otmLineGap;
+    font->potm->otmMacLineGap = SCALE_Y(pHori->Line_Gap);
     font->potm->otmusMinimumPPEM = 0; /* TT Header */
     font->potm->otmptSubscriptSize.x = SCALE_X(pOS2->ySubscriptXSize);
     font->potm->otmptSubscriptSize.y = SCALE_Y(pOS2->ySubscriptYSize);

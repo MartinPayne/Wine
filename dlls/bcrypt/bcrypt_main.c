@@ -22,8 +22,9 @@
 
 #include <stdarg.h>
 #ifdef HAVE_COMMONCRYPTO_COMMONCRYPTOR_H
+#include <AvailabilityMacros.h>
 #include <CommonCrypto/CommonCryptor.h>
-#elif defined(SONAME_LIBGNUTLS)
+#elif defined(HAVE_GNUTLS_CIPHER_INIT)
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
 #endif
@@ -766,7 +767,7 @@ NTSTATUS WINAPI BCryptHash( BCRYPT_ALG_HANDLE algorithm, UCHAR *secret, ULONG se
     return BCryptDestroyHash( handle );
 }
 
-#if defined(HAVE_GNUTLS_CIPHER_INIT) || defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
+#if defined(HAVE_GNUTLS_CIPHER_INIT) || defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H) && MAC_OS_X_VERSION_MAX_ALLOWED >= 1070
 static ULONG get_block_size( enum alg_id alg )
 {
     ULONG ret = 0, size = sizeof(ret);
@@ -895,7 +896,7 @@ static NTSTATUS key_destroy( struct key *key )
     HeapFree( GetProcessHeap(), 0, key );
     return STATUS_SUCCESS;
 }
-#elif defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H)
+#elif defined(HAVE_COMMONCRYPTO_COMMONCRYPTOR_H) && MAC_OS_X_VERSION_MAX_ALLOWED >= 1070
 struct key
 {
     struct object  hdr;
@@ -949,13 +950,13 @@ static NTSTATUS key_set_params( struct key *key, UCHAR *iv, ULONG iv_len )
         key->ref_decrypt = NULL;
     }
 
-    if ((status = CCCryptorCreateWithMode( kCCEncrypt, kCCModeCBC, kCCAlgorithmAES, ccNoPadding, iv,
+    if ((status = CCCryptorCreateWithMode( kCCEncrypt, kCCModeCBC, kCCAlgorithmAES128, ccNoPadding, iv,
                                            key->secret, key->secret_len, NULL, 0, 0, 0, &key->ref_encrypt )) != kCCSuccess)
     {
         WARN( "CCCryptorCreateWithMode failed %d\n", status );
         return STATUS_INTERNAL_ERROR;
     }
-    if ((status = CCCryptorCreateWithMode( kCCDecrypt, kCCModeCBC, kCCAlgorithmAES, ccNoPadding, iv,
+    if ((status = CCCryptorCreateWithMode( kCCDecrypt, kCCModeCBC, kCCAlgorithmAES128, ccNoPadding, iv,
                                            key->secret, key->secret_len, NULL, 0, 0, 0, &key->ref_decrypt )) != kCCSuccess)
     {
         WARN( "CCCryptorCreateWithMode failed %d\n", status );

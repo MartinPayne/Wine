@@ -23,6 +23,7 @@
 #include <commctrl.h>
 
 #include "wine/test.h"
+#include "v6util.h"
 
 #ifndef ES_COMBO
 #define ES_COMBO 0x200
@@ -566,7 +567,7 @@ static HWND create_child_editcontrol (DWORD style, DWORD exstyle)
     SetRect(&rect, 0, 0, 300, 300);
     b = AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     ok(b, "AdjustWindowRect failed\n");
-    
+
     parentWnd = CreateWindowExA(0,
                             szEditTextPositionClass,
                             "Edit Test",
@@ -637,7 +638,7 @@ static void set_client_height(HWND Wnd, unsigned Height)
 
     /* Workaround for a bug in Windows' edit control
        (multi-line mode) */
-    GetWindowRect(Wnd, &WindowRect);             
+    GetWindowRect(Wnd, &WindowRect);
     SetWindowPos(Wnd, NULL, 0, 0,
                  WindowRect.right - WindowRect.left + 1,
                  WindowRect.bottom - WindowRect.top + 1,
@@ -666,53 +667,53 @@ static void test_edit_control_1(void)
     hwEdit = create_editcontrol(ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
     r = get_edit_style(hwEdit);
     ok(r == (ES_AUTOVSCROLL | ES_AUTOHSCROLL), "Wrong style expected 0xc0 got: 0x%x\n", r);
-    for (i=0;i<65535;i++)
+    for (i = 0; i < 65535; i++)
     {
-	msMessage.wParam = i;
-	r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
-	ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS),
+        msMessage.wParam = i;
+        r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
+        ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS),
             "Expected DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS got %x\n", r);
     }
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 
     trace("EDIT: Single line want returns\n");
     hwEdit = create_editcontrol(ES_WANTRETURN | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
     r = get_edit_style(hwEdit);
     ok(r == (ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN), "Wrong style expected 0x10c0 got: 0x%x\n", r);
-    for (i=0;i<65535;i++)
+    for (i = 0; i < 65535; i++)
     {
-	msMessage.wParam = i;
-	r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
-	ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS),
+        msMessage.wParam = i;
+        r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
+        ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS),
             "Expected DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTARROWS got %x\n", r);
     }
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 
     trace("EDIT: Multiline line\n");
     hwEdit = create_editcontrol(ES_MULTILINE | WS_VSCROLL | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
     r = get_edit_style(hwEdit);
     ok(r == (ES_AUTOHSCROLL | ES_AUTOVSCROLL | ES_MULTILINE), "Wrong style expected 0xc4 got: 0x%x\n", r);
-    for (i=0;i<65535;i++)
+    for (i = 0; i < 65535; i++)
     {
-	msMessage.wParam = i;
-	r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
-	ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS),
+        msMessage.wParam = i;
+        r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
+        ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS),
             "Expected DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS got %x\n", r);
     }
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 
     trace("EDIT: Multi line want returns\n");
     hwEdit = create_editcontrol(ES_MULTILINE | WS_VSCROLL | ES_WANTRETURN | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
     r = get_edit_style(hwEdit);
     ok(r == (ES_WANTRETURN | ES_AUTOHSCROLL | ES_AUTOVSCROLL | ES_MULTILINE), "Wrong style expected 0x10c4 got: 0x%x\n", r);
-    for (i=0;i<65535;i++)
+    for (i = 0; i < 65535; i++)
     {
-	msMessage.wParam = i;
-	r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
-	ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS),
+        msMessage.wParam = i;
+        r = SendMessageA(hwEdit, WM_GETDLGCODE, 0, (LPARAM) &msMessage);
+        ok(r == (DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS),
             "Expected DLGC_WANTCHARS | DLGC_HASSETSEL | DLGC_WANTALLKEYS | DLGC_WANTARROWS got %x\n", r);
     }
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 }
 
 /* WM_SETTEXT is implemented by selecting all text, and then replacing the
@@ -787,30 +788,34 @@ static void test_edit_control_2(void)
     ok(1 == r, "GetCaretPos failed unexpectedly, expected: 1, got: %d\n", r);
     ok(cpos.x == (w - 1) && cpos.y == (h - 1), "Wrong caret position, expected: (%d,%d), got: (%d,%d)\n", w - 1, h - 1, cpos.x, cpos.y);
 
-    /* OK, done! */
-    DestroyWindow (hwndET2);
-    DestroyWindow (hwndMain);
+    DestroyWindow(hwndET2);
+    DestroyWindow(hwndMain);
 }
 
-static void ET2_check_change(void) {
+static void ET2_check_change(void)
+{
    char szLocalString[MAXLEN];
    /* This EN_UPDATE handler changes any 'foo' to 'bar'. */
    GetWindowTextA(hwndET2, szLocalString, MAXLEN);
-   if (strcmp(szLocalString, "foo")==0) {
+   if (!strcmp(szLocalString, "foo"))
+   {
        strcpy(szLocalString, "bar");
-       SendMessageA(hwndET2, WM_SETTEXT, 0, (LPARAM) szLocalString);
+       SendMessageA(hwndET2, WM_SETTEXT, 0, (LPARAM)szLocalString);
    }
    /* always leave the cursor at the end. */
    SendMessageA(hwndET2, EM_SETSEL, MAXLEN - 1, MAXLEN - 1);
 }
+
 static void ET2_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify)
 {
-    if (id==ID_EDITTEST2 && codeNotify == EN_UPDATE)
+    if (id == ID_EDITTEST2 && codeNotify == EN_UPDATE)
         ET2_check_change();
 }
+
 static LRESULT CALLBACK ET2_WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
-    switch (iMsg) {
+    switch (iMsg)
+    {
     case WM_COMMAND:
         ET2_OnCommand(hwnd, LOWORD(wParam), (HWND)lParam, HIWORD(wParam));
         break;
@@ -835,12 +840,13 @@ do { \
     "got %d\n", enupdate, notifications.en_update); \
 } while(0)
 
-
 static LRESULT CALLBACK edit3_wnd_procA(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    switch (msg) {
+    switch (msg)
+    {
         case WM_COMMAND:
-            switch (HIWORD(wParam)) {
+            switch (HIWORD(wParam))
+            {
                 case EN_MAXTEXT:
                     notifications.en_maxtext++;
                     break;
@@ -861,12 +867,11 @@ static LRESULT CALLBACK edit3_wnd_procA(HWND hWnd, UINT msg, WPARAM wParam, LPAR
  */
 static void test_edit_control_3(void)
 {
-    HWND hWnd;
-    HWND hParent;
-    HDC hDC;
-    int len, dpi;
     static const char *str = "this is a long string.";
     static const char *str2 = "this is a long string.\r\nthis is a long string.\r\nthis is a long string.\r\nthis is a long string.";
+    HWND hWnd, hParent;
+    int len, dpi;
+    HDC hDC;
 
     hDC = GetDC(NULL);
     dpi = GetDeviceCaps(hDC, LOGPIXELSY);
@@ -1122,120 +1127,139 @@ static void test_edit_control_3(void)
     DestroyWindow(hWnd);
 }
 
-/* Test EM_CHARFROMPOS and EM_POSFROMCHAR
- */
-static void test_edit_control_4(void)
+static void test_char_from_pos(void)
 {
+    int lo, hi, mid, ret, i;
     HWND hwEdit;
-    int lo, hi, mid;
-    int ret;
-    int i;
 
-    trace("EDIT: Test EM_CHARFROMPOS and EM_POSFROMCHAR\n");
     hwEdit = create_editcontrol(ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
     mid = lo + (hi - lo) / 2;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(0 == ret, "expected 0 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
 
     hwEdit = create_editcontrol(ES_RIGHT | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
     mid = lo + (hi - lo) / 2;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(0 == ret, "expected 0 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
 
     hwEdit = create_editcontrol(ES_CENTER | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
     mid = lo + (hi - lo) / 2;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(0 == ret, "expected 0 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
 
     hwEdit = create_editcontrol(ES_MULTILINE | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
-    mid = lo + (hi - lo) / 2 +1;
+    mid = lo + (hi - lo) / 2 + 1;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok((0 == ret || 1 == ret /* Vista */), "expected 0 or 1 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
 
     hwEdit = create_editcontrol(ES_MULTILINE | ES_RIGHT | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
-    mid = lo + (hi - lo) / 2 +1;
+    mid = lo + (hi - lo) / 2 + 1;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok((0 == ret || 1 == ret /* Vista */), "expected 0 or 1 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
 
     hwEdit = create_editcontrol(ES_MULTILINE | ES_CENTER | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
-    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM) "aa");
+    SendMessageA(hwEdit, WM_SETTEXT, 0, (LPARAM)"aa");
     lo = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 0, 0));
     hi = LOWORD(SendMessageA(hwEdit, EM_POSFROMCHAR, 1, 0));
-    mid = lo + (hi - lo) / 2 +1;
+    mid = lo + (hi - lo) / 2 + 1;
 
-    for (i = lo; i < mid; i++) {
+    for (i = lo; i < mid; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok((0 == ret || 1 == ret /* Vista */), "expected 0 or 1 got %d\n", ret);
     }
-    for (i = mid; i <= hi; i++) {
+
+    for (i = mid; i <= hi; i++)
+    {
        ret = LOWORD(SendMessageA(hwEdit, EM_CHARFROMPOS, 0, i));
        ok(1 == ret, "expected 1 got %d\n", ret);
     }
+
     ret = SendMessageA(hwEdit, EM_POSFROMCHAR, 2, 0);
     ok(-1 == ret, "expected -1 got %d\n", ret);
     DestroyWindow(hwEdit);
@@ -1314,35 +1338,34 @@ static void test_edit_control_6(void)
 {
     static const char *str = "test\r\ntest";
     char buf[MAXLEN];
-    LONG ret;
     HWND hWnd;
+    LONG ret;
 
-    hWnd = CreateWindowExA(0,
-              "EDIT",
-              "Test",
-              0,
-              10, 10, 1, 1,
-              NULL, NULL, hinst, NULL);
-    assert(hWnd);
+    hWnd = CreateWindowExA(0, "EDIT", "Test", 0, 10, 10, 1, 1, NULL, NULL, hinst, NULL);
+    ok(hWnd != NULL, "Failed to create edit control.\n");
 
     ret = SendMessageA(hWnd, WM_SETTEXT, 0, (LPARAM)str);
     ok(ret == TRUE, "Expected %d, got %d\n", TRUE, ret);
     ret = SendMessageA(hWnd, WM_GETTEXT, MAXLEN, (LPARAM)buf);
     ok(ret == strlen(str), "Expected %s, got len %d\n", str, ret);
     ok(!strcmp(buf, str), "Expected %s, got %s\n", str, buf);
+
     buf[0] = 0;
     ret = SendMessageA(hWnd, WM_DESTROY, 0, 0);
-    ok(ret == 0, "Expected 0, got %d\n", ret);
+todo_wine
+    ok(ret == 1, "Unexpected return value %d\n", ret);
     ret = SendMessageA(hWnd, WM_GETTEXT, MAXLEN, (LPARAM)buf);
     ok(ret == strlen(str), "Expected %s, got len %d\n", str, ret);
     ok(!strcmp(buf, str), "Expected %s, got %s\n", str, buf);
+
     buf[0] = 0;
     ret = SendMessageA(hWnd, WM_NCDESTROY, 0, 0);
     ok(ret == 0, "Expected 0, got %d\n", ret);
     ret = SendMessageA(hWnd, WM_GETTEXT, MAXLEN, (LPARAM)buf);
-    ok(ret == 0, "Expected 0, got len %d\n", ret);
-    ok(!strcmp(buf, ""), "Expected empty string, got %s\n", buf);
-
+todo_wine {
+    ok(ret == strlen("Test"), "Unexpected text length %d\n", ret);
+    ok(!strcmp(buf, "Test"), "Unexpected text %s\n", buf);
+}
     DestroyWindow(hWnd);
 }
 
@@ -1425,14 +1448,14 @@ static void test_edit_control_scroll(void)
 
 static void test_margins_usefontinfo(UINT charset)
 {
+    INT margins, threshold, expect, empty_expect, small_expect;
     HWND hwnd;
     HDC hdc;
     SIZE size;
-    BOOL cjk = FALSE;
+    BOOL cjk;
     LOGFONTA lf;
     HFONT hfont;
     RECT rect;
-    INT margins, threshold, expect, empty_expect, small_expect;
 
     memset(&lf, 0, sizeof(lf));
     lf.lfHeight = -11;
@@ -1464,6 +1487,9 @@ static void test_margins_usefontinfo(UINT charset)
     case GB2312_CHARSET:
     case CHINESEBIG5_CHARSET:
         cjk = TRUE;
+        break;
+    default:
+        cjk = FALSE;
     }
 
     hfont = SelectObject(hdc, hfont);
@@ -1531,10 +1557,10 @@ static void test_margins_usefontinfo(UINT charset)
 
 static void test_margins(void)
 {
-    HWND hwEdit;
+    DWORD old_margins, new_margins;
     RECT old_rect, new_rect;
     INT old_right_margin;
-    DWORD old_margins, new_margins;
+    HWND hwEdit;
 
     hwEdit = create_editcontrol(WS_BORDER | ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
 
@@ -1612,19 +1638,20 @@ static INT CALLBACK find_font_proc(const LOGFONTA *elf, const TEXTMETRICA *ntm, 
 
 static void test_margins_font_change(void)
 {
-    HWND hwEdit;
-    DWORD margins, font_margins;
-    LOGFONTA lf;
+    DWORD margins, font_margins, ret;
     HFONT hfont, hfont2;
-    HDC hdc = GetDC(0);
+    HWND hwEdit;
+    LOGFONTA lf;
+    HDC hdc;
 
-    if(EnumFontFamiliesA(hdc, "Arial", find_font_proc, 0))
+    hdc = GetDC(0);
+    ret = EnumFontFamiliesA(hdc, "Arial", find_font_proc, 0);
+    ReleaseDC(0, hdc);
+    if (ret)
     {
         trace("Arial not found - skipping font change margin tests\n");
-        ReleaseDC(0, hdc);
         return;
     }
-    ReleaseDC(0, hdc);
 
     hwEdit = create_child_editcontrol(0, 0);
 
@@ -1648,40 +1675,30 @@ static void test_margins_font_change(void)
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(0,0));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) == 0 || broken(LOWORD(margins) == LOWORD(font_margins)), /* win95 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == 0 || broken(HIWORD(margins) == HIWORD(font_margins)), /* win95 */
-       "got %d\n", HIWORD(margins));
+    ok(LOWORD(margins) == 0, "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) == 0, "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(1,0));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) == 1 || broken(LOWORD(margins) == LOWORD(font_margins)), /* win95 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == 0 || broken(HIWORD(margins) == HIWORD(font_margins)), /* win95 */
-       "got %d\n", HIWORD(margins));
+    ok(LOWORD(margins) == 1, "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) == 0, "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(1,1));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) == 1 || broken(LOWORD(margins) == LOWORD(font_margins)), /* win95 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == 1 || broken(HIWORD(margins) == HIWORD(font_margins)), /* win95 */
-       "got %d\n", HIWORD(margins));
+    ok(LOWORD(margins) == 1, "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) == 1, "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(EC_USEFONTINFO,EC_USEFONTINFO));
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) == 1 || broken(LOWORD(margins) == LOWORD(font_margins)), /* win95 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == 1 || broken(HIWORD(margins) == HIWORD(font_margins)), /* win95 */
-       "got %d\n", HIWORD(margins));
+    ok(LOWORD(margins) == 1, "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) == 1, "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont2, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) == 1 || broken(LOWORD(margins) != 1 && LOWORD(margins) != LOWORD(font_margins)), /* win95 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == 1 || broken(HIWORD(margins) != 1 && HIWORD(margins) != HIWORD(font_margins)), /* win95 */
-       "got %d\n", HIWORD(margins));
+    ok(LOWORD(margins) == 1, "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) == 1, "got %d\n", HIWORD(margins));
 
     /* Above a certain size threshold then the margin is updated */
     SetWindowPos(hwEdit, NULL, 10, 10, 1000, 100, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1689,24 +1706,23 @@ static void test_margins_font_change(void)
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
     ok(LOWORD(margins) == LOWORD(font_margins), "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins)); 
+    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(1,1));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
     ok(LOWORD(margins) == LOWORD(font_margins), "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins)); 
+    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(EC_USEFONTINFO,EC_USEFONTINFO));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
     ok(LOWORD(margins) == LOWORD(font_margins), "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins)); 
+    ok(HIWORD(margins) == HIWORD(font_margins), "got %d\n", HIWORD(margins));
     SendMessageA(hwEdit, WM_SETFONT, (WPARAM)hfont2, 0);
     margins = SendMessageA(hwEdit, EM_GETMARGINS, 0, 0);
-    ok(LOWORD(margins) != LOWORD(font_margins) || broken(LOWORD(margins) == LOWORD(font_margins)), /* win98 */
-       "got %d\n", LOWORD(margins));
-    ok(HIWORD(margins) != HIWORD(font_margins), "got %d\n", HIWORD(margins)); 
+    ok(LOWORD(margins) != LOWORD(font_margins), "got %d\n", LOWORD(margins));
+    ok(HIWORD(margins) != HIWORD(font_margins), "got %d\n", HIWORD(margins));
 
     SendMessageA(hwEdit, WM_SETFONT, 0, 0);
 
@@ -1904,7 +1920,7 @@ static void test_espassword(void)
     ok(r == 0, "Expected: 0, got: %d\n", r);
     ok(strcmp(buffer, "") == 0, "expected empty string, got %s\n", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 }
 
 static void test_undo(void)
@@ -1961,14 +1977,14 @@ static void test_undo(void)
     ok(r == 0, "Expected: %d, got len %d\n", 0, r);
     ok(0 == strcmp(buffer, ""), "expected %s, got %s\n", "", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 }
 
 static void test_enter(void)
 {
+    char buffer[16];
     HWND hwEdit;
     LONG r;
-    char buffer[16];
 
     /* multiline */
     hwEdit = create_editcontrol(ES_MULTILINE, 0);
@@ -2008,7 +2024,7 @@ static void test_enter(void)
     ok(0 == r, "Expected: %d, got len %d\n", 0, r);
     ok(0 == strcmp(buffer, ""), "expected \"\", got \"%s\"\n", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 
     /* single line with ES_WANTRETURN */
     hwEdit = create_editcontrol(ES_WANTRETURN, 0);
@@ -2028,14 +2044,14 @@ static void test_enter(void)
     ok(0 == r, "Expected: %d, got len %d\n", 0, r);
     ok(0 == strcmp(buffer, ""), "expected \"\", got \"%s\"\n", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 }
 
 static void test_tab(void)
 {
+    char buffer[16];
     HWND hwEdit;
     LONG r;
-    char buffer[16];
 
     /* multiline */
     hwEdit = create_editcontrol(ES_MULTILINE, 0);
@@ -2055,7 +2071,7 @@ static void test_tab(void)
     ok(1 == r, "Expected: %d, got len %d\n", 1, r);
     ok(0 == strcmp(buffer, "\t"), "expected \"\\t\", got \"%s\"\n", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 
     /* single line */
     hwEdit = create_editcontrol(0, 0);
@@ -2075,7 +2091,7 @@ static void test_tab(void)
     ok(0 == r, "Expected: %d, got len %d\n", 0, r);
     ok(0 == strcmp(buffer, ""), "expected \"\", got \"%s\"\n", buffer);
 
-    DestroyWindow (hwEdit);
+    DestroyWindow(hwEdit);
 }
 
 static void test_edit_dialog(void)
@@ -2273,7 +2289,8 @@ static LRESULT CALLBACK edit4_wnd_procA(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 {
     switch (msg) {
         case WM_COMMAND:
-            switch (HIWORD(wParam)) {
+            switch (HIWORD(wParam))
+            {
                 case EN_SETFOCUS:
                     got_en_setfocus = TRUE;
                     break;
@@ -2290,47 +2307,6 @@ static LRESULT CALLBACK edit4_wnd_procA(HWND hWnd, UINT msg, WPARAM wParam, LPAR
     return DefWindowProcA(hWnd, msg, wParam, lParam);
 }
 
-static LRESULT CALLBACK edit_proc_proxy(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    switch (msg) {
-        case WM_ENTERIDLE: {
-            MENUBARINFO mbi;
-            BOOL ret;
-            HWND ctx_menu = (HWND)lParam;
-
-            memset(&mbi, 0, sizeof(mbi));
-            mbi.cbSize = sizeof(mbi);
-            SetLastError(0xdeadbeef);
-            ret = GetMenuBarInfo(ctx_menu, OBJID_CLIENT, 0, &mbi);
-            ok(ret, "GetMenuBarInfo failed\n");
-            if (ret)
-            {
-                ok(mbi.hMenu != NULL, "mbi.hMenu = NULL\n");
-                ok(!mbi.hwndMenu, "mbi.hwndMenu != NULL\n");
-                ok(mbi.fBarFocused, "mbi.fBarFocused = FALSE\n");
-                ok(mbi.fFocused, "mbi.fFocused = FALSE\n");
-            }
-
-            memset(&mbi, 0, sizeof(mbi));
-            mbi.cbSize = sizeof(mbi);
-            SetLastError(0xdeadbeef);
-            ret = GetMenuBarInfo(ctx_menu, OBJID_CLIENT, 1, &mbi);
-            ok(ret, "GetMenuBarInfo failed\n");
-            if (ret)
-            {
-                ok(mbi.hMenu != NULL, "mbi.hMenu = NULL\n");
-                ok(!mbi.hwndMenu, "mbi.hwndMenu != NULL\n");
-                ok(mbi.fBarFocused, "mbi.fBarFocused = FALSE\n");
-                ok(!mbi.fFocused, "mbi.fFocused = TRUE\n");
-            }
-
-            EndMenu();
-            break;
-        }
-    }
-    return p_edit_proc(hWnd, msg, wParam, lParam);
-}
-
 struct context_menu_messages
 {
     unsigned int wm_command, em_setsel;
@@ -2340,19 +2316,25 @@ static struct context_menu_messages menu_messages;
 
 static LRESULT CALLBACK child_edit_menu_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    switch (msg) {
+    switch (msg)
+    {
     case WM_ENTERIDLE:
-        if (wParam == MSGF_MENU) {
+        if (wParam == MSGF_MENU)
+        {
             HWND hwndMenu = (HWND)lParam;
-            MENUBARINFO mbi = { sizeof(MENUBARINFO) };
-            if (GetMenuBarInfo(hwndMenu, OBJID_CLIENT, 0, &mbi)) {
+            MENUBARINFO mbi = { sizeof(mbi) };
+            if (GetMenuBarInfo(hwndMenu, OBJID_CLIENT, 0, &mbi))
+            {
                 MENUITEMINFOA mii = { sizeof(MENUITEMINFOA), MIIM_STATE };
-                if (GetMenuItemInfoA(mbi.hMenu, EM_SETSEL, FALSE, &mii)) {
-                    if (mii.fState & MFS_HILITE) {
+                if (GetMenuItemInfoA(mbi.hMenu, EM_SETSEL, FALSE, &mii))
+                {
+                    if (mii.fState & MFS_HILITE)
+                    {
                         PostMessageA(hwnd, WM_KEYDOWN, VK_RETURN, 0x1c0001);
                         PostMessageA(hwnd, WM_KEYUP, VK_RETURN, 0x1c0001);
                     }
-                    else {
+                    else
+                    {
                         PostMessageA(hwnd, WM_KEYDOWN, VK_DOWN, 0x500001);
                         PostMessageA(hwnd, WM_KEYUP, VK_DOWN, 0x500001);
                     }
@@ -2391,10 +2373,7 @@ static void test_contextmenu(void)
     ok(got_en_setfocus, "edit box didn't get focused\n");
     ok(got_wm_capturechanged, "main window capture did not change\n");
 
-    p_edit_proc = (void*)SetWindowLongPtrA(hwndEdit, GWLP_WNDPROC, (ULONG_PTR)edit_proc_proxy);
-    SendMessageA(hwndEdit, WM_CONTEXTMENU, (WPARAM)hwndEdit, MAKEWORD(10, 10));
-
-    DestroyWindow (hwndEdit);
+    DestroyWindow(hwndEdit);
 
     hwndEdit = CreateWindowA("EDIT", "Test Text",
                              WS_CHILD | WS_BORDER | WS_VISIBLE,
@@ -2413,11 +2392,11 @@ static void test_contextmenu(void)
     ok(menu_messages.em_setsel == 1,
        "Expected 1 EM_SETSEL message, got %d\n", menu_messages.em_setsel);
 
-    DestroyWindow (hwndEdit);
-    DestroyWindow (hwndMain);
+    DestroyWindow(hwndEdit);
+    DestroyWindow(hwndMain);
 }
 
-static BOOL RegisterWindowClasses (void)
+static BOOL register_classes(void)
 {
     WNDCLASSA test2;
     WNDCLASSA test3;
@@ -2717,6 +2696,8 @@ static void test_dialogmode(void)
 
 static void test_EM_GETHANDLE(void)
 {
+    static const WCHAR str1W[] = {'1','1','1','1','+','1','1','1','1','+','1','1','1','1','#',0};
+    static const WCHAR str2W[] = {'2','2','2','2','-','2','2','2','2','-','2','2','2','2','-','2','2','2','2','#',0};
     static const char str0[] = "untouched";
     static const char str1[] = "1111+1111+1111#";
     static const char str1_1[] = "2111+1111+1111#";
@@ -2727,7 +2708,7 @@ static void test_EM_GETHANDLE(void)
     HLOCAL  hmem;
     HLOCAL  hmem2;
     HLOCAL  halloc;
-    char    *buffer;
+    WCHAR  *buffer;
     int     len;
     int     r;
 
@@ -2740,7 +2721,6 @@ static void test_EM_GETHANDLE(void)
     hmem = (HGLOBAL) SendMessageA(hEdit, EM_GETHANDLE, 0, 0);
     ok(hmem == NULL, "got %p (expected NULL)\n", hmem);
     DestroyWindow(hEdit);
-
 
     /* EM_GETHANDLE needs a multiline edit control */
     hEdit = create_editcontrol(WS_BORDER | ES_MULTILINE, 0);
@@ -2763,9 +2743,10 @@ static void test_EM_GETHANDLE(void)
 
     buffer = LocalLock(hmem);
     ok(buffer != NULL, "got %p (expected != NULL)\n", buffer);
-    len = lstrlenA(buffer);
-    ok((len == lstrlenA(str1)) && !lstrcmpA(buffer, str1),
-        "got %d and \"%s\" (expected %d and \"%s\")\n", len, buffer, lstrlenA(str1), str1);
+    len = lstrlenW(buffer);
+todo_wine
+    ok(len == lstrlenW(str1W) && !lstrcmpW(buffer, str1W), "Unexpected buffer contents %s, length %d.\n",
+        wine_dbgstr_w(buffer), len);
     LocalUnlock(hmem);
 
     /* See if WM_GETTEXTLENGTH/WM_GETTEXT still work. */
@@ -2788,7 +2769,8 @@ static void test_EM_GETHANDLE(void)
 
     lstrcpyA(current, str0);
     r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
-    ok((r == lstrlenA(str1_1)) && !lstrcmpA(current, str1_1),
+todo_wine
+    ok(r == lstrlenA(str1_1) && !lstrcmpA(current, str1_1),
         "Unexpected retval %d and text \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str1_1), str1_1);
 
     /* See if WM_SETTEXT/EM_REPLACESEL work. */
@@ -2796,6 +2778,7 @@ static void test_EM_GETHANDLE(void)
     ok(r, "Failed to set text.\n");
 
     buffer = LocalLock(hmem);
+todo_wine
     ok(buffer != NULL && buffer[0] == '1', "Unexpected buffer contents\n");
     LocalUnlock(hmem);
 
@@ -2803,6 +2786,7 @@ static void test_EM_GETHANDLE(void)
     ok(r, "Failed to replace selection.\n");
 
     buffer = LocalLock(hmem);
+todo_wine
     ok(buffer != NULL && buffer[0] == '2', "Unexpected buffer contents\n");
     LocalUnlock(hmem);
 
@@ -2812,7 +2796,7 @@ static void test_EM_GETHANDLE(void)
     /* prepare our new memory */
     buffer = LocalLock(halloc);
     ok(buffer != NULL, "got %p (expected != NULL)\n", buffer);
-    lstrcpyA(buffer, str2);
+    lstrcpyW(buffer, str2W);
     LocalUnlock(halloc);
 
     /* LocalFree the old memory handle before EM_SETHANDLE the new handle */
@@ -2824,11 +2808,13 @@ static void test_EM_GETHANDLE(void)
     SendMessageA(hEdit, EM_SETHANDLE, (WPARAM)halloc, 0);
 
     len = SendMessageA(hEdit, WM_GETTEXTLENGTH, 0, 0);
+todo_wine
     ok(len == lstrlenA(str2), "got %d (expected %d)\n", len, lstrlenA(str2));
 
     lstrcpyA(current, str0);
     r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
-    ok((r == lstrlenA(str2)) && !lstrcmpA(current, str2),
+todo_wine
+    ok(r == lstrlenA(str2) && !lstrcmpA(current, str2),
         "got %d and \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str2), str2);
 
     /* set a different text */
@@ -2869,12 +2855,12 @@ static void test_EM_GETHANDLE(void)
 
 static void test_paste(void)
 {
+    static const char *str = "this is a simple text";
+    static const char *str2 = "first line\r\nsecond line";
     HWND hEdit, hMultilineEdit;
     HANDLE hmem, hmem_ret;
     char *buffer;
     int r, len;
-    static const char *str = "this is a simple text";
-    static const char *str2 = "first line\r\nsecond line";
 
     hEdit = create_editcontrol(ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
     hMultilineEdit = create_editcontrol(ES_AUTOHSCROLL | ES_AUTOVSCROLL | ES_MULTILINE, 0);
@@ -2938,17 +2924,22 @@ static void test_paste(void)
 
 START_TEST(edit)
 {
+    ULONG_PTR ctx_cookie;
+    HANDLE hCtx;
     BOOL b;
 
+    if (!load_v6_module(&ctx_cookie, &hCtx))
+        return;
+
     hinst = GetModuleHandleA(NULL);
-    b = RegisterWindowClasses();
-    ok (b, "RegisterWindowClasses failed\n");
+    b = register_classes();
+    ok(b, "Failed to register test classes.\n");
     if (!b) return;
 
     test_edit_control_1();
     test_edit_control_2();
     test_edit_control_3();
-    test_edit_control_4();
+    test_char_from_pos();
     test_edit_control_5();
     test_edit_control_6();
     test_edit_control_limittext();
@@ -2972,4 +2963,6 @@ START_TEST(edit)
     test_paste();
 
     UnregisterWindowClasses();
+
+    unload_v6_module(ctx_cookie, hCtx);
 }
