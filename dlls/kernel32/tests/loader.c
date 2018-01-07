@@ -52,7 +52,7 @@ static DWORD page_size;
 
 static NTSTATUS (WINAPI *pNtCreateSection)(HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *,
                                            const LARGE_INTEGER *, ULONG, ULONG, HANDLE );
-static NTSTATUS (WINAPI *pNtQuerySection)(HANDLE, SECTION_INFORMATION_CLASS, void *, ULONG, ULONG *);
+static NTSTATUS (WINAPI *pNtQuerySection)(HANDLE, SECTION_INFORMATION_CLASS, void *, SIZE_T, SIZE_T *);
 static NTSTATUS (WINAPI *pNtMapViewOfSection)(HANDLE, HANDLE, PVOID *, ULONG, SIZE_T, const LARGE_INTEGER *, SIZE_T *, ULONG, ULONG, ULONG);
 static NTSTATUS (WINAPI *pNtUnmapViewOfSection)(HANDLE, PVOID);
 static NTSTATUS (WINAPI *pNtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
@@ -164,13 +164,18 @@ static const char filler[0x1000];
 static const char section_data[0x10] = "section data";
 
 static DWORD create_test_dll( const IMAGE_DOS_HEADER *dos_header, UINT dos_size,
-                              const IMAGE_NT_HEADERS *nt_header, const char *dll_name )
+                              const IMAGE_NT_HEADERS *nt_header, char dll_name[MAX_PATH] )
 {
+    char temp_path[MAX_PATH];
     DWORD dummy, size, file_align;
     HANDLE hfile;
     BOOL ret;
 
+    GetTempPathA(MAX_PATH, temp_path);
+    GetTempFileNameA(temp_path, "ldr", 0, dll_name);
+
     hfile = CreateFileA(dll_name, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, 0);
+    ok( hfile != INVALID_HANDLE_VALUE, "failed to create %s err %u\n", dll_name, GetLastError() );
     if (hfile == INVALID_HANDLE_VALUE) return 0;
 
     SetLastError(0xdeadbeef);
@@ -230,11 +235,11 @@ static DWORD create_test_dll( const IMAGE_DOS_HEADER *dos_header, UINT dos_size,
     return size;
 }
 
-static void query_image_section( int id, const char *dll_name, const IMAGE_NT_HEADERS *nt_header )
+static BOOL query_image_section( int id, const char *dll_name, const IMAGE_NT_HEADERS *nt_header )
 {
     SECTION_BASIC_INFORMATION info;
     SECTION_IMAGE_INFORMATION image;
-    ULONG info_size = 0xdeadbeef;
+    SIZE_T info_size = (SIZE_T)0xdeadbeef << 16;
     NTSTATUS status;
     HANDLE file, mapping;
     ULONG file_size;
@@ -256,11 +261,11 @@ static void query_image_section( int id, const char *dll_name, const IMAGE_NT_HE
     if (status)
     {
         CloseHandle( file );
-        return;
+        return FALSE;
     }
     status = pNtQuerySection( mapping, SectionImageInformation, &image, sizeof(image), &info_size );
     ok( !status, "%u: NtQuerySection failed err %x\n", id, status );
-    ok( info_size == sizeof(image), "%u: NtQuerySection wrong size %u\n", id, info_size );
+    ok( info_size == sizeof(image), "%u: NtQuerySection wrong size %lu\n", id, info_size );
     if (nt_header->OptionalHeader.Magic == (sizeof(void *) > sizeof(int) ? IMAGE_NT_OPTIONAL_HDR64_MAGIC
                                                                          : IMAGE_NT_OPTIONAL_HDR32_MAGIC))
     {
@@ -320,10 +325,21 @@ static void query_image_section( int id, const char *dll_name, const IMAGE_NT_HE
         "%u: ImageFileSize wrong %08x / %08x\n", id, image.ImageFileSize, file_size );
     ok( image.CheckSum == nt_header->OptionalHeader.CheckSum, "%u: CheckSum wrong %08x / %08x\n", id,
         image.CheckSum, nt_header->OptionalHeader.CheckSum );
+    if (nt_header->OptionalHeader.SizeOfCode || nt_header->OptionalHeader.AddressOfEntryPoint)
+        todo_wine
+        ok( image.ImageContainsCode == TRUE, "%u: ImageContainsCode wrong %u\n", id,
+            image.ImageContainsCode );
+    else if ((nt_header->OptionalHeader.SectionAlignment % page_size) ||
+             (nt_header->FileHeader.NumberOfSections == 1 &&
+              (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)))
+        todo_wine
+        ok( image.ImageContainsCode == TRUE || broken(!image.ImageContainsCode), /* <= win8 */
+            "%u: ImageContainsCode wrong %u\n", id, image.ImageContainsCode );
+    else
+        ok( !image.ImageContainsCode, "%u: ImageContainsCode wrong %u\n", id, image.ImageContainsCode );
     /* FIXME: needs more work: */
     /* image.GpValue */
     /* image.ImageFlags */
-    /* image.ImageContainsCode */
 
     map_size.QuadPart = (nt_header->OptionalHeader.SizeOfImage + page_size - 1) & ~(page_size - 1);
     status = pNtQuerySection( mapping, SectionBasicInformation, &info, sizeof(info), NULL );
@@ -364,23 +380,21 @@ static void query_image_section( int id, const char *dll_name, const IMAGE_NT_HE
     CloseHandle( mapping );
 
     CloseHandle( file );
+    return image.ImageContainsCode;
 }
 
 /* helper to test image section mapping */
 static NTSTATUS map_image_section( const IMAGE_NT_HEADERS *nt_header, int line )
 {
-    char temp_path[MAX_PATH];
     char dll_name[MAX_PATH];
     LARGE_INTEGER size;
     HANDLE file, map;
     NTSTATUS status;
     ULONG file_size;
-
-    GetTempPathA(MAX_PATH, temp_path);
-    GetTempFileNameA(temp_path, "ldr", 0, dll_name);
+    BOOL has_code;
+    HMODULE mod;
 
     file_size = create_test_dll( &dos_header, sizeof(dos_header), nt_header, dll_name );
-    ok( file_size, "could not create %s\n", dll_name);
 
     file = CreateFileA(dll_name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0);
     ok(file != INVALID_HANDLE_VALUE, "CreateFile error %d\n", GetLastError());
@@ -391,15 +405,32 @@ static NTSTATUS map_image_section( const IMAGE_NT_HEADERS *nt_header, int line )
     if (!status)
     {
         SECTION_BASIC_INFORMATION info;
-        ULONG info_size = 0xdeadbeef;
+        SIZE_T info_size = 0xdeadbeef;
         NTSTATUS ret = pNtQuerySection( map, SectionBasicInformation, &info, sizeof(info), &info_size );
         ok( !ret, "NtQuerySection failed err %x\n", ret );
-        ok( info_size == sizeof(info), "NtQuerySection wrong size %u\n", info_size );
+        ok( info_size == sizeof(info), "NtQuerySection wrong size %lu\n", info_size );
         ok( info.Attributes == (SEC_IMAGE | SEC_FILE), "NtQuerySection wrong attr %x\n", info.Attributes );
         ok( info.BaseAddress == NULL, "NtQuerySection wrong base %p\n", info.BaseAddress );
         ok( info.Size.QuadPart == file_size, "NtQuerySection wrong size %x%08x / %08x\n",
             info.Size.u.HighPart, info.Size.u.LowPart, file_size );
-        query_image_section( line, dll_name, nt_header );
+        has_code = query_image_section( line, dll_name, nt_header );
+        /* test loading dll of wrong 32/64 bitness */
+        if (nt_header->OptionalHeader.Magic == (sizeof(void *) > sizeof(int) ? IMAGE_NT_OPTIONAL_HDR32_MAGIC
+                                                                             : IMAGE_NT_OPTIONAL_HDR64_MAGIC))
+        {
+            SetLastError( 0xdeadbeef );
+            mod = LoadLibraryExA( dll_name, 0, DONT_RESOLVE_DLL_REFERENCES );
+            if (!has_code && nt_header->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+            {
+                ok( mod != NULL, "%u: loading failed err %u\n", line, GetLastError() );
+            }
+            else
+            {
+                ok( !mod, "%u: loading succeeded\n", line );
+                ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "%u: wrong error %u\n", line, GetLastError() );
+            }
+            if (mod) FreeLibrary( mod );
+        }
     }
     if (map) CloseHandle( map );
     CloseHandle( file );
@@ -549,7 +580,6 @@ static void test_Loader(void)
     DWORD file_size;
     HANDLE h;
     HMODULE hlib, hlib_as_data_file;
-    char temp_path[MAX_PATH];
     char dll_name[MAX_PATH];
     SIZE_T size;
     BOOL ret;
@@ -560,12 +590,8 @@ static void test_Loader(void)
     /* prevent displaying of the "Unable to load this DLL" message box */
     SetErrorMode(SEM_FAILCRITICALERRORS);
 
-    GetTempPathA(MAX_PATH, temp_path);
-
     for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
     {
-        GetTempFileNameA(temp_path, "ldr", 0, dll_name);
-
         nt_header = nt_header_template;
         nt_header.FileHeader.NumberOfSections = td[i].number_of_sections;
         nt_header.FileHeader.SizeOfOptionalHeader = td[i].size_of_optional_header;
@@ -576,11 +602,6 @@ static void test_Loader(void)
         nt_header.OptionalHeader.SizeOfHeaders = td[i].size_of_headers;
 
         file_size = create_test_dll( &dos_header, td[i].size_of_dos_header, &nt_header, dll_name );
-        if (!file_size)
-        {
-            ok(0, "could not create %s\n", dll_name);
-            break;
-        }
 
         SetLastError(0xdeadbeef);
         hlib = LoadLibraryA(dll_name);
@@ -883,6 +904,38 @@ static void test_Loader(void)
         todo_wine
         ok( status == (is_wow64 ? STATUS_SUCCESS : STATUS_INVALID_IMAGE_WIN_64),
             "NtCreateSection error %08x\n", status );
+
+        nt64.OptionalHeader.SizeOfCode = 0;
+        nt64.OptionalHeader.AddressOfEntryPoint = 0x1000;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt64, __LINE__ );
+        todo_wine
+        ok( status == (is_wow64 ? STATUS_SUCCESS : STATUS_INVALID_IMAGE_WIN_64),
+            "NtCreateSection error %08x\n", status );
+
+        nt64.OptionalHeader.SizeOfCode = 0;
+        nt64.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt64, __LINE__ );
+        todo_wine
+        ok( status == (is_wow64 ? STATUS_SUCCESS : STATUS_INVALID_IMAGE_WIN_64),
+            "NtCreateSection error %08x\n", status );
+
+        nt64.OptionalHeader.SizeOfCode = 0x1000;
+        nt64.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt64, __LINE__ );
+        todo_wine
+        ok( status == (is_wow64 ? STATUS_SUCCESS : STATUS_INVALID_IMAGE_WIN_64),
+            "NtCreateSection error %08x\n", status );
+
+        nt64.OptionalHeader.SizeOfCode = 0;
+        nt64.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt64, __LINE__ );
+        todo_wine
+        ok( status == (is_wow64 ? STATUS_SUCCESS : STATUS_INVALID_IMAGE_WIN_64),
+            "NtCreateSection error %08x\n", status );
     }
     else
     {
@@ -924,6 +977,34 @@ static void test_Loader(void)
             "NtCreateSection error %08x\n", status );
 
         nt32.FileHeader.Machine = nt_header.FileHeader.Machine;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt32, __LINE__ );
+        todo_wine
+        ok( status == STATUS_SUCCESS, "NtCreateSection error %08x\n", status );
+
+        nt32.OptionalHeader.SizeOfCode = 0;
+        nt32.OptionalHeader.AddressOfEntryPoint = 0x1000;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt32, __LINE__ );
+        todo_wine
+        ok( status == STATUS_SUCCESS, "NtCreateSection error %08x\n", status );
+
+        nt32.OptionalHeader.SizeOfCode = 0;
+        nt32.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt32, __LINE__ );
+        todo_wine
+        ok( status == STATUS_SUCCESS, "NtCreateSection error %08x\n", status );
+
+        nt32.OptionalHeader.SizeOfCode = 0x1000;
+        nt32.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
+        status = map_image_section( (IMAGE_NT_HEADERS *)&nt32, __LINE__ );
+        todo_wine
+        ok( status == STATUS_SUCCESS, "NtCreateSection error %08x\n", status );
+
+        nt32.OptionalHeader.SizeOfCode = 0;
+        nt32.OptionalHeader.AddressOfEntryPoint = 0;
+        section.Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE;
         status = map_image_section( (IMAGE_NT_HEADERS *)&nt32, __LINE__ );
         todo_wine
         ok( status == STATUS_SUCCESS, "NtCreateSection error %08x\n", status );

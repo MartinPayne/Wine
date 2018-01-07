@@ -2521,7 +2521,11 @@ static void test_OemKeyScan(void)
         ret = OemKeyScan( oem );
 
         oem_char = LOBYTE( oem );
-        if (!OemToCharBuffW( &oem_char, &wchr, 1 ))
+        /* OemKeyScan returns -1 for any character that cannot be mapped,
+         * whereas OemToCharBuff changes unmappable characters to question
+         * marks. The ASCII characters 0-127, including the real question mark
+         * character, are all mappable and are the same in all OEM codepages. */
+        if (!OemToCharBuffW( &oem_char, &wchr, 1 ) || (wchr == '?' && oem_char < 0))
             expect = -1;
         else
         {

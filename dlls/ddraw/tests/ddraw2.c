@@ -84,58 +84,54 @@ static BOOL compare_vec4(const struct vec4 *vec, float x, float y, float z, floa
             && compare_float(vec->w, w, ulps);
 }
 
-static BOOL ddraw_is_warp(IDirectDraw2 *ddraw)
+static BOOL ddraw_get_identifier(IDirectDraw2 *ddraw, DDDEVICEIDENTIFIER *identifier)
 {
     IDirectDraw4 *ddraw4;
-    DDDEVICEIDENTIFIER identifier;
     HRESULT hr;
-
-    if (!strcmp(winetest_platform, "wine"))
-        return FALSE;
 
     hr = IDirectDraw2_QueryInterface(ddraw, &IID_IDirectDraw4, (void **)&ddraw4);
     ok(SUCCEEDED(hr), "Failed to get IDirectDraw4 interface, hr %#x.\n", hr);
-    hr = IDirectDraw4_GetDeviceIdentifier(ddraw4, &identifier, 0);
+    hr = IDirectDraw4_GetDeviceIdentifier(ddraw4, identifier, 0);
     ok(SUCCEEDED(hr), "Failed to get device identifier, hr %#x.\n", hr);
     IDirectDraw4_Release(ddraw4);
 
-    return !!strstr(identifier.szDriver, "warp");
+    return SUCCEEDED(hr);
+}
+
+static BOOL ddraw_is_warp(IDirectDraw2 *ddraw)
+{
+    DDDEVICEIDENTIFIER identifier;
+
+    return strcmp(winetest_platform, "wine")
+            && ddraw_get_identifier(ddraw, &identifier)
+            && strstr(identifier.szDriver, "warp");
 }
 
 static BOOL ddraw_is_nvidia(IDirectDraw2 *ddraw)
 {
-    IDirectDraw4 *ddraw4;
     DDDEVICEIDENTIFIER identifier;
-    HRESULT hr;
 
-    if (!strcmp(winetest_platform, "wine"))
-        return FALSE;
-
-    hr = IDirectDraw2_QueryInterface(ddraw, &IID_IDirectDraw4, (void **)&ddraw4);
-    ok(SUCCEEDED(hr), "Failed to get IDirectDraw4 interface, hr %#x.\n", hr);
-    hr = IDirectDraw4_GetDeviceIdentifier(ddraw4, &identifier, 0);
-    ok(SUCCEEDED(hr), "Failed to get device identifier, hr %#x.\n", hr);
-    IDirectDraw4_Release(ddraw4);
-
-    return identifier.dwVendorId == 0x10de;
+    return strcmp(winetest_platform, "wine")
+            && ddraw_get_identifier(ddraw, &identifier)
+            && identifier.dwVendorId == 0x10de;
 }
 
 static BOOL ddraw_is_intel(IDirectDraw2 *ddraw)
 {
-    IDirectDraw4 *ddraw4;
     DDDEVICEIDENTIFIER identifier;
-    HRESULT hr;
 
-    if (!strcmp(winetest_platform, "wine"))
-        return FALSE;
+    return strcmp(winetest_platform, "wine")
+            && ddraw_get_identifier(ddraw, &identifier)
+            && identifier.dwVendorId == 0x8086;
+}
 
-    hr = IDirectDraw2_QueryInterface(ddraw, &IID_IDirectDraw4, (void **)&ddraw4);
-    ok(SUCCEEDED(hr), "Failed to get IDirectDraw4 interface, hr %#x.\n", hr);
-    hr = IDirectDraw4_GetDeviceIdentifier(ddraw4, &identifier, 0);
-    ok(SUCCEEDED(hr), "Failed to get device identifier, hr %#x.\n", hr);
-    IDirectDraw4_Release(ddraw4);
+static BOOL ddraw_is_vmware(IDirectDraw2 *ddraw)
+{
+    DDDEVICEIDENTIFIER identifier;
 
-    return identifier.dwVendorId == 0x8086;
+    return strcmp(winetest_platform, "wine")
+            && ddraw_get_identifier(ddraw, &identifier)
+            && identifier.dwVendorId == 0x15ad;
 }
 
 static IDirectDrawSurface *create_overlay(IDirectDraw2 *ddraw,
@@ -9813,7 +9809,8 @@ static void test_offscreen_overlay(void)
     ok(SUCCEEDED(hr), "Failed to create surface, hr %#x.\n",hr);
 
     hr = IDirectDrawSurface_UpdateOverlay(overlay, NULL, offscreen, NULL, DDOVER_SHOW, NULL);
-    ok(SUCCEEDED(hr) || broken(hr == DDERR_OUTOFCAPS && dwm_enabled()),
+    ok(SUCCEEDED(hr) || broken(hr == DDERR_OUTOFCAPS && dwm_enabled())
+            || broken(hr == E_NOTIMPL && ddraw_is_vmware(ddraw)),
             "Failed to update overlay, hr %#x.\n", hr);
 
     /* Try to overlay the primary with a non-overlay surface. */
@@ -12160,14 +12157,24 @@ done:
 
 START_TEST(ddraw2)
 {
-    IDirectDraw2 *ddraw;
+    DDDEVICEIDENTIFIER identifier;
     DEVMODEW current_mode;
+    IDirectDraw2 *ddraw;
     HMODULE dwmapi;
 
     if (!(ddraw = create_ddraw()))
     {
         skip("Failed to create a ddraw object, skipping tests.\n");
         return;
+    }
+
+    if (ddraw_get_identifier(ddraw, &identifier))
+    {
+        trace("Driver string: \"%s\"\n", identifier.szDriver);
+        trace("Description string: \"%s\"\n", identifier.szDescription);
+        trace("Driver version %d.%d.%d.%d\n",
+                HIWORD(U(identifier.liDriverVersion).HighPart), LOWORD(U(identifier.liDriverVersion).HighPart),
+                HIWORD(U(identifier.liDriverVersion).LowPart), LOWORD(U(identifier.liDriverVersion).LowPart));
     }
     IDirectDraw2_Release(ddraw);
 
