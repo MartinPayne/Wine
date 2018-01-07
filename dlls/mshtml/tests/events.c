@@ -384,7 +384,7 @@ static void _test_event_args(unsigned line, const IID *dispiid, DISPID id, WORD 
     if(pdp->cArgs > 1)
         ok_(__FILE__,line) (V_VT(pdp->rgvarg+1) == VT_DISPATCH, "V_VT(rgvarg) = %d\n", V_VT(pdp->rgvarg+1));
     ok_(__FILE__,line) (pvarRes != NULL, "pvarRes == NULL\n");
-    ok_(__FILE__,line) (pei != NULL, "pei == NULL");
+    ok_(__FILE__,line) (pei != NULL, "pei == NULL\n");
     ok_(__FILE__,line) (!pspCaller, "pspCaller != NULL\n");
 
     if(dispiid)
@@ -2578,7 +2578,7 @@ static IHTMLWindow2 *get_iframe_window(IHTMLIFrameElement *iframe)
     ok(hres == S_OK, "get_contentWindow failed: %08x\n", hres);
     ok(window != NULL, "window == NULL\n");
 
-    if(base) IHTMLFrameBase2_Release(base);
+    IHTMLFrameBase2_Release(base);
     return window;
 }
 

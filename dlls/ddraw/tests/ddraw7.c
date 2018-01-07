@@ -1970,6 +1970,7 @@ static void test_surface_qi(void)
         {&IID_IDirectDrawPalette,       NULL,                           E_NOINTERFACE},
         {&IID_IDirectDrawClipper,       NULL,                           E_NOINTERFACE},
         {&IID_IUnknown,                 &IID_IDirectDrawSurface,        S_OK         },
+        {NULL,                          NULL,                           E_INVALIDARG },
     };
 
     IDirectDrawSurface7 *surface;
@@ -11718,7 +11719,7 @@ static void test_getdc(void)
         dc = (void *)0x1234;
         hr = IDirectDrawSurface7_GetDC(surface, &dc);
         if (test_data[i].getdc_supported)
-            ok(SUCCEEDED(hr) || (test_data[i].alt_result && hr == test_data[i].alt_result),
+            ok(SUCCEEDED(hr) || broken(hr == test_data[i].alt_result),
                     "Got unexpected hr %#x for format %s.\n", hr, test_data[i].name);
         else
             ok(FAILED(hr), "Got unexpected hr %#x for format %s.\n", hr, test_data[i].name);
@@ -13387,6 +13388,344 @@ static void test_clip_planes_limits(void)
     DestroyWindow(window);
 }
 
+static void test_map_synchronisation(void)
+{
+    LARGE_INTEGER frequency, diff, ts[3];
+    IDirect3DVertexBuffer7 *buffer;
+    unsigned int i, j, tri_count;
+    D3DVERTEXBUFFERDESC vb_desc;
+    IDirect3DDevice7 *device;
+    BOOL unsynchronised, ret;
+    IDirectDrawSurface7 *rt;
+    IDirectDraw7 *ddraw;
+    IDirect3D7 *d3d;
+    D3DCOLOR colour;
+    ULONG refcount;
+    HWND window;
+    HRESULT hr;
+
+    static const struct
+    {
+        unsigned int flags;
+        BOOL unsynchronised;
+    }
+    tests[] =
+    {
+        {0,                                           FALSE},
+        {DDLOCK_NOOVERWRITE,                          TRUE},
+        {DDLOCK_DISCARDCONTENTS,                      FALSE},
+        {DDLOCK_NOOVERWRITE | DDLOCK_DISCARDCONTENTS, TRUE},
+    };
+
+    static const struct quad
+    {
+        struct
+        {
+            struct vec3 position;
+            DWORD diffuse;
+        } strip[4];
+    }
+    quad1 =
+    {
+        {
+            {{-1.0f, -1.0f, 0.0f}, 0xffff0000},
+            {{-1.0f,  1.0f, 0.0f}, 0xff00ff00},
+            {{ 1.0f, -1.0f, 0.0f}, 0xff0000ff},
+            {{ 1.0f,  1.0f, 0.0f}, 0xffffffff},
+        }
+    },
+    quad2 =
+    {
+        {
+            {{-1.0f, -1.0f, 0.0f}, 0xffffff00},
+            {{-1.0f,  1.0f, 0.0f}, 0xffffff00},
+            {{ 1.0f, -1.0f, 0.0f}, 0xffffff00},
+            {{ 1.0f,  1.0f, 0.0f}, 0xffffff00},
+        }
+    };
+    struct quad *quads;
+
+    window = create_window();
+    ok(!!window, "Failed to create a window.\n");
+
+    if (!(device = create_device(window, DDSCL_NORMAL)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IDirect3DDevice7_GetDirect3D(device, &d3d);
+    ok(SUCCEEDED(hr), "Failed to get Direct3D7 interface, hr %#x.\n", hr);
+    hr = IDirect3D7_QueryInterface(d3d, &IID_IDirectDraw7, (void **)&ddraw);
+    ok(SUCCEEDED(hr), "Failed to get ddraw interface, hr %#x.\n", hr);
+    /* Maps are always synchronised on WARP. */
+    if (ddraw_is_warp(ddraw))
+    {
+        skip("Running on WARP, skipping test.\n");
+        goto done;
+    }
+
+    hr = IDirect3DDevice7_GetRenderTarget(device, &rt);
+    ok(SUCCEEDED(hr), "Failed to get render target, hr %#x.\n", hr);
+
+    tri_count = 0x1000;
+
+    ret = QueryPerformanceFrequency(&frequency);
+    ok(ret, "Failed to get performance counter frequency.\n");
+
+    vb_desc.dwSize = sizeof(vb_desc);
+    vb_desc.dwCaps = D3DVBCAPS_WRITEONLY;
+    vb_desc.dwFVF = D3DFVF_XYZ | D3DFVF_DIFFUSE;
+    vb_desc.dwNumVertices = tri_count + 2;
+    hr = IDirect3D7_CreateVertexBuffer(d3d, &vb_desc, &buffer, 0);
+    ok(SUCCEEDED(hr), "Failed to create vertex buffer, hr %#x.\n", hr);
+    hr = IDirect3DVertexBuffer7_Lock(buffer, DDLOCK_DISCARDCONTENTS, (void **)&quads, NULL);
+    ok(SUCCEEDED(hr), "Failed to lock vertex buffer, hr %#x.\n", hr);
+    for (j = 0; j < vb_desc.dwNumVertices / 4; ++j)
+    {
+        quads[j] = quad1;
+    }
+    hr = IDirect3DVertexBuffer7_Unlock(buffer);
+    ok(SUCCEEDED(hr), "Failed to unlock vertex buffer, hr %#x.\n", hr);
+
+    hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
+    ok(SUCCEEDED(hr), "Failed to set render state, hr %#x.\n", hr);
+
+    /* Initial draw to initialise states, compile shaders, etc. */
+    hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff0000ff, 0.0f, 0);
+    ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_BeginScene(device);
+    ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_DrawPrimitiveVB(device, D3DPT_TRIANGLESTRIP, buffer, 0, vb_desc.dwNumVertices, 0);
+    ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_EndScene(device);
+    ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+    /* Read the result to ensure the GPU has finished drawing. */
+    colour = get_surface_color(rt, 320, 240);
+
+    /* Time drawing tri_count triangles. */
+    ret = QueryPerformanceCounter(&ts[0]);
+    ok(ret, "Failed to read performance counter.\n");
+    hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff0000ff, 0.0f, 0);
+    ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_BeginScene(device);
+    ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_DrawPrimitiveVB(device, D3DPT_TRIANGLESTRIP, buffer, 0, vb_desc.dwNumVertices, 0);
+    ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_EndScene(device);
+    ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+    colour = get_surface_color(rt, 320, 240);
+    /* Time drawing a single triangle. */
+    ret = QueryPerformanceCounter(&ts[1]);
+    ok(ret, "Failed to read performance counter.\n");
+    hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff0000ff, 0.0f, 0);
+    ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_BeginScene(device);
+    ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_DrawPrimitiveVB(device, D3DPT_TRIANGLESTRIP, buffer, 0, 3, 0);
+    ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+    hr = IDirect3DDevice7_EndScene(device);
+    ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+    colour = get_surface_color(rt, 320, 240);
+    ret = QueryPerformanceCounter(&ts[2]);
+    ok(ret, "Failed to read performance counter.\n");
+
+    IDirect3DVertexBuffer7_Release(buffer);
+
+    /* Estimate the number of triangles we can draw in 100ms. */
+    diff.QuadPart = ts[1].QuadPart - ts[0].QuadPart + ts[1].QuadPart - ts[2].QuadPart;
+    tri_count = (tri_count * frequency.QuadPart) / (diff.QuadPart * 10);
+    tri_count = ((tri_count + 2 + 3) & ~3) - 2;
+    vb_desc.dwNumVertices = tri_count + 2;
+
+    for (i = 0; i < sizeof(tests) / sizeof(*tests); ++i)
+    {
+        hr = IDirect3D7_CreateVertexBuffer(d3d, &vb_desc, &buffer, 0);
+        ok(SUCCEEDED(hr), "Failed to create vertex buffer, hr %#x.\n", hr);
+        hr = IDirect3DVertexBuffer7_Lock(buffer, DDLOCK_DISCARDCONTENTS, (void **)&quads, NULL);
+        ok(SUCCEEDED(hr), "Failed to lock vertex buffer, hr %#x.\n", hr);
+        for (j = 0; j < vb_desc.dwNumVertices / 4; ++j)
+        {
+            quads[j] = quad1;
+        }
+        hr = IDirect3DVertexBuffer7_Unlock(buffer);
+        ok(SUCCEEDED(hr), "Failed to unlock vertex buffer, hr %#x.\n", hr);
+
+        /* Start a draw operation. */
+        hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff0000ff, 0.0f, 0);
+        ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_BeginScene(device);
+        ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_DrawPrimitiveVB(device, D3DPT_TRIANGLESTRIP, buffer, 0, vb_desc.dwNumVertices, 0);
+        ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_EndScene(device);
+        ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+
+        /* Map the last quad while the draw is in progress. */
+        hr = IDirect3DVertexBuffer7_Lock(buffer, DDLOCK_WAIT | tests[i].flags, (void **)&quads, NULL);
+        ok(SUCCEEDED(hr), "Failed to lock vertex buffer, hr %#x.\n", hr);
+        quads[(vb_desc.dwNumVertices / 4) - 1] = quad2;
+        hr = IDirect3DVertexBuffer7_Unlock(buffer);
+        ok(SUCCEEDED(hr), "Failed to unlock vertex buffer, hr %#x.\n", hr);
+
+        colour = get_surface_color(rt, 320, 240);
+        unsynchronised = compare_color(colour, 0x00ffff00, 1);
+        ok(tests[i].unsynchronised == unsynchronised, "Expected %s map for flags %#x.\n",
+                tests[i].unsynchronised ? "unsynchronised" : "synchronised", tests[i].flags);
+
+        IDirect3DVertexBuffer7_Release(buffer);
+    }
+
+    IDirectDrawSurface7_Release(rt);
+done:
+    IDirectDraw7_Release(ddraw);
+    IDirect3D7_Release(d3d);
+    refcount = IDirect3DDevice7_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+    DestroyWindow(window);
+}
+
+static void test_depth_readback(void)
+{
+    DWORD depth, expected_depth, max_diff;
+    IDirectDrawSurface7 *rt, *ds;
+    DDSURFACEDESC2 surface_desc;
+    IDirect3DDevice7 *device;
+    unsigned int i, x, y;
+    IDirectDraw7 *ddraw;
+    IDirect3D7 *d3d;
+    ULONG refcount;
+    HWND window;
+    HRESULT hr;
+    RECT r;
+
+    static struct
+    {
+        struct vec3 position;
+        DWORD diffuse;
+    }
+    quad[] =
+    {
+        {{-1.0f, -1.0f, 0.1f}, 0xff00ff00},
+        {{-1.0f,  1.0f, 0.0f}, 0xff00ff00},
+        {{ 1.0f, -1.0f, 1.0f}, 0xff00ff00},
+        {{ 1.0f,  1.0f, 0.9f}, 0xff00ff00},
+    };
+
+    static const struct
+    {
+        unsigned int z_depth, s_depth, z_mask, s_mask;
+        BOOL todo;
+    }
+    tests[] =
+    {
+        {16, 0, 0x0000ffff, 0x00000000},
+        {24, 0, 0x00ffffff, 0x00000000},
+        {32, 0, 0x00ffffff, 0x00000000},
+        {32, 8, 0x00ffffff, 0xff000000, TRUE},
+        {32, 0, 0xffffffff, 0x00000000},
+    };
+
+    window = create_window();
+    ok(!!window, "Failed to create a window.\n");
+
+    if (!(device = create_device(window, DDSCL_NORMAL)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IDirect3DDevice7_GetDirect3D(device, &d3d);
+    ok(SUCCEEDED(hr), "Failed to get Direct3D7 interface, hr %#x.\n", hr);
+    hr = IDirect3D7_QueryInterface(d3d, &IID_IDirectDraw7, (void **)&ddraw);
+    ok(SUCCEEDED(hr), "Failed to get ddraw interface, hr %#x.\n", hr);
+
+    hr = IDirect3DDevice7_GetRenderTarget(device, &rt);
+    ok(SUCCEEDED(hr), "Failed to get render target, hr %#x.\n", hr);
+
+    hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
+    ok(SUCCEEDED(hr), "Failed to set render state, hr %#x.\n", hr);
+
+    ds = get_depth_stencil(device);
+    hr = IDirectDrawSurface7_DeleteAttachedSurface(rt, 0, ds);
+    ok(SUCCEEDED(hr), "Failed to detach depth buffer, hr %#x.\n", hr);
+    IDirectDrawSurface7_Release(ds);
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        memset(&surface_desc, 0, sizeof(surface_desc));
+        surface_desc.dwSize = sizeof(surface_desc);
+        surface_desc.dwFlags = DDSD_CAPS | DDSD_PIXELFORMAT | DDSD_WIDTH | DDSD_HEIGHT;
+        surface_desc.ddsCaps.dwCaps = DDSCAPS_ZBUFFER | DDSCAPS_VIDEOMEMORY;
+        U4(surface_desc).ddpfPixelFormat.dwSize = sizeof(U4(surface_desc).ddpfPixelFormat);
+        U4(surface_desc).ddpfPixelFormat.dwFlags = DDPF_ZBUFFER;
+        if (tests[i].s_depth)
+            U4(surface_desc).ddpfPixelFormat.dwFlags |= DDPF_STENCILBUFFER;
+        U1(U4(surface_desc).ddpfPixelFormat).dwZBufferBitDepth = tests[i].z_depth;
+        U2(U4(surface_desc).ddpfPixelFormat).dwStencilBitDepth = tests[i].s_depth;
+        U3(U4(surface_desc).ddpfPixelFormat).dwZBitMask = tests[i].z_mask;
+        U4(U4(surface_desc).ddpfPixelFormat).dwStencilBitMask = tests[i].s_mask;
+        surface_desc.dwWidth = 640;
+        surface_desc.dwHeight = 480;
+        hr = IDirectDraw7_CreateSurface(ddraw, &surface_desc, &ds, NULL);
+        if (FAILED(hr))
+        {
+            skip("Format %u not supported, skipping test.\n", i);
+            continue;
+        }
+
+        hr = IDirectDrawSurface_AddAttachedSurface(rt, ds);
+        ok(SUCCEEDED(hr), "Failed to attach depth buffer, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_SetRenderTarget(device, rt, 0);
+        ok(SUCCEEDED(hr), "Failed to set render target, hr %#x.\n", hr);
+
+        hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff0000ff, 1.0f, 0);
+        ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_BeginScene(device);
+        ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad, 4, 0);
+        ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+        hr = IDirect3DDevice7_EndScene(device);
+        ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+
+        for (y = 60; y < 480; y += 120)
+        {
+            for (x = 80; x < 640; x += 160)
+            {
+                SetRect(&r, x, y, x + 1, y + 1);
+                memset(&surface_desc, 0, sizeof(surface_desc));
+                surface_desc.dwSize = sizeof(surface_desc);
+                hr = IDirectDrawSurface7_Lock(ds, &r, &surface_desc, DDLOCK_READONLY, NULL);
+                ok(SUCCEEDED(hr), "Failed to lock surface, hr %#x.\n", hr);
+
+                depth = *((DWORD *)surface_desc.lpSurface) & tests[i].z_mask;
+                expected_depth = (x * (0.9 / 640.0) + y * (0.1 / 480.0)) * tests[i].z_mask;
+                max_diff = ((0.5f * 0.9f) / 640.0f) * tests[i].z_mask;
+                todo_wine_if(tests[i].todo)
+                    ok(abs(expected_depth - depth) <= max_diff,
+                            "Test %u: Got depth 0x%08x (diff %d), expected 0x%08x+/-%u, at %u, %u.\n",
+                            i, depth, expected_depth - depth, expected_depth, max_diff, x, y);
+
+                hr = IDirectDrawSurface7_Unlock(ds, &r);
+                ok(SUCCEEDED(hr), "Failed to unlock surface, hr %#x.\n", hr);
+            }
+        }
+
+        hr = IDirectDrawSurface7_DeleteAttachedSurface(rt, 0, ds);
+        ok(SUCCEEDED(hr), "Failed to detach depth buffer, hr %#x.\n", hr);
+        IDirectDrawSurface7_Release(ds);
+    }
+
+    IDirectDrawSurface7_Release(rt);
+    IDirectDraw7_Release(ddraw);
+    IDirect3D7_Release(d3d);
+    refcount = IDirect3DDevice7_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+    DestroyWindow(window);
+}
+
 START_TEST(ddraw7)
 {
     DDDEVICEIDENTIFIER2 identifier;
@@ -13515,4 +13854,6 @@ START_TEST(ddraw7)
     test_vb_refcount();
     test_compute_sphere_visibility();
     test_clip_planes_limits();
+    test_map_synchronisation();
+    test_depth_readback();
 }

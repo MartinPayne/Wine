@@ -996,7 +996,7 @@ static void test_secure_connection(void)
     protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
     ret = WinHttpSetOption(ses, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
     err = GetLastError();
-    ok(ret || (!ret && err == ERROR_INVALID_PARAMETER) /* < win7 */, "failed to set protocols %u\n", err);
+    ok(ret || err == ERROR_INVALID_PARAMETER /* < win7 */, "failed to set protocols %u\n", err);
 
     con = WinHttpConnect(ses, test_winehq, 443, 0);
     ok(con != NULL, "failed to open a connection %u\n", GetLastError());
@@ -4475,7 +4475,10 @@ START_TEST (winhttp)
     ret = WaitForSingleObject(si.event, 10000);
     ok(ret == WAIT_OBJECT_0, "failed to start winhttp test server %u\n", GetLastError());
     if (ret != WAIT_OBJECT_0)
+    {
+        CloseHandle(thread);
         return;
+    }
 
     test_IWinHttpRequest(si.port);
     test_connection_info(si.port);
@@ -4495,4 +4498,5 @@ START_TEST (winhttp)
     test_basic_request(si.port, NULL, quitW);
 
     WaitForSingleObject(thread, 3000);
+    CloseHandle(thread);
 }

@@ -3357,6 +3357,25 @@ static void test_converttodbdate(void)
     ok(dst_len == sizeof(DBDATE), "got %ld\n", dst_len);
     ok(!memcmp(&ts, &dst, sizeof(DBDATE) ), "bytes differ\n");
 
+    V_VT(&var) = VT_R8;
+    V_R8(&var) = 41408.086250;
+    dst_len = 0;
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_DBDATE, sizeof(var), &dst_len, &var, &dst, 2, 0, &dst_status, 0, 0, 0);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(dst_status == DBSTATUS_S_OK, "got %08x\n", dst_status);
+    ok(dst_len == sizeof(DBDATE), "got %ld\n", dst_len);
+    ok(!memcmp(&ts, &dst, sizeof(DBDATE) ), "bytes differ\n");
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(strW);
+    dst_len = 0;
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_DBDATE, sizeof(var), &dst_len, &var, &dst, 2, 0, &dst_status, 0, 0, 0);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(dst_status == DBSTATUS_S_OK, "got %08x\n", dst_status);
+    ok(dst_len == sizeof(DBDATE), "got %ld\n", dst_len);
+    ok(!memcmp(&ts, &dst, sizeof(DBDATE) ), "bytes differ\n");
+    VariantClear(&var);
+
     dst_len = 0;
     bstr = SysAllocString(strW);
     hr = IDataConvert_DataConvert(convert, DBTYPE_BSTR, DBTYPE_DBDATE, 0, &dst_len, &bstr, &dst, 2, 0, &dst_status, 0, 0, 0);
@@ -3589,7 +3608,10 @@ static void test_converttovar(void)
 static void test_converttotimestamp(void)
 {
     static const WCHAR strW[] = {'2','0','1','3','-','0','5','-','1','4',' ','0','2',':','0','4',':','1','2',0};
+    static const WCHAR strFullW[] =  {'2','0','1','3','-','0','5','-','1','4',' ','0','2',':','0','4',':','1','2',
+                                       '.','0','1','7','0','0','0','0','0','0',0};
     DBTIMESTAMP ts = {2013, 5, 14, 2, 4, 12, 0};
+    DBTIMESTAMP ts1 = {2013, 5, 14, 2, 4, 12, 17000000};
     DBTIMESTAMP dst;
     DBSTATUS dst_status;
     DBLENGTH dst_len;
@@ -3614,6 +3636,15 @@ static void test_converttotimestamp(void)
     ok(dst_status == DBSTATUS_S_OK, "got %08x\n", dst_status);
     ok(dst_len == sizeof(dst), "got %ld\n", dst_len);
     ok(!memcmp(&ts, &dst, sizeof(ts)), "Wrong timestamp\n");
+    SysFreeString(bstr);
+
+    bstr = SysAllocString(strFullW);
+    dst_len = 0x1234;
+    hr = IDataConvert_DataConvert(convert, DBTYPE_BSTR, DBTYPE_DBTIMESTAMP, 0, &dst_len, &bstr, &dst, sizeof(dst), 0, &dst_status, 0, 0, 0);
+    todo_wine ok(hr == S_OK, "got %08x\n", hr);
+    todo_wine ok(dst_status == DBSTATUS_S_OK, "got %08x\n", dst_status);
+    todo_wine ok(dst_len == sizeof(dst), "got %ld\n", dst_len);
+    todo_wine ok(!memcmp(&ts1, &dst, sizeof(ts1)), "Wrong timestamp\n");
     SysFreeString(bstr);
 
     V_VT(&var) = VT_NULL;
