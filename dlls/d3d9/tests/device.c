@@ -7065,12 +7065,12 @@ static void test_mipmap_gen(void)
     IDirect3DTexture9 *texture;
     IDirect3DSurface9 *surface;
     IDirect3DDevice9 *device;
+    unsigned int i, count;
     D3DSURFACE_DESC desc;
     D3DLOCKED_RECT lr;
     IDirect3D9 *d3d;
     BOOL renderable;
     ULONG refcount;
-    unsigned int i;
     DWORD levels;
     HWND window;
     HRESULT hr;
@@ -7124,10 +7124,9 @@ static void test_mipmap_gen(void)
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
 
     filter_type = IDirect3DTexture9_GetAutoGenFilterType(texture);
-    ok(filter_type == D3DTEXF_LINEAR /* || broken(filter_type == D3DTEXF_POINT)*/,
-            "Got unexpected filter_type %#x.\n", filter_type);
+    ok(filter_type == D3DTEXF_LINEAR, "Got unexpected filter_type %#x.\n", filter_type);
     hr = IDirect3DTexture9_SetAutoGenFilterType(texture, D3DTEXF_NONE);
-    todo_wine ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x.\n", hr);
     hr = IDirect3DTexture9_SetAutoGenFilterType(texture, D3DTEXF_ANISOTROPIC);
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     filter_type = IDirect3DTexture9_GetAutoGenFilterType(texture);
@@ -7171,7 +7170,73 @@ static void test_mipmap_gen(void)
     ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
     levels = IDirect3DTexture9_GetLevelCount(texture);
     ok(levels == 1, "Got unexpected levels %u.\n", levels);
+    hr = IDirect3DTexture9_GetLevelDesc(texture, 0, &desc);
+    ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+    ok(desc.Usage == D3DUSAGE_AUTOGENMIPMAP, "Got unexpected usage %#x.\n", desc.Usage);
     IDirect3DTexture9_Release(texture);
+
+    hr = IDirect3DDevice9_CreateTexture(device, 64, 64, 0, D3DUSAGE_AUTOGENMIPMAP,
+            D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &texture, 0);
+    ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#x.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(formats); ++i)
+    {
+        hr = IDirect3D9_CheckDeviceFormat(d3d, 0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8,
+                D3DUSAGE_AUTOGENMIPMAP, D3DRTYPE_TEXTURE, formats[i]);
+        if (SUCCEEDED(hr))
+        {
+            /* i.e. there is no difference between the D3D_OK and the
+             * D3DOK_NOAUTOGEN cases. */
+            hr = IDirect3DDevice9_CreateTexture(device, 64, 64, 0, D3DUSAGE_AUTOGENMIPMAP,
+                    formats[i], D3DPOOL_DEFAULT, &texture, 0);
+            ok(hr == D3D_OK, "Unexpected hr %#x.\n", hr);
+            count = IDirect3DTexture9_GetLevelCount(texture);
+            ok(count == 1, "Unexpected level count %u.\n", count);
+            hr = IDirect3DTexture9_GetLevelDesc(texture, 0, &desc);
+            ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+            ok(desc.Usage == D3DUSAGE_AUTOGENMIPMAP, "Got unexpected usage %#x.\n", desc.Usage);
+            filter_type = IDirect3DTexture9_GetAutoGenFilterType(texture);
+            ok(filter_type == D3DTEXF_LINEAR, "Got unexpected filter_type %#x.\n", filter_type);
+            hr = IDirect3DTexture9_SetAutoGenFilterType(texture, D3DTEXF_ANISOTROPIC);
+            ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+            filter_type = IDirect3DTexture9_GetAutoGenFilterType(texture);
+            ok(filter_type == D3DTEXF_ANISOTROPIC, "Got unexpected filter_type %#x.\n", filter_type);
+            IDirect3DTexture9_Release(texture);
+        }
+    }
+
+    hr = IDirect3D9_CheckDeviceFormat(d3d, 0, D3DDEVTYPE_HAL,
+            D3DFMT_X8R8G8B8, D3DUSAGE_QUERY_WRAPANDMIP, D3DRTYPE_TEXTURE, D3DFMT_D16);
+    if (hr == D3D_OK)
+    {
+        hr = IDirect3DDevice9_CreateTexture(device, 64, 64, 0, 0,
+                D3DFMT_D16, D3DPOOL_DEFAULT, &texture, 0);
+        ok(hr == D3D_OK, "Unexpected hr %#x.\n", hr);
+        count = IDirect3DTexture9_GetLevelCount(texture);
+        ok(count == 7, "Unexpected level count %u.\n", count);
+        IDirect3DTexture9_Release(texture);
+
+        hr = IDirect3D9_CheckDeviceFormat(d3d, 0, D3DDEVTYPE_HAL,
+                D3DFMT_X8R8G8B8, D3DUSAGE_AUTOGENMIPMAP, D3DRTYPE_TEXTURE, D3DFMT_D16);
+        ok(hr == D3DOK_NOAUTOGEN, "Unexpected hr %#x.\n", hr);
+        hr = IDirect3DDevice9_CreateTexture(device, 64, 64, 0, D3DUSAGE_AUTOGENMIPMAP,
+                D3DFMT_D16, D3DPOOL_DEFAULT, &texture, 0);
+        ok(hr == D3D_OK, "Unexpected hr %#x.\n", hr);
+        count = IDirect3DTexture9_GetLevelCount(texture);
+        ok(count == 1, "Unexpected level count %u.\n", count);
+        hr = IDirect3DTexture9_GetLevelDesc(texture, 0, &desc);
+        ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+        ok(desc.Usage == D3DUSAGE_AUTOGENMIPMAP, "Got unexpected usage %#x.\n", desc.Usage);
+        IDirect3DTexture9_Release(texture);
+    }
+    else
+    {
+        skip("Mipmapping not supported for D3DFMT_D16, skipping test.\n");
+    }
+
+    hr = IDirect3DDevice9_CreateVolumeTexture(device, 64, 64, 64, 0, D3DUSAGE_AUTOGENMIPMAP,
+            D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, (IDirect3DVolumeTexture9 **)&texture, 0);
+    ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#x.\n", hr);
 
     refcount = IDirect3DDevice9_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
@@ -12122,6 +12187,65 @@ static void test_clip_planes_limits(void)
     DestroyWindow(window);
 }
 
+static void test_swapchain_multisample_reset(void)
+{
+    IDirect3DSwapChain9 *swapchain;
+    D3DPRESENT_PARAMETERS d3dpp;
+    IDirect3DDevice9 *device;
+    DWORD quality_levels;
+    IDirect3D9 *d3d;
+    ULONG refcount;
+    HWND window;
+    HRESULT hr;
+
+    window = CreateWindowA("d3d9_test_wc", "d3d9_test", WS_OVERLAPPEDWINDOW,
+            0, 0, 640, 480, NULL, NULL, NULL, NULL);
+    ok(!!window, "Failed to create a window.\n");
+    d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    ok(!!d3d, "Failed to create a D3D object.\n");
+
+    if (IDirect3D9_CheckDeviceMultiSampleType(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
+            D3DFMT_A8R8G8B8, TRUE, D3DMULTISAMPLE_2_SAMPLES, &quality_levels) == D3DERR_NOTAVAILABLE)
+    {
+        skip("Multisampling not supported for D3DFMT_A8R8G8B8.\n");
+        IDirect3D9_Release(d3d);
+        DestroyWindow(window);
+        return;
+    }
+
+    if (!(device = create_device(d3d, window, NULL)))
+    {
+        skip("Failed to create a 3D device.\n");
+        IDirect3D9_Release(d3d);
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xffffffff, 1.0f, 0);
+    ok(hr == D3D_OK, "Failed to clear, hr %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetSwapChain(device, 0, &swapchain);
+    ok(hr == D3D_OK, "Failed to get the implicit swapchain, hr %#x.\n", hr);
+    hr = IDirect3DSwapChain9_GetPresentParameters(swapchain, &d3dpp);
+    ok(hr == D3D_OK, "Failed to get present parameters, hr %#x.\n", hr);
+    ok(d3dpp.MultiSampleType == D3DMULTISAMPLE_NONE,
+            "Got unexpected multisample type %#x.\n", d3dpp.MultiSampleType);
+    IDirect3DSwapChain9_Release(swapchain);
+
+    d3dpp.MultiSampleType = D3DMULTISAMPLE_2_SAMPLES;
+    d3dpp.MultiSampleQuality = quality_levels - 1;
+    hr = IDirect3DDevice9_Reset(device, &d3dpp);
+    ok(hr == D3D_OK, "Failed to reset device, hr %#x.\n", hr);
+
+    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xffffffff, 1.0f, 0);
+    ok(hr == D3D_OK, "Failed to clear, hr %#x.\n", hr);
+
+    refcount = IDirect3DDevice9_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+    IDirect3D9_Release(d3d);
+    DestroyWindow(window);
+}
+
 START_TEST(device)
 {
     WNDCLASSA wc = {0};
@@ -12243,6 +12367,7 @@ START_TEST(device)
     test_destroyed_window();
     test_lockable_backbuffer();
     test_clip_planes_limits();
+    test_swapchain_multisample_reset();
 
     UnregisterClassA("d3d9_test_wc", GetModuleHandleA(NULL));
 }

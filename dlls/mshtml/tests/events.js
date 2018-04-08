@@ -251,9 +251,19 @@ function test_stop_propagation() {
         ok(e.defaultPrevented === false, "defaultPrevented = " + e.defaultPrevented);
     }
 
+    function stop_immediate_propagation(e) {
+        calls += "immediateStop,";
+        e.stopImmediatePropagation();
+        ok(e.bubbles === true, "bubbles = " + e.bubbles);
+        ok(e.cancelable === true, "cancelable = " + e.cancelable);
+        ok(e.defaultPrevented === false, "defaultPrevented = " + e.defaultPrevented);
+    }
+
+    div1.addEventListener("click", stop_immediate_propagation, true);
     div1.addEventListener("click", stop_propagation, true);
     div1.addEventListener("click", record_call("div1.click(capture)"), true);
 
+    div2.addEventListener("click", stop_immediate_propagation, true);
     div2.addEventListener("click", stop_propagation, true);
     div2.addEventListener("click", record_call("div2.click(capture)"), true);
 
@@ -265,9 +275,19 @@ function test_stop_propagation() {
 
     calls = "";
     div2.click();
+    ok(calls === "immediateStop,", "calls = " + calls);
+
+    div1.removeEventListener("click", stop_immediate_propagation, true);
+    calls = "";
+    div2.click();
     ok(calls === "stop,div1.click(capture),", "calls = " + calls);
 
     div1.removeEventListener("click", stop_propagation, true);
+    calls = "";
+    div2.click();
+    ok(calls === "div1.click(capture),immediateStop,", "calls = " + calls);
+
+    div2.removeEventListener("click", stop_immediate_propagation, true);
     calls = "";
     div2.click();
     ok(calls === "div1.click(capture),stop,div2.click(capture),stop,div2.click(bubble),",
@@ -592,6 +612,130 @@ function test_time_stamp() {
     next_test();
 }
 
+function test_mouse_event() {
+    var e;
+
+    e = document.createEvent("MouseEvent");
+    ok(e.screenX === 0, "screenX = " + e.screenX);
+    ok(e.screenY === 0, "screenY = " + e.screenY);
+    ok(e.clientX === 0, "clientX = " + e.clientX);
+    ok(e.clientY === 0, "clientY = " + e.clientY);
+    ok(e.ctrlKey === false, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === false, "altKey = " + e.altKey);
+    ok(e.shiftKey === false, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === false, "metaKey = " + e.metaKey);
+    ok(e.button === 0, "button = " + e.button);
+    ok(e.buttons === 0, "buttons = " + e.buttons);
+    ok(e.pageX === 0, "pageX = " + e.pageX);
+    ok(e.pageY === 0, "pageY = " + e.pageY);
+    ok(e.which === 1, "which = " + e.which);
+
+    e.initMouseEvent("test", true, true, window, 1, 2, 3, 4, 5, false, false, false, false, 1, document);
+    ok(e.type === "test", "type = " + e.type);
+    ok(e.cancelable === true, "cancelable = " + e.cancelable);
+    ok(e.bubbles === true, "bubbles = " + e.bubbles);
+    ok(e.detail === 1, "detail = " + e.detail);
+    todo_wine.
+    ok(e.view === window, "view != window");
+    ok(e.screenX === 2, "screenX = " + e.screenX);
+    ok(e.screenY === 3, "screenY = " + e.screenY);
+    ok(e.clientX === 4, "clientX = " + e.clientX);
+    ok(e.clientY === 5, "clientY = " + e.clientY);
+    ok(e.ctrlKey === false, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === false, "altKey = " + e.altKey);
+    ok(e.shiftKey === false, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === false, "metaKey = " + e.metaKey);
+    ok(e.button === 1, "button = " + e.button);
+    ok(e.buttons === 0, "buttons = " + e.buttons);
+    ok(e.which === 2, "which = " + e.which);
+
+    e.initMouseEvent("test", false, false, window, 9, 8, 7, 6, 5, true, true, true, true, 127, document);
+    ok(e.type === "test", "type = " + e.type);
+    ok(e.cancelable === false, "cancelable = " + e.cancelable);
+    ok(e.bubbles === false, "bubbles = " + e.bubbles);
+    ok(e.detail === 9, "detail = " + e.detail);
+    ok(e.screenX === 8, "screenX = " + e.screenX);
+    ok(e.screenY === 7, "screenY = " + e.screenY);
+    ok(e.clientX === 6, "clientX = " + e.clientX);
+    ok(e.clientY === 5, "clientY = " + e.clientY);
+    ok(e.ctrlKey === true, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === true, "altKey = " + e.altKey);
+    ok(e.shiftKey === true, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === true, "metaKey = " + e.metaKey);
+    ok(e.button === 127, "button = " + e.button);
+    ok(e.which === 128, "which = " + e.which);
+
+    e.initEvent("testevent", true, true);
+    ok(e.type === "testevent", "type = " + e.type);
+    ok(e.cancelable === true, "cancelable = " + e.cancelable);
+    ok(e.bubbles === true, "bubbles = " + e.bubbles);
+    ok(e.detail === 9, "detail = " + e.detail);
+    ok(e.screenX === 8, "screenX = " + e.screenX);
+    ok(e.screenY === 7, "screenY = " + e.screenY);
+    ok(e.clientX === 6, "clientX = " + e.clientX);
+    ok(e.clientY === 5, "clientY = " + e.clientY);
+    ok(e.ctrlKey === true, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === true, "altKey = " + e.altKey);
+    ok(e.shiftKey === true, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === true, "metaKey = " + e.metaKey);
+    ok(e.button === 127, "button = " + e.button);
+
+    e.initUIEvent("testevent", true, true, window, 6);
+    ok(e.type === "testevent", "type = " + e.type);
+    ok(e.cancelable === true, "cancelable = " + e.cancelable);
+    ok(e.bubbles === true, "bubbles = " + e.bubbles);
+    ok(e.detail === 6, "detail = " + e.detail);
+    ok(e.screenX === 8, "screenX = " + e.screenX);
+    ok(e.screenY === 7, "screenY = " + e.screenY);
+    ok(e.clientX === 6, "clientX = " + e.clientX);
+    ok(e.clientY === 5, "clientY = " + e.clientY);
+    ok(e.ctrlKey === true, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === true, "altKey = " + e.altKey);
+    ok(e.shiftKey === true, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === true, "metaKey = " + e.metaKey);
+    ok(e.button === 127, "button = " + e.button);
+
+    next_test();
+}
+
+function test_ui_event() {
+    var e;
+
+    e = document.createEvent("UIEvent");
+    ok(e.detail === 0, "detail = " + e.detail);
+
+    e.initUIEvent("test", true, true, window, 3);
+    ok(e.type === "test", "type = " + e.type);
+    ok(e.cancelable === true, "cancelable = " + e.cancelable);
+    ok(e.bubbles === true, "bubbles = " + e.bubbles);
+    ok(e.detail === 3, "detail = " + e.detail);
+    todo_wine.
+    ok(e.view === window, "view != window");
+
+    next_test();
+}
+
+function test_keyboard_event() {
+    var e;
+
+    e = document.createEvent("KeyboardEvent");
+
+    e.initEvent("test", true, true);
+    ok(e.key === "", "key = " + e.key);
+    ok(e.keyCode === 0, "keyCode = " + e.keyCode);
+    ok(e.charCode === 0, "charCode = " + e.charCode);
+    ok(e.repeat === false, "repeat = " + e.repeat);
+    ok(e.ctrlKey === false, "ctrlKey = " + e.ctrlKey);
+    ok(e.altKey === false, "altKey = " + e.altKey);
+    ok(e.shiftKey === false, "shiftKey = " + e.shiftKey);
+    ok(e.metaKey === false, "metaKey = " + e.metaKey);
+    ok(e.location === 0, "location = " + e.location);
+    ok(e.detail === 0, "detail = " + e.detail);
+    ok(e.which === 0, "which = " + e.which);
+
+    next_test();
+}
+
 var tests = [
     test_content_loaded,
     test_add_remove_listener,
@@ -604,6 +748,9 @@ var tests = [
     test_current_target,
     test_dispatch_event,
     test_recursive_dispatch,
+    test_ui_event,
+    test_mouse_event,
+    test_keyboard_event,
     test_time_stamp,
     test_listener_order
 ];

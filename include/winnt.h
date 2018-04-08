@@ -3621,10 +3621,11 @@ typedef enum ReplacesCorHdrNumericDefines
     COMIMAGE_FLAGS_STRONGNAMESIGNED = 0x00000008,
     COMIMAGE_FLAGS_NATIVE_ENTRYPOINT= 0x00000010,
     COMIMAGE_FLAGS_TRACKDEBUGDATA   = 0x00010000,
+    COMIMAGE_FLAGS_32BITPREFERRED   = 0x00020000,
 
     COR_VERSION_MAJOR_V2       = 2,
     COR_VERSION_MAJOR          = COR_VERSION_MAJOR_V2,
-    COR_VERSION_MINOR          = 0,
+    COR_VERSION_MINOR          = 5,
     COR_DELETED_NAME_LENGTH    = 8,
     COR_VTABLEGAP_NAME_LENGTH  = 8,
 
@@ -5746,15 +5747,50 @@ typedef struct _ASSEMBLY_FILE_DETAILED_INFORMATION {
 
 typedef const ASSEMBLY_FILE_DETAILED_INFORMATION *PCASSEMBLY_FILE_DETAILED_INFORMATION;
 
+typedef enum {
+    ACTCX_COMPATIBILITY_ELEMENT_TYPE_UNKNOWN = 0,
+    ACTCX_COMPATIBILITY_ELEMENT_TYPE_OS
+} ACTCTX_COMPATIBILITY_ELEMENT_TYPE;
+
+typedef struct _COMPATIBILITY_CONTEXT_ELEMENT {
+    GUID Id;
+    ACTCTX_COMPATIBILITY_ELEMENT_TYPE Type;
+} COMPATIBILITY_CONTEXT_ELEMENT, *PCOMPATIBILITY_CONTEXT_ELEMENT;
+
+#if !defined(__WINESRC__) && (defined(_MSC_EXTENSIONS) || ((defined(__GNUC__) && __GNUC__ >= 3)))
+typedef struct _ACTIVATION_CONTEXT_COMPATIBILITY_INFORMATION {
+    DWORD ElementCount;
+    COMPATIBILITY_CONTEXT_ELEMENT Elements[];
+} ACTIVATION_CONTEXT_COMPATIBILITY_INFORMATION, *PACTIVATION_CONTEXT_COMPATIBILITY_INFORMATION;
+#endif
+
+typedef enum {
+    ACTCTX_RUN_LEVEL_UNSPECIFIED = 0,
+    ACTCTX_RUN_LEVEL_AS_INVOKER,
+    ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE,
+    ACTCTX_RUN_LEVEL_REQUIRE_ADMIN,
+    ACTCTX_RUN_LEVEL_NUMBERS
+} ACTCTX_REQUESTED_RUN_LEVEL;
+
+typedef struct _ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION {
+    DWORD ulFlags;
+    ACTCTX_REQUESTED_RUN_LEVEL RunLevel;
+    DWORD UiAccess;
+} ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION, *PACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION;
+
+typedef const struct _ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION *PCACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION;
+
 typedef enum _ACTIVATION_CONTEXT_INFO_CLASS {
     ActivationContextBasicInformation                       = 1,
     ActivationContextDetailedInformation                    = 2,
     AssemblyDetailedInformationInActivationContext          = 3,
     FileInformationInAssemblyOfAssemblyInActivationContext  = 4,
+    RunlevelInformationInActivationContext                  = 5,
+    CompatibilityInformationInActivationContext             = 6,
+    ActivationContextManifestResourceName                   = 7,
     MaxActivationContextInfoClass,
-
-    AssemblyDetailedInformationInActivationContxt          = 3,
-    FileInformationInAssemblyOfAssemblyInActivationContxt  = 4
+    AssemblyDetailedInformationInActivationContxt           = AssemblyDetailedInformationInActivationContext,
+    FileInformationInAssemblyOfAssemblyInActivationContxt   = FileInformationInAssemblyOfAssemblyInActivationContext
 } ACTIVATION_CONTEXT_INFO_CLASS;
 
 #define ACTIVATION_CONTEXT_PATH_TYPE_NONE         1

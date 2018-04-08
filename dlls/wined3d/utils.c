@@ -1828,7 +1828,7 @@ static BOOL init_format_base_info(struct wined3d_gl_info *gl_info)
     unsigned int i, j;
 
     gl_info->format_count = WINED3D_FORMAT_COUNT;
-    if (!(gl_info->formats = wined3d_calloc(gl_info->format_count
+    if (!(gl_info->formats = heap_calloc(gl_info->format_count
             + ARRAY_SIZE(typeless_depth_stencil_formats), sizeof(*gl_info->formats))))
     {
         ERR("Failed to allocate memory.\n");
@@ -1922,7 +1922,7 @@ static BOOL init_format_base_info(struct wined3d_gl_info *gl_info)
     return TRUE;
 
 fail:
-    HeapFree(GetProcessHeap(), 0, gl_info->formats);
+    heap_free(gl_info->formats);
     return FALSE;
 }
 
@@ -2805,6 +2805,7 @@ static void query_internal_format(struct wined3d_adapter *adapter,
 {
     GLint count, multisample_types[MAX_MULTISAMPLE_TYPES];
     unsigned int i, max_log2;
+    GLenum target;
 
     if (gl_info->supported[ARB_INTERNALFORMAT_QUERY2])
     {
@@ -2877,17 +2878,17 @@ static void query_internal_format(struct wined3d_adapter *adapter,
     {
         if (gl_info->supported[ARB_INTERNALFORMAT_QUERY])
         {
+            target = gl_info->supported[ARB_TEXTURE_MULTISAMPLE] ? GL_TEXTURE_2D_MULTISAMPLE : GL_RENDERBUFFER;
             count = 0;
-            GL_EXTCALL(glGetInternalformativ(GL_RENDERBUFFER, format->glInternal,
+            GL_EXTCALL(glGetInternalformativ(target, format->glInternal,
                     GL_NUM_SAMPLE_COUNTS, 1, &count));
-            checkGLcall("glGetInternalformativ(GL_NUM_SAMPLE_COUNTS)");
             count = min(count, MAX_MULTISAMPLE_TYPES);
-            GL_EXTCALL(glGetInternalformativ(GL_RENDERBUFFER, format->glInternal,
+            GL_EXTCALL(glGetInternalformativ(target, format->glInternal,
                     GL_SAMPLES, count, multisample_types));
-            checkGLcall("glGetInternalformativ(GL_SAMPLES)");
+            checkGLcall("query sample counts");
             for (i = 0; i < count; ++i)
             {
-                if (multisample_types[i] > sizeof(format->multisample_types) * 8)
+                if (multisample_types[i] > sizeof(format->multisample_types) * CHAR_BIT)
                     continue;
                 format->multisample_types |= 1u << (multisample_types[i] - 1);
             }
@@ -2895,7 +2896,7 @@ static void query_internal_format(struct wined3d_adapter *adapter,
         else
         {
             max_log2 = wined3d_log2i(min(gl_info->limits.samples,
-                    sizeof(format->multisample_types) * 8));
+                    sizeof(format->multisample_types) * CHAR_BIT));
             for (i = 1; i <= max_log2; ++i)
                 format->multisample_types |= 1u << ((1u << i) - 1);
         }
@@ -3594,6 +3595,23 @@ static BOOL init_typeless_formats(struct wined3d_gl_info *gl_info)
     return TRUE;
 }
 
+static void init_format_gen_mipmap_info(struct wined3d_gl_info *gl_info)
+{
+    unsigned int i, j;
+
+    if (!gl_info->fbo_ops.glGenerateMipmap)
+        return;
+
+    for (i = 0; i < gl_info->format_count; ++i)
+    {
+        struct wined3d_format *format = &gl_info->formats[i];
+
+        for (j = 0; j < ARRAY_SIZE(format->flags); ++j)
+            if (!(~format->flags[j] & (WINED3DFMT_FLAG_RENDERTARGET | WINED3DFMT_FLAG_FILTERING)))
+                format->flags[j] |= WINED3DFMT_FLAG_GEN_MIPMAP;
+    }
+}
+
 BOOL wined3d_caps_gl_ctx_test_viewport_subpixel_bits(struct wined3d_caps_gl_ctx *ctx)
 {
     static const struct wined3d_color red = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -3782,12 +3800,13 @@ BOOL wined3d_adapter_init_format_info(struct wined3d_adapter *adapter, struct wi
     init_format_fbo_compat_info(ctx);
     init_format_filter_info(gl_info, adapter->driver_info.vendor);
     if (!init_typeless_formats(gl_info)) goto fail;
+    init_format_gen_mipmap_info(gl_info);
     init_format_depth_bias_scale(ctx, &adapter->d3d_info);
 
     return TRUE;
 
 fail:
-    HeapFree(GetProcessHeap(), 0, gl_info->formats);
+    heap_free(gl_info->formats);
     gl_info->formats = NULL;
     return FALSE;
 }
@@ -4160,7 +4179,6 @@ const char *debug_d3dusage(DWORD usage)
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_RTPATCHES);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_NPATCHES);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_DYNAMIC);
-    WINED3DUSAGE_TO_STR(WINED3DUSAGE_AUTOGENMIPMAP);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_RESTRICTED_CONTENT);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_RESTRICT_SHARED_RESOURCE_DRIVER);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_RESTRICT_SHARED_RESOURCE);
@@ -4184,6 +4202,7 @@ const char *debug_d3dusagequery(DWORD usagequery)
     buf[0] = '\0';
 #define WINED3DUSAGEQUERY_TO_STR(u) if (usagequery & u) { strcat(buf, " | "#u); usagequery &= ~u; }
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_FILTER);
+    WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_GENMIPMAP);
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_LEGACYBUMPMAP);
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING);
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_SRGBREAD);
@@ -4658,6 +4677,8 @@ const char *debug_d3dstate(DWORD state)
         return "STATE_COLOR_KEY";
     if (STATE_IS_STREAM_OUTPUT(state))
         return "STATE_STREAM_OUTPUT";
+    if (STATE_IS_BLEND(state))
+        return "STATE_BLEND";
 
     return wine_dbg_sprintf("UNKNOWN_STATE(%#x)", state);
 }
@@ -5990,16 +6011,6 @@ int wined3d_ffp_vertex_program_key_compare(const void *key, const struct wine_rb
     return memcmp(ka, kb, sizeof(*ka));
 }
 
-void wined3d_get_draw_rect(const struct wined3d_state *state, RECT *rect)
-{
-    const struct wined3d_viewport *vp = &state->viewport;
-
-    SetRect(rect, vp->x, vp->y, vp->x + vp->width, vp->y + vp->height);
-
-    if (state->render_states[WINED3D_RS_SCISSORTESTENABLE])
-        IntersectRect(rect, rect, &state->scissor_rect);
-}
-
 const char *wined3d_debug_location(DWORD location)
 {
     const char *prefix = "";
@@ -6148,7 +6159,7 @@ BOOL wined3d_array_reserve(void **elements, SIZE_T *capacity, SIZE_T count, SIZE
         new_capacity = count;
 
     if (!*elements)
-        new_elements = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, new_capacity * size);
+        new_elements = heap_alloc_zero(new_capacity * size);
     else
         new_elements = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, *elements, new_capacity * size);
     if (!new_elements)

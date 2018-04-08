@@ -72,8 +72,8 @@ static ULONG STDMETHODCALLTYPE dxgi_adapter_Release(IWineDXGIAdapter *iface)
     if (!refcount)
     {
         wined3d_private_store_cleanup(&adapter->private_store);
-        IDXGIFactory4_Release(&adapter->factory->IDXGIFactory4_iface);
-        HeapFree(GetProcessHeap(), 0, adapter);
+        IWineDXGIFactory_Release(&adapter->factory->IWineDXGIFactory_iface);
+        heap_free(adapter);
     }
 
     return refcount;
@@ -115,7 +115,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_adapter_GetParent(IWineDXGIAdapter *iface,
 
     TRACE("iface %p, iid %s, parent %p.\n", iface, debugstr_guid(iid), parent);
 
-    return IDXGIFactory4_QueryInterface(&adapter->factory->IDXGIFactory4_iface, iid, parent);
+    return IWineDXGIFactory_QueryInterface(&adapter->factory->IWineDXGIFactory_iface, iid, parent);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_adapter_EnumOutputs(IWineDXGIAdapter *iface,
@@ -184,7 +184,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_adapter_GetDesc1(IWineDXGIAdapter *iface, 
     desc->DedicatedVideoMemory = adapter_id.video_memory;
     desc->DedicatedSystemMemory = 0; /* FIXME */
     desc->SharedSystemMemory = 0; /* FIXME */
-    memcpy(&desc->AdapterLuid, &adapter_id.adapter_luid, sizeof(desc->AdapterLuid));
+    desc->AdapterLuid = adapter_id.adapter_luid;
     desc->Flags = 0;
 
     return hr;
@@ -351,12 +351,12 @@ static void dxgi_adapter_init(struct dxgi_adapter *adapter, struct dxgi_factory 
     wined3d_private_store_init(&adapter->private_store);
     adapter->ordinal = ordinal;
     adapter->factory = factory;
-    IDXGIFactory4_AddRef(&adapter->factory->IDXGIFactory4_iface);
+    IWineDXGIFactory_AddRef(&adapter->factory->IWineDXGIFactory_iface);
 }
 
 HRESULT dxgi_adapter_create(struct dxgi_factory *factory, UINT ordinal, struct dxgi_adapter **adapter)
 {
-    if (!(*adapter = HeapAlloc(GetProcessHeap(), 0, sizeof(**adapter))))
+    if (!(*adapter = heap_alloc(sizeof(**adapter))))
         return E_OUTOFMEMORY;
 
     dxgi_adapter_init(*adapter, factory, ordinal);

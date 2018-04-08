@@ -260,11 +260,11 @@ static HRESULT WINAPI HTMLOptionElement_put_text(IHTMLOptionElement *iface, BSTR
     while(1) {
         nsIDOMNode *child;
 
-        nsres = nsIDOMHTMLElement_GetFirstChild(This->element.nselem, &child);
+        nsres = nsIDOMElement_GetFirstChild(This->element.dom_element, &child);
         if(NS_FAILED(nsres) || !child)
             break;
 
-        nsres = nsIDOMHTMLElement_RemoveChild(This->element.nselem, child, &tmp);
+        nsres = nsIDOMElement_RemoveChild(This->element.dom_element, child, &tmp);
         nsIDOMNode_Release(child);
         if(NS_SUCCEEDED(nsres)) {
             nsIDOMNode_Release(tmp);
@@ -282,7 +282,7 @@ static HRESULT WINAPI HTMLOptionElement_put_text(IHTMLOptionElement *iface, BSTR
         return E_FAIL;
     }
 
-    nsres = nsIDOMHTMLElement_AppendChild(This->element.nselem, (nsIDOMNode*)text_node, &tmp);
+    nsres = nsIDOMElement_AppendChild(This->element.dom_element, (nsIDOMNode*)text_node, &tmp);
     if(NS_SUCCEEDED(nsres))
         nsIDOMNode_Release(tmp);
     else
@@ -448,7 +448,7 @@ static dispex_static_data_t HTMLOptionElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLOptionElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLOptionElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLOptionElement *ret;
     nsresult nsres;
@@ -462,7 +462,7 @@ HRESULT HTMLOptionElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLOptionElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLOptionElement, (void**)&ret->nsoption);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLOptionElement, (void**)&ret->nsoption);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;
@@ -559,7 +559,7 @@ static HRESULT WINAPI HTMLOptionElementFactory_create(IHTMLOptionElementFactory 
         IHTMLOptionElement **optelem)
 {
     HTMLOptionElementFactory *This = impl_from_IHTMLOptionElementFactory(iface);
-    nsIDOMHTMLElement *nselem;
+    nsIDOMElement *nselem;
     HTMLDOMNode *node;
     HRESULT hres;
 
@@ -580,7 +580,7 @@ static HRESULT WINAPI HTMLOptionElementFactory_create(IHTMLOptionElementFactory 
         return hres;
 
     hres = get_node(This->window->doc, (nsIDOMNode*)nselem, TRUE, &node);
-    nsIDOMHTMLElement_Release(nselem);
+    nsIDOMElement_Release(nselem);
     if(FAILED(hres))
         return hres;
 

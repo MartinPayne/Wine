@@ -132,7 +132,7 @@ static void load_prop_bag(PluginHost *host, IPersistPropertyBag *persist_prop_ba
     IPropertyBag *prop_bag;
     HRESULT hres;
 
-    hres = create_param_prop_bag(host->element->element.nselem, &prop_bag);
+    hres = create_param_prop_bag(host->element->element.dom_element, &prop_bag);
     if(FAILED(hres))
         return;
 
@@ -1660,7 +1660,7 @@ static BOOL parse_classid(const PRUnichar *classid, CLSID *clsid)
     return SUCCEEDED(hres);
 }
 
-static BOOL get_elem_clsid(nsIDOMHTMLElement *elem, CLSID *clsid)
+static BOOL get_elem_clsid(nsIDOMElement *elem, CLSID *clsid)
 {
     const PRUnichar *val;
     nsAString val_str;
@@ -1895,7 +1895,7 @@ static void install_codebase(const WCHAR *url)
         WARN("FAILED: %08x\n", hres);
 }
 
-static void check_codebase(HTMLInnerWindow *window, nsIDOMHTMLElement *nselem)
+static void check_codebase(HTMLInnerWindow *window, nsIDOMElement *nselem)
 {
     BOOL is_on_list = FALSE;
     install_entry_t *iter;
@@ -1958,7 +1958,7 @@ static void check_codebase(HTMLInnerWindow *window, nsIDOMHTMLElement *nselem)
     IUri_Release(uri);
 }
 
-static IUnknown *create_activex_object(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, CLSID *clsid)
+static IUnknown *create_activex_object(HTMLDocumentNode *doc, nsIDOMElement *nselem, CLSID *clsid)
 {
     IClassFactoryEx *cfex;
     IClassFactory *cf;
@@ -2069,7 +2069,7 @@ HRESULT create_plugin_host(HTMLDocumentNode *doc, HTMLPluginContainer *container
 
     assert(!container->plugin_host);
 
-    unk = create_activex_object(doc, container->element.nselem, &clsid);
+    unk = create_activex_object(doc, container->element.dom_element, &clsid);
     if(!unk)
         return E_FAIL;
 

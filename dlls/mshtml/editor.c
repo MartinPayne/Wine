@@ -262,7 +262,7 @@ static void remove_child_attr(nsIDOMElement *elem, LPCWSTR tag, nsAString *attr_
 static void get_font_size(HTMLDocument *This, WCHAR *ret)
 {
     nsISelection *nsselection = get_ns_selection(This);
-    nsIDOMHTMLElement *elem = NULL;
+    nsIDOMElement *elem = NULL;
     nsIDOMNode *node = NULL, *tmp_node;
     nsAString tag_str;
     LPCWSTR tag;
@@ -283,10 +283,10 @@ static void get_font_size(HTMLDocument *This, WCHAR *ret)
             break;
 
         if(node_type == ELEMENT_NODE) {
-            nsIDOMNode_QueryInterface(node, &IID_nsIDOMHTMLElement, (void**)&elem);
+            nsIDOMNode_QueryInterface(node, &IID_nsIDOMElement, (void**)&elem);
 
             nsAString_Init(&tag_str, NULL);
-            nsIDOMHTMLElement_GetTagName(elem, &tag_str);
+            nsIDOMElement_GetTagName(elem, &tag_str);
             nsAString_GetData(&tag_str, &tag);
 
             if(!strcmpiW(tag, fontW)) {
@@ -295,7 +295,7 @@ static void get_font_size(HTMLDocument *This, WCHAR *ret)
 
                 TRACE("found font tag %p\n", elem);
 
-                get_elem_attr_value(elem, sizeW, &val_str, &val);
+                get_elem_attr_value((nsIDOMElement*)elem, sizeW, &val_str, &val);
                 if(*val) {
                     TRACE("found size %s\n", debugstr_w(val));
                     strcpyW(ret, val);
@@ -305,7 +305,7 @@ static void get_font_size(HTMLDocument *This, WCHAR *ret)
             }
 
             nsAString_Finish(&tag_str);
-            nsIDOMHTMLElement_Release(elem);
+            nsIDOMElement_Release(elem);
         }
 
         if(*ret)
@@ -324,7 +324,7 @@ static void set_font_size(HTMLDocument *This, LPCWSTR size)
 {
     nsISelection *nsselection;
     cpp_bool collapsed;
-    nsIDOMHTMLElement *elem;
+    nsIDOMElement *elem;
     nsIDOMRange *range;
     LONG range_cnt = 0;
     nsAString size_str;
@@ -353,7 +353,7 @@ static void set_font_size(HTMLDocument *This, LPCWSTR size)
     nsAString_InitDepend(&size_str, sizeW);
     nsAString_InitDepend(&val_str, size);
 
-    nsIDOMHTMLElement_SetAttribute(elem, &size_str, &val_str);
+    nsIDOMElement_SetAttribute(elem, &size_str, &val_str);
     nsAString_Finish(&val_str);
 
     nsISelection_GetRangeAt(nsselection, 0, &range);
@@ -372,7 +372,7 @@ static void set_font_size(HTMLDocument *This, LPCWSTR size)
 
     nsISelection_Release(nsselection);
     nsIDOMRange_Release(range);
-    nsIDOMHTMLElement_Release(elem);
+    nsIDOMElement_Release(elem);
 
     nsAString_Finish(&size_str);
 
@@ -1106,7 +1106,7 @@ static HRESULT exec_hyperlink(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in,
 {
     nsAString href_str, ns_url;
     nsIHTMLEditor *html_editor;
-    nsIDOMHTMLElement *anchor_elem;
+    nsIDOMElement *anchor_elem;
     cpp_bool insert_link_at_caret;
     nsISelection *nsselection;
     BSTR url = NULL;
@@ -1148,7 +1148,7 @@ static HRESULT exec_hyperlink(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in,
 
     nsAString_InitDepend(&href_str, hrefW);
     nsAString_InitDepend(&ns_url, url);
-    nsIDOMHTMLElement_SetAttribute(anchor_elem, &href_str, &ns_url);
+    nsIDOMElement_SetAttribute(anchor_elem, &href_str, &ns_url);
     nsAString_Finish(&href_str);
 
     nsISelection_GetIsCollapsed(nsselection, &insert_link_at_caret);
@@ -1161,7 +1161,7 @@ static HRESULT exec_hyperlink(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in,
         nsIDOMHTMLDocument_CreateTextNode(This->doc_node->nsdoc, &ns_url, &text_node);
 
         /* wrap the <a> tags around the text element */
-        nsIDOMHTMLElement_AppendChild(anchor_elem, (nsIDOMNode*)text_node, &unused_node);
+        nsIDOMElement_AppendChild(anchor_elem, (nsIDOMNode*)text_node, &unused_node);
         nsIDOMText_Release(text_node);
         nsIDOMNode_Release(unused_node);
     }
@@ -1184,7 +1184,7 @@ static HRESULT exec_hyperlink(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in,
     }
 
     nsISelection_Release(nsselection);
-    nsIDOMHTMLElement_Release(anchor_elem);
+    nsIDOMElement_Release(anchor_elem);
 
     if (cmdexecopt != OLECMDEXECOPT_DONTPROMPTUSER)
         SysFreeString(url);

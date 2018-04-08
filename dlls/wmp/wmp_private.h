@@ -19,8 +19,20 @@
 #define COBJMACROS
 
 #include "windows.h"
+#include "wine/heap.h"
 #include "ole2.h"
 #include "wmp.h"
+
+typedef struct {
+    IConnectionPoint IConnectionPoint_iface;
+
+    IConnectionPointContainer *container;
+
+    IDispatch **sinks;
+    DWORD sinks_size;
+
+    IID iid;
+} ConnectionPoint;
 
 struct WindowsMediaPlayer {
     IOleObject IOleObject_iface;
@@ -30,6 +42,7 @@ struct WindowsMediaPlayer {
     IConnectionPointContainer IConnectionPointContainer_iface;
     IOleControl IOleControl_iface;
     IWMPPlayer4 IWMPPlayer4_iface;
+    IWMPPlayer IWMPPlayer_iface;
     IWMPSettings IWMPSettings_iface;
 
     LONG ref;
@@ -37,27 +50,16 @@ struct WindowsMediaPlayer {
     IOleClientSite *client_site;
     HWND hwnd;
     SIZEL extent;
+
+    ConnectionPoint *wmpocx;
 };
 
 void init_player_ifaces(WindowsMediaPlayer*) DECLSPEC_HIDDEN;
+void ConnectionPointContainer_Init(WindowsMediaPlayer *wmp) DECLSPEC_HIDDEN;
+void ConnectionPointContainer_Destroy(WindowsMediaPlayer *wmp) DECLSPEC_HIDDEN;
 
 HRESULT WINAPI WMPFactory_CreateInstance(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 
 void unregister_wmp_class(void) DECLSPEC_HIDDEN;
 
 extern HINSTANCE wmp_instance DECLSPEC_HIDDEN;
-
-static inline void* __WINE_ALLOC_SIZE(1) heap_alloc(size_t len)
-{
-    return HeapAlloc(GetProcessHeap(), 0, len);
-}
-
-static inline void* __WINE_ALLOC_SIZE(1) heap_alloc_zero(size_t len)
-{
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
-}
-
-static inline BOOL heap_free(void *mem)
-{
-    return HeapFree(GetProcessHeap(), 0, mem);
-}

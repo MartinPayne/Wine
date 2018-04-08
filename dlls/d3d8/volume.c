@@ -147,7 +147,8 @@ static HRESULT WINAPI d3d8_volume_LockBox(IDirect3DVolume8 *iface,
 
     wined3d_mutex_lock();
     if (FAILED(hr = wined3d_resource_map(wined3d_texture_get_resource(volume->wined3d_texture),
-            volume->sub_resource_idx, &map_desc, (const struct wined3d_box *)box, flags)))
+            volume->sub_resource_idx, &map_desc, (const struct wined3d_box *)box,
+            wined3dmapflags_from_d3dmapflags(flags))))
         map_desc.data = NULL;
     wined3d_mutex_unlock();
 
@@ -155,6 +156,8 @@ static HRESULT WINAPI d3d8_volume_LockBox(IDirect3DVolume8 *iface,
     locked_box->SlicePitch = map_desc.slice_pitch;
     locked_box->pBits = map_desc.data;
 
+    if (hr == E_INVALIDARG)
+        return D3DERR_INVALIDCALL;
     return hr;
 }
 
@@ -195,7 +198,7 @@ static void STDMETHODCALLTYPE volume_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_volume *volume = parent;
     d3d8_resource_cleanup(&volume->resource);
-    HeapFree(GetProcessHeap(), 0, volume);
+    heap_free(volume);
 }
 
 static const struct wined3d_parent_ops d3d8_volume_wined3d_parent_ops =

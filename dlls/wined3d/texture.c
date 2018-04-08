@@ -32,8 +32,8 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static BOOL wined3d_texture_use_pbo(const struct wined3d_texture *texture, const struct wined3d_gl_info *gl_info)
 {
-    return (texture->resource.access & (WINED3D_RESOURCE_ACCESS_CPU
-            | WINED3D_RESOURCE_ACCESS_MAP)) == WINED3D_RESOURCE_ACCESS_MAP
+    return !(texture->resource.access & WINED3D_RESOURCE_ACCESS_CPU)
+            && texture->resource.usage & WINED3DUSAGE_DYNAMIC
             && gl_info->supported[ARB_PIXEL_BUFFER_OBJECT]
             && !texture->resource.format->conv_byte_count
             && !(texture->flags & (WINED3D_TEXTURE_PIN_SYSMEM | WINED3D_TEXTURE_COND_NP2_EMULATED));
@@ -375,7 +375,6 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
 
     texture->layer_count = layer_count;
     texture->level_count = level_count;
-    texture->filter_type = (desc->usage & WINED3DUSAGE_AUTOGENMIPMAP) ? WINED3D_TEXF_LINEAR : WINED3D_TEXF_NONE;
     texture->lod = 0;
     texture->flags |= WINED3D_TEXTURE_POW2_MAT_IDENT | WINED3D_TEXTURE_NORMALIZED_COORDS;
     if (flags & WINED3D_TEXTURE_CREATE_GET_DC_LENIENT)
@@ -386,8 +385,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         texture->flags |= WINED3D_TEXTURE_DISCARD;
     if (flags & WINED3D_TEXTURE_CREATE_GENERATE_MIPMAPS)
     {
-        if (~format->flags[WINED3D_GL_RES_TYPE_TEX_2D]
-                & (WINED3DFMT_FLAG_RENDERTARGET | WINED3DFMT_FLAG_FILTERING))
+        if (!(texture->resource.format_flags & WINED3DFMT_FLAG_GEN_MIPMAP))
             WARN("Format doesn't support mipmaps generation, "
                     "ignoring WINED3D_TEXTURE_CREATE_GENERATE_MIPMAPS flag.\n");
         else
@@ -456,6 +454,38 @@ static void gltexture_delete(struct wined3d_device *device, const struct wined3d
     tex->name = 0;
 }
 
+static unsigned int wined3d_texture_get_gl_sample_count(const struct wined3d_texture *texture)
+{
+    const struct wined3d_format *format = texture->resource.format;
+
+    /* TODO: NVIDIA expose their Coverage Sample Anti-Aliasing (CSAA)
+     * feature through type == MULTISAMPLE_XX and quality != 0. This could
+     * be mapped to GL_NV_framebuffer_multisample_coverage.
+     *
+     * AMD have a similar feature called Enhanced Quality Anti-Aliasing
+     * (EQAA), but it does not have an equivalent OpenGL extension. */
+
+    /* We advertise as many WINED3D_MULTISAMPLE_NON_MASKABLE quality
+     * levels as the count of advertised multisample types for the texture
+     * format. */
+    if (texture->resource.multisample_type == WINED3D_MULTISAMPLE_NON_MASKABLE)
+    {
+        unsigned int i, count = 0;
+
+        for (i = 0; i < sizeof(format->multisample_types) * CHAR_BIT; ++i)
+        {
+            if (format->multisample_types & 1u << i)
+            {
+                if (texture->resource.multisample_quality == count++)
+                    break;
+            }
+        }
+        return i + 1;
+    }
+
+    return texture->resource.multisample_type;
+}
+
 /* Context activation is done by the caller. */
 /* The caller is responsible for binding the correct texture. */
 static void wined3d_texture_allocate_gl_mutable_storage(struct wined3d_texture *texture,
@@ -505,21 +535,31 @@ static void wined3d_texture_allocate_gl_mutable_storage(struct wined3d_texture *
 static void wined3d_texture_allocate_gl_immutable_storage(struct wined3d_texture *texture,
         GLenum gl_internal_format, const struct wined3d_gl_info *gl_info)
 {
-    GLsizei width = wined3d_texture_get_level_pow2_width(texture, 0);
+    unsigned int samples = wined3d_texture_get_gl_sample_count(texture);
     GLsizei height = wined3d_texture_get_level_pow2_height(texture, 0);
+    GLsizei width = wined3d_texture_get_level_pow2_width(texture, 0);
 
-    if (texture->target == GL_TEXTURE_2D_ARRAY)
+    switch (texture->target)
     {
-        GL_EXTCALL(glTexStorage3D(texture->target, texture->level_count, gl_internal_format,
-                width, height, texture->layer_count));
-        checkGLcall("glTexStorage3D");
+        case GL_TEXTURE_2D_ARRAY:
+            GL_EXTCALL(glTexStorage3D(texture->target, texture->level_count,
+                    gl_internal_format, width, height, texture->layer_count));
+            break;
+        case GL_TEXTURE_2D_MULTISAMPLE:
+            GL_EXTCALL(glTexStorage2DMultisample(texture->target, samples,
+                    gl_internal_format, width, height, GL_FALSE));
+            break;
+        case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
+            GL_EXTCALL(glTexStorage3DMultisample(texture->target, samples,
+                    gl_internal_format, width, height, texture->layer_count, GL_FALSE));
+            break;
+        default:
+            GL_EXTCALL(glTexStorage2D(texture->target, texture->level_count,
+                    gl_internal_format, width, height));
+            break;
     }
-    else
-    {
-        GL_EXTCALL(glTexStorage2D(texture->target, texture->level_count, gl_internal_format,
-                width, height));
-        checkGLcall("glTexStorage2D");
-    }
+
+    checkGLcall("allocate immutable storage");
 }
 
 static void wined3d_texture_unload_gl_texture(struct wined3d_texture *texture)
@@ -686,12 +726,6 @@ void wined3d_texture_bind(struct wined3d_texture *texture,
     wined3d_texture_set_dirty(texture);
 
     context_bind_texture(context, target, gl_tex->name);
-
-    if (texture->resource.usage & WINED3DUSAGE_AUTOGENMIPMAP)
-    {
-        gl_info->gl_ops.gl.p_glTexParameteri(target, GL_GENERATE_MIPMAP_SGIS, GL_TRUE);
-        checkGLcall("glTexParameteri(target, GL_GENERATE_MIPMAP_SGIS, GL_TRUE)");
-    }
 
     /* For a new texture we have to set the texture levels after binding the
      * texture. Beware that texture rectangles do not support mipmapping, but
@@ -921,7 +955,7 @@ static void wined3d_texture_cleanup_sync(struct wined3d_texture *texture)
 static void wined3d_texture_destroy_object(void *object)
 {
     wined3d_texture_cleanup(object);
-    HeapFree(GetProcessHeap(), 0, object);
+    heap_free(object);
 }
 
 ULONG CDECL wined3d_texture_decref(struct wined3d_texture *texture)
@@ -1136,29 +1170,6 @@ DWORD CDECL wined3d_texture_get_level_count(const struct wined3d_texture *textur
     return texture->level_count;
 }
 
-HRESULT CDECL wined3d_texture_set_autogen_filter_type(struct wined3d_texture *texture,
-        enum wined3d_texture_filter_type filter_type)
-{
-    FIXME("texture %p, filter_type %s stub!\n", texture, debug_d3dtexturefiltertype(filter_type));
-
-    if (!(texture->resource.usage & WINED3DUSAGE_AUTOGENMIPMAP))
-    {
-        WARN("Texture doesn't have AUTOGENMIPMAP usage.\n");
-        return WINED3DERR_INVALIDCALL;
-    }
-
-    texture->filter_type = filter_type;
-
-    return WINED3D_OK;
-}
-
-enum wined3d_texture_filter_type CDECL wined3d_texture_get_autogen_filter_type(const struct wined3d_texture *texture)
-{
-    TRACE("texture %p.\n", texture);
-
-    return texture->filter_type;
-}
-
 HRESULT CDECL wined3d_texture_set_color_key(struct wined3d_texture *texture,
         DWORD flags, const struct wined3d_color_key *color_key)
 {
@@ -1305,9 +1316,9 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, UINT 
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (texture->resource.type == WINED3D_RTYPE_TEXTURE_3D)
+    if (texture->resource.type != WINED3D_RTYPE_TEXTURE_2D)
     {
-        WARN("Not supported on 3D textures.\n");
+        WARN("Not supported on %s.\n", debug_d3dresourcetype(texture->resource.type));
         return WINED3DERR_INVALIDCALL;
     }
 
@@ -1360,6 +1371,12 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, UINT 
     texture->resource.size = texture->slice_pitch;
     sub_resource->size = texture->slice_pitch;
     sub_resource->locations = WINED3D_LOCATION_DISCARDED;
+
+    if (multisample_type && gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
+        texture->target = GL_TEXTURE_2D_MULTISAMPLE;
+    else
+        texture->target = GL_TEXTURE_2D;
+    texture->sub_resources[0].u.surface->texture_target = texture->target;
 
     if (((width & (width - 1)) || (height & (height - 1))) && !gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO]
             && !gl_info->supported[ARB_TEXTURE_RECTANGLE] && !gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT])
@@ -1477,34 +1494,7 @@ static void wined3d_texture_prepare_rb(struct wined3d_texture *texture,
         if (texture->rb_multisample)
             return;
 
-        /* TODO: NVIDIA expose their Coverage Sample Anti-Aliasing (CSAA)
-         * feature through type == MULTISAMPLE_XX and quality != 0. This could
-         * be mapped to GL_NV_framebuffer_multisample_coverage.
-         *
-         * AMD have a similar feature called Enhanced Quality Anti-Aliasing
-         * (EQAA), but it does not have an equivalent OpenGL extension. */
-
-        /* We advertise as many WINED3D_MULTISAMPLE_NON_MASKABLE quality
-         * levels as the count of advertised multisample types for the texture
-         * format. */
-        if (texture->resource.multisample_type == WINED3D_MULTISAMPLE_NON_MASKABLE)
-        {
-            unsigned int i, count = 0;
-
-            for (i = 0; i < sizeof(format->multisample_types) * 8; ++i)
-            {
-                if (format->multisample_types & 1u << i)
-                {
-                    if (texture->resource.multisample_quality == count++)
-                        break;
-                }
-            }
-            samples = i + 1;
-        }
-        else
-        {
-            samples = texture->resource.multisample_type;
-        }
+        samples = wined3d_texture_get_gl_sample_count(texture);
 
         gl_info->fbo_ops.glGenRenderbuffers(1, &texture->rb_multisample);
         gl_info->fbo_ops.glBindRenderbuffer(GL_RENDERBUFFER, texture->rb_multisample);
@@ -1732,7 +1722,7 @@ static void texture2d_cleanup_sub_resources(struct wined3d_texture *texture)
             TRACE("Deleting renderbuffer %u.\n", entry->id);
             context_gl_resource_released(device, entry->id, TRUE);
             gl_info->fbo_ops.glDeleteRenderbuffers(1, &entry->id);
-            HeapFree(GetProcessHeap(), 0, entry);
+            heap_free(entry);
         }
 
         if (surface->dc)
@@ -1749,7 +1739,7 @@ static void texture2d_cleanup_sub_resources(struct wined3d_texture *texture)
     }
     if (context)
         context_release(context);
-    HeapFree(GetProcessHeap(), 0, texture->sub_resources[0].u.surface);
+    heap_free(texture->sub_resources[0].u.surface);
 }
 
 static const struct wined3d_texture_ops texture2d_ops =
@@ -1834,7 +1824,7 @@ static void wined3d_texture_unload(struct wined3d_resource *resource)
                 context_gl_resource_released(device, entry->id, TRUE);
                 gl_info->fbo_ops.glDeleteRenderbuffers(1, &entry->id);
                 list_remove(&entry->entry);
-                HeapFree(GetProcessHeap(), 0, entry);
+                heap_free(entry);
             }
             list_init(&surface->renderbuffers);
             surface->current_renderbuffer = NULL;
@@ -1874,13 +1864,6 @@ static HRESULT texture_resource_sub_resource_map(struct wined3d_resource *resour
         WARN("Map box is invalid.\n");
         if (((fmt_flags & WINED3DFMT_FLAG_BLOCKS) && !(resource->access & WINED3D_RESOURCE_ACCESS_CPU))
                 || resource->type != WINED3D_RTYPE_TEXTURE_2D)
-            return WINED3DERR_INVALIDCALL;
-    }
-
-    if (!(resource->access & WINED3D_RESOURCE_ACCESS_MAP))
-    {
-        WARN("Trying to map unmappable texture.\n");
-        if (resource->type != WINED3D_RTYPE_TEXTURE_2D)
             return WINED3DERR_INVALIDCALL;
     }
 
@@ -2139,22 +2122,6 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
         TRACE("Creating an oversized (%ux%u) surface.\n", pow2_width, pow2_height);
     }
 
-    /* Calculate levels for mip mapping. */
-    if (desc->usage & WINED3DUSAGE_AUTOGENMIPMAP)
-    {
-        if (!gl_info->supported[SGIS_GENERATE_MIPMAP])
-        {
-            WARN("No mipmap generation support, returning WINED3DERR_INVALIDCALL.\n");
-            return WINED3DERR_INVALIDCALL;
-        }
-
-        if (level_count != 1)
-        {
-            WARN("WINED3DUSAGE_AUTOGENMIPMAP is set, and level count != 1, returning WINED3DERR_INVALIDCALL.\n");
-            return WINED3DERR_INVALIDCALL;
-        }
-    }
-
     if (FAILED(hr = wined3d_texture_init(texture, &texture2d_ops, layer_count, level_count, desc,
             flags, device, parent, parent_ops, &texture_resource_ops)))
     {
@@ -2184,11 +2151,23 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
             texture->pow2_matrix[5] = 1.0f;
         }
         if (desc->usage & WINED3DUSAGE_LEGACY_CUBEMAP)
+        {
             texture->target = GL_TEXTURE_CUBE_MAP_ARB;
-        else if (layer_count > 1)
-            texture->target = GL_TEXTURE_2D_ARRAY;
+        }
+        else if (desc->multisample_type && gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
+        {
+            if (layer_count > 1)
+                texture->target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+            else
+                texture->target = GL_TEXTURE_2D_MULTISAMPLE;
+        }
         else
-            texture->target = GL_TEXTURE_2D;
+        {
+            if (layer_count > 1)
+                texture->target = GL_TEXTURE_2D_ARRAY;
+            else
+                texture->target = GL_TEXTURE_2D;
+        }
     }
     texture->pow2_matrix[10] = 1.0f;
     texture->pow2_matrix[15] = 1.0f;
@@ -2198,7 +2177,7 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
         texture->resource.map_binding = WINED3D_LOCATION_BUFFER;
 
     if (level_count > ~(SIZE_T)0 / layer_count
-            || !(surfaces = wined3d_calloc(level_count * layer_count, sizeof(*surfaces))))
+            || !(surfaces = heap_calloc(level_count * layer_count, sizeof(*surfaces))))
     {
         wined3d_texture_cleanup_sync(texture);
         return E_OUTOFMEMORY;
@@ -2319,7 +2298,7 @@ static void texture3d_upload_data(struct wined3d_texture *texture, unsigned int 
         dst_row_pitch = update_w * format->conv_byte_count;
         dst_slice_pitch = dst_row_pitch * update_h;
 
-        converted_mem = wined3d_calloc(update_d, dst_slice_pitch);
+        converted_mem = heap_calloc(update_d, dst_slice_pitch);
         format->upload(data->addr, converted_mem, row_pitch, slice_pitch,
                 dst_row_pitch, dst_slice_pitch, update_w, update_h, update_d);
         mem = converted_mem;
@@ -2347,7 +2326,7 @@ static void texture3d_upload_data(struct wined3d_texture *texture, unsigned int 
         checkGLcall("glBindBuffer");
     }
 
-    HeapFree(GetProcessHeap(), 0, converted_mem);
+    heap_free(converted_mem);
 }
 
 /* Context activation is done by the caller. */
@@ -2398,7 +2377,7 @@ static void texture3d_srgb_transfer(struct wined3d_texture *texture, unsigned in
      * for DEFAULT pool surfaces. */
     WARN_(d3d_perf)("Performing slow rgb/srgb volume transfer.\n");
     data.buffer_object = 0;
-    if (!(data.addr = HeapAlloc(GetProcessHeap(), 0, sub_resource->size)))
+    if (!(data.addr = heap_alloc(sub_resource->size)))
         return;
 
     wined3d_texture_get_pitch(texture, sub_resource_idx, &row_pitch, &slice_pitch);
@@ -2408,7 +2387,7 @@ static void texture3d_srgb_transfer(struct wined3d_texture *texture, unsigned in
     texture3d_upload_data(texture, sub_resource_idx, context,
             NULL, wined3d_const_bo_address(&data), row_pitch, slice_pitch);
 
-    HeapFree(GetProcessHeap(), 0, data.addr);
+    heap_free(data.addr);
 }
 
 /* Context activation is done by the caller. */
@@ -2581,22 +2560,6 @@ static HRESULT volumetexture_init(struct wined3d_texture *texture, const struct 
         return WINED3DERR_INVALIDCALL;
     }
 
-    /* Calculate levels for mip mapping. */
-    if (desc->usage & WINED3DUSAGE_AUTOGENMIPMAP)
-    {
-        if (!gl_info->supported[SGIS_GENERATE_MIPMAP])
-        {
-            WARN("No mipmap generation support, returning D3DERR_INVALIDCALL.\n");
-            return WINED3DERR_INVALIDCALL;
-        }
-
-        if (level_count != 1)
-        {
-            WARN("WINED3DUSAGE_AUTOGENMIPMAP is set, and level count != 1, returning D3DERR_INVALIDCALL.\n");
-            return WINED3DERR_INVALIDCALL;
-        }
-    }
-
     if (desc->usage & WINED3DUSAGE_DYNAMIC && (wined3d_resource_access_is_managed(desc->access)
             || desc->usage & WINED3DUSAGE_SCRATCH))
     {
@@ -2652,7 +2615,7 @@ static HRESULT volumetexture_init(struct wined3d_texture *texture, const struct 
         texture->resource.map_binding = WINED3D_LOCATION_BUFFER;
     }
 
-    /* Generate all the surfaces. */
+    /* Generate all the sub resources. */
     for (i = 0; i < texture->level_count; ++i)
     {
         struct wined3d_texture_sub_resource *sub_resource;
@@ -2963,8 +2926,8 @@ HRESULT CDECL wined3d_texture_create(struct wined3d_device *device, const struct
         }
     }
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-            FIELD_OFFSET(struct wined3d_texture, sub_resources[level_count * layer_count]))))
+    if (!(object = heap_alloc_zero(FIELD_OFFSET(struct wined3d_texture,
+            sub_resources[level_count * layer_count]))))
         return E_OUTOFMEMORY;
 
     switch (desc->resource_type)
@@ -2986,7 +2949,7 @@ HRESULT CDECL wined3d_texture_create(struct wined3d_device *device, const struct
     if (FAILED(hr))
     {
         WARN("Failed to initialize texture, returning %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 
@@ -3003,7 +2966,7 @@ HRESULT CDECL wined3d_texture_create(struct wined3d_device *device, const struct
             {
                 WARN("Invalid sub-resource data specified for sub-resource %u.\n", i);
                 wined3d_texture_cleanup_sync(object);
-                HeapFree(GetProcessHeap(), 0, object);
+                heap_free(object);
                 return E_INVALIDARG;
             }
         }

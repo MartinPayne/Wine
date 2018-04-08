@@ -686,6 +686,7 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetBlendState(ID3D11Devi
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
     static const float default_blend_factor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    struct d3d_blend_state *blend_state_impl;
     const D3D11_BLEND_DESC *desc;
 
     TRACE("iface %p, blend_state %p, blend_factor %s, sample_mask 0x%08x.\n",
@@ -697,8 +698,9 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetBlendState(ID3D11Devi
     wined3d_mutex_lock();
     memcpy(device->blend_factor, blend_factor, 4 * sizeof(*blend_factor));
     wined3d_device_set_render_state(device->wined3d_device, WINED3D_RS_MULTISAMPLEMASK, sample_mask);
-    if (!(device->blend_state = unsafe_impl_from_ID3D11BlendState(blend_state)))
+    if (!(blend_state_impl = unsafe_impl_from_ID3D11BlendState(blend_state)))
     {
+        wined3d_device_set_blend_state(device->wined3d_device, NULL);
         wined3d_device_set_render_state(device->wined3d_device, WINED3D_RS_ALPHABLENDENABLE, FALSE);
         wined3d_device_set_render_state(device->wined3d_device,
                 WINED3D_RS_COLORWRITEENABLE, D3D11_COLOR_WRITE_ENABLE_ALL);
@@ -712,7 +714,8 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetBlendState(ID3D11Devi
         return;
     }
 
-    desc = &device->blend_state->desc;
+    wined3d_device_set_blend_state(device->wined3d_device, blend_state_impl->wined3d_state);
+    desc = &blend_state_impl->desc;
     wined3d_device_set_render_state(device->wined3d_device, WINED3D_RS_ALPHABLENDENABLE,
             desc->RenderTarget[0].BlendEnable);
     if (desc->RenderTarget[0].BlendEnable)
@@ -1176,10 +1179,23 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_ResolveSubresource(ID3D11D
         ID3D11Resource *src_resource, UINT src_subresource_idx,
         DXGI_FORMAT format)
 {
-    FIXME("iface %p, dst_resource %p, dst_subresource_idx %u, src_resource %p, src_subresource_idx %u, "
-            "format %s stub!\n",
-            iface, dst_resource, dst_subresource_idx, src_resource, src_subresource_idx,
-            debug_dxgi_format(format));
+    struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
+    struct wined3d_resource *wined3d_dst_resource, *wined3d_src_resource;
+    enum wined3d_format_id wined3d_format;
+
+    TRACE("iface %p, dst_resource %p, dst_subresource_idx %u, "
+            "src_resource %p, src_subresource_idx %u, format %s.\n",
+            iface, dst_resource, dst_subresource_idx,
+            src_resource, src_subresource_idx, debug_dxgi_format(format));
+
+    wined3d_dst_resource = wined3d_resource_from_d3d11_resource(dst_resource);
+    wined3d_src_resource = wined3d_resource_from_d3d11_resource(src_resource);
+    wined3d_format = wined3dformat_from_dxgi_format(format);
+    wined3d_mutex_lock();
+    wined3d_device_resolve_sub_resource(device->wined3d_device,
+            wined3d_dst_resource, dst_subresource_idx,
+            wined3d_src_resource, src_subresource_idx, wined3d_format);
+    wined3d_mutex_unlock();
 }
 
 static void STDMETHODCALLTYPE d3d11_immediate_context_ExecuteCommandList(ID3D11DeviceContext *iface,
@@ -1988,13 +2004,22 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMGetBlendState(ID3D11Devi
         ID3D11BlendState **blend_state, FLOAT blend_factor[4], UINT *sample_mask)
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
+    struct wined3d_blend_state *wined3d_state;
+    struct d3d_blend_state *blend_state_impl;
 
     TRACE("iface %p, blend_state %p, blend_factor %p, sample_mask %p.\n",
             iface, blend_state, blend_factor, sample_mask);
 
-    if ((*blend_state = device->blend_state ? &device->blend_state->ID3D11BlendState_iface : NULL))
-        ID3D11BlendState_AddRef(*blend_state);
     wined3d_mutex_lock();
+    if ((wined3d_state = wined3d_device_get_blend_state(device->wined3d_device)))
+    {
+        blend_state_impl = wined3d_blend_state_get_parent(wined3d_state);
+        ID3D11BlendState_AddRef(*blend_state = &blend_state_impl->ID3D11BlendState_iface);
+    }
+    else
+    {
+        *blend_state = NULL;
+    }
     memcpy(blend_factor, device->blend_factor, 4 * sizeof(*blend_factor));
     *sample_mask = wined3d_device_get_render_state(device->wined3d_device, WINED3D_RS_MULTISAMPLEMASK);
     wined3d_mutex_unlock();
@@ -3225,7 +3250,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_device_CheckFormatSupport(ID3D11Device *i
     {
         hr = wined3d_check_device_format(wined3d, params.adapter_idx, params.device_type,
                 WINED3DFMT_UNKNOWN, flag_mapping[i].usage, flag_mapping[i].rtype, wined3d_format);
-        if (hr == WINED3DERR_NOTAVAILABLE || hr == WINED3DOK_NOAUTOGEN)
+        if (hr == WINED3DERR_NOTAVAILABLE || hr == WINED3DOK_NOMIPGEN)
             continue;
         if (hr != WINED3D_OK)
         {
@@ -4227,10 +4252,23 @@ static void STDMETHODCALLTYPE d3d10_device_ResolveSubresource(ID3D10Device1 *ifa
         ID3D10Resource *dst_resource, UINT dst_subresource_idx,
         ID3D10Resource *src_resource, UINT src_subresource_idx, DXGI_FORMAT format)
 {
-    FIXME("iface %p, dst_resource %p, dst_subresource_idx %u, "
-            "src_resource %p, src_subresource_idx %u, format %s stub!\n",
+    struct wined3d_resource *wined3d_dst_resource, *wined3d_src_resource;
+    struct d3d_device *device = impl_from_ID3D10Device(iface);
+    enum wined3d_format_id wined3d_format;
+
+    TRACE("iface %p, dst_resource %p, dst_subresource_idx %u, "
+            "src_resource %p, src_subresource_idx %u, format %s.\n",
             iface, dst_resource, dst_subresource_idx,
             src_resource, src_subresource_idx, debug_dxgi_format(format));
+
+    wined3d_dst_resource = wined3d_resource_from_d3d10_resource(dst_resource);
+    wined3d_src_resource = wined3d_resource_from_d3d10_resource(src_resource);
+    wined3d_format = wined3dformat_from_dxgi_format(format);
+    wined3d_mutex_lock();
+    wined3d_device_resolve_sub_resource(device->wined3d_device,
+            wined3d_dst_resource, dst_subresource_idx,
+            wined3d_src_resource, src_subresource_idx, wined3d_format);
+    wined3d_mutex_unlock();
 }
 
 static void STDMETHODCALLTYPE d3d10_device_VSGetConstantBuffers(ID3D10Device1 *iface,
@@ -5198,7 +5236,7 @@ static HRESULT STDMETHODCALLTYPE d3d10_device_CreateGeometryShaderWithStreamOutp
     }
 
     if (output_stream_decl_count
-            && !(so_entries = d3d11_calloc(output_stream_decl_count, sizeof(*so_entries))))
+            && !(so_entries = heap_calloc(output_stream_decl_count, sizeof(*so_entries))))
     {
         ERR("Failed to allocate D3D11 SO declaration array memory.\n");
         *shader = NULL;
@@ -5220,7 +5258,7 @@ static HRESULT STDMETHODCALLTYPE d3d10_device_CreateGeometryShaderWithStreamOutp
             if (output_stream_stride)
             {
                 WARN("Stride must be 0 when multiple output slots are used.\n");
-                HeapFree(GetProcessHeap(), 0, so_entries);
+                heap_free(so_entries);
                 *shader = NULL;
                 return E_INVALIDARG;
             }
@@ -5229,7 +5267,7 @@ static HRESULT STDMETHODCALLTYPE d3d10_device_CreateGeometryShaderWithStreamOutp
 
     hr = d3d_geometry_shader_create(device, byte_code, byte_code_length,
             so_entries, output_stream_decl_count, &output_stream_stride, stride_count, 0, &object);
-    HeapFree(GetProcessHeap(), 0, so_entries);
+    heap_free(so_entries);
     if (FAILED(hr))
     {
         *shader = NULL;

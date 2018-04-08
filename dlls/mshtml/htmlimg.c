@@ -739,7 +739,7 @@ static dispex_static_data_t HTMLImgElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLImg *ret;
     nsresult nsres;
@@ -753,7 +753,7 @@ HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, 
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLImgElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLImageElement, (void**)&ret->nsimg);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLImageElement, (void**)&ret->nsimg);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;
@@ -874,7 +874,7 @@ static HRESULT WINAPI HTMLImageElementFactory_create(IHTMLImageElementFactory *i
     HTMLDocumentNode *doc;
     IHTMLImgElement *img;
     HTMLElement *elem;
-    nsIDOMHTMLElement *nselem;
+    nsIDOMElement *nselem;
     LONG l;
     HRESULT hres;
 
@@ -897,7 +897,7 @@ static HRESULT WINAPI HTMLImageElementFactory_create(IHTMLImageElementFactory *i
         return hres;
 
     hres = HTMLElement_Create(doc, (nsIDOMNode*)nselem, FALSE, &elem);
-    nsIDOMHTMLElement_Release(nselem);
+    nsIDOMElement_Release(nselem);
     if(FAILED(hres)) {
         ERR("HTMLElement_Create failed\n");
         return hres;

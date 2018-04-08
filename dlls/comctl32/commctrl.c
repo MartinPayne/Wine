@@ -98,7 +98,12 @@ static void unregister_versioned_classes(void)
 #define VERSION "6.0.2600.2982!"
     static const char *classes[] =
     {
+        VERSION WC_BUTTONA,
+        VERSION WC_COMBOBOXA,
+        VERSION "ComboLBox",
         VERSION WC_EDITA,
+        VERSION WC_LISTBOXA,
+        VERSION WC_STATICA,
     };
     int i;
 
@@ -167,7 +172,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             TREEVIEW_Register ();
             UPDOWN_Register ();
 
+            BUTTON_Register ();
+            COMBO_Register ();
+            COMBOLBOX_Register ();
             EDIT_Register ();
+            LISTBOX_Register ();
+            STATIC_Register ();
 
             /* subclass user32 controls */
             THEMING_Initialize ();

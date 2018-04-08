@@ -150,6 +150,7 @@ const char *debug_dxgi_format(DXGI_FORMAT format)
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_TYPELESS);
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_UNORM);
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_UNORM_SRGB);
+        WINE_D3D_TO_STR(DXGI_FORMAT_B4G4R4A4_UNORM);
         default:
             FIXME("Unrecognized DXGI_FORMAT %#x.\n", format);
             return "unrecognized";
@@ -311,6 +312,7 @@ DXGI_FORMAT dxgi_format_from_wined3dformat(enum wined3d_format_id format)
         case WINED3DFMT_BC7_TYPELESS: return DXGI_FORMAT_BC7_TYPELESS;
         case WINED3DFMT_BC7_UNORM: return DXGI_FORMAT_BC7_UNORM;
         case WINED3DFMT_BC7_UNORM_SRGB: return DXGI_FORMAT_BC7_UNORM_SRGB;
+        case WINED3DFMT_B4G4R4A4_UNORM: return DXGI_FORMAT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled wined3d format %#x.\n", format);
             return DXGI_FORMAT_UNKNOWN;
@@ -421,6 +423,7 @@ enum wined3d_format_id wined3dformat_from_dxgi_format(DXGI_FORMAT format)
         case DXGI_FORMAT_BC7_TYPELESS: return WINED3DFMT_BC7_TYPELESS;
         case DXGI_FORMAT_BC7_UNORM: return WINED3DFMT_BC7_UNORM;
         case DXGI_FORMAT_BC7_UNORM_SRGB: return WINED3DFMT_BC7_UNORM_SRGB;
+        case DXGI_FORMAT_B4G4R4A4_UNORM: return WINED3DFMT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled DXGI_FORMAT %#x.\n", format);
             return WINED3DFMT_UNKNOWN;
@@ -789,6 +792,21 @@ DWORD wined3d_clear_flags_from_d3d11_clear_flags(UINT clear_flags)
     }
 
     return wined3d_clear_flags;
+}
+
+unsigned int wined3d_access_from_d3d11(D3D11_USAGE usage, UINT cpu_access)
+{
+    unsigned int access;
+
+    access = usage == D3D11_USAGE_STAGING ? WINED3D_RESOURCE_ACCESS_CPU : WINED3D_RESOURCE_ACCESS_GPU;
+    if (cpu_access)
+    {
+        if (~cpu_access & (D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ))
+            FIXME("Ignoring CPU access flags %#x.\n", cpu_access);
+        access |= WINED3D_RESOURCE_ACCESS_MAP;
+    }
+
+    return access;
 }
 
 HRESULT d3d_get_private_data(struct wined3d_private_store *store,

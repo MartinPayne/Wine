@@ -34,7 +34,6 @@ static void resource_check_usage(DWORD usage)
             | WINED3DUSAGE_DEPTHSTENCIL
             | WINED3DUSAGE_WRITEONLY
             | WINED3DUSAGE_DYNAMIC
-            | WINED3DUSAGE_AUTOGENMIPMAP
             | WINED3DUSAGE_STATICDECL
             | WINED3DUSAGE_OVERLAY
             | WINED3DUSAGE_SCRATCH
@@ -178,8 +177,6 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource->multisample_type = multisample_type;
     resource->multisample_quality = multisample_quality;
     resource->usage = usage;
-    if (usage & WINED3DUSAGE_DYNAMIC)
-        access |= WINED3D_RESOURCE_ACCESS_MAP;
     resource->access = access;
     resource->width = width;
     resource->height = height;
@@ -346,6 +343,12 @@ HRESULT CDECL wined3d_resource_map(struct wined3d_resource *resource, unsigned i
     TRACE("resource %p, sub_resource_idx %u, map_desc %p, box %s, flags %#x.\n",
             resource, sub_resource_idx, map_desc, debug_box(box), flags);
 
+    if (!(resource->access & WINED3D_RESOURCE_ACCESS_MAP))
+    {
+        WARN("Resource is not mappable.\n");
+        return E_INVALIDARG;
+    }
+
     flags = wined3d_resource_sanitise_map_flags(resource, flags);
     wined3d_resource_wait_idle(resource);
 
@@ -370,7 +373,7 @@ BOOL wined3d_resource_allocate_sysmem(struct wined3d_resource *resource)
     SIZE_T align = RESOURCE_ALIGNMENT - 1 + sizeof(*p);
     void *mem;
 
-    if (!(mem = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, resource->size + align)))
+    if (!(mem = heap_alloc_zero(resource->size + align)))
         return FALSE;
 
     p = (void **)(((ULONG_PTR)mem + align) & ~(RESOURCE_ALIGNMENT - 1)) - 1;
@@ -388,7 +391,7 @@ void wined3d_resource_free_sysmem(struct wined3d_resource *resource)
     if (!p)
         return;
 
-    HeapFree(GetProcessHeap(), 0, *(--p));
+    heap_free(*(--p));
     resource->heap_memory = NULL;
 }
 
@@ -442,11 +445,23 @@ BOOL wined3d_resource_is_offscreen(struct wined3d_resource *resource)
 void wined3d_resource_update_draw_binding(struct wined3d_resource *resource)
 {
     if (!wined3d_resource_is_offscreen(resource) || wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+    {
         resource->draw_binding = WINED3D_LOCATION_DRAWABLE;
+    }
     else if (resource->multisample_type)
-        resource->draw_binding = WINED3D_LOCATION_RB_MULTISAMPLE;
+    {
+        const struct wined3d_gl_info *gl_info = &resource->device->adapter->gl_info;
+        if (gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
+            resource->draw_binding = WINED3D_LOCATION_TEXTURE_RGB;
+        else
+            resource->draw_binding = WINED3D_LOCATION_RB_MULTISAMPLE;
+    }
     else if (resource->gl_type == WINED3D_GL_RES_TYPE_RB)
+    {
         resource->draw_binding = WINED3D_LOCATION_RB_RESOLVED;
+    }
     else
+    {
         resource->draw_binding = WINED3D_LOCATION_TEXTURE_RGB;
+    }
 }

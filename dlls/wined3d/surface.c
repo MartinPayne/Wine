@@ -350,6 +350,15 @@ static void surface_depth_blt_fbo(const struct wined3d_device *device,
     context_release(context);
 }
 
+static BOOL is_multisample_location(const struct wined3d_texture *texture, DWORD location)
+{
+    if (location == WINED3D_LOCATION_RB_MULTISAMPLE)
+        return TRUE;
+    if (location != WINED3D_LOCATION_TEXTURE_RGB && location != WINED3D_LOCATION_TEXTURE_SRGB)
+        return FALSE;
+    return texture->target == GL_TEXTURE_2D_MULTISAMPLE || texture->target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+}
+
 /* Blit between surface locations. Onscreen on different swapchains is not supported.
  * Depth / stencil is not supported. Context activation is done by the caller. */
 static void surface_blt_fbo(const struct wined3d_device *device,
@@ -392,7 +401,7 @@ static void surface_blt_fbo(const struct wined3d_device *device,
     }
 
     /* Resolve the source surface first if needed. */
-    if (src_location == WINED3D_LOCATION_RB_MULTISAMPLE
+    if (is_multisample_location(src_texture, src_location)
             && (src_texture->resource.format->id != dst_texture->resource.format->id
                 || abs(src_rect.bottom - src_rect.top) != abs(dst_rect.bottom - dst_rect.top)
                 || abs(src_rect.right - src_rect.left) != abs(dst_rect.right - dst_rect.left)))
@@ -571,7 +580,7 @@ static void surface_download_data(struct wined3d_surface *surface, const struct 
 
         WARN_(d3d_perf)("Downloading all miplevel layers to get the surface data for a single sub-resource.\n");
 
-        if (!(temporary_mem = wined3d_calloc(texture->layer_count, sub_resource->size)))
+        if (!(temporary_mem = heap_calloc(texture->layer_count, sub_resource->size)))
         {
             ERR("Out of memory.\n");
             return;
@@ -593,7 +602,7 @@ static void surface_download_data(struct wined3d_surface *surface, const struct 
                 wined3d_texture_get_level_pow2_width(texture, surface->texture_level),
                 wined3d_texture_get_level_pow2_height(texture, surface->texture_level),
                 &src_row_pitch, &src_slice_pitch);
-        if (!(temporary_mem = HeapAlloc(GetProcessHeap(), 0, src_slice_pitch)))
+        if (!(temporary_mem = heap_alloc(src_slice_pitch)))
         {
             ERR("Out of memory.\n");
             return;
@@ -622,7 +631,7 @@ static void surface_download_data(struct wined3d_surface *surface, const struct 
                 wined3d_texture_get_level_height(texture, surface->texture_level),
                 &src_row_pitch, &src_slice_pitch);
 
-        if (!(temporary_mem = HeapAlloc(GetProcessHeap(), 0, src_slice_pitch)))
+        if (!(temporary_mem = heap_alloc(src_slice_pitch)))
         {
             ERR("Failed to allocate memory.\n");
             return;
@@ -751,7 +760,7 @@ static void surface_download_data(struct wined3d_surface *surface, const struct 
         checkGLcall("glBindBuffer");
     }
 
-    HeapFree(GetProcessHeap(), 0, temporary_mem);
+    heap_free(temporary_mem);
 }
 
 /* This call just uploads data, the caller is responsible for binding the
@@ -1016,7 +1025,7 @@ void surface_set_compatible_renderbuffer(struct wined3d_surface *surface, const 
         gl_info->fbo_ops.glRenderbufferStorage(GL_RENDERBUFFER,
                 surface->container->resource.format->glInternal, width, height);
 
-        entry = HeapAlloc(GetProcessHeap(), 0, sizeof(*entry));
+        entry = heap_alloc(sizeof(*entry));
         entry->width = width;
         entry->height = height;
         entry->id = renderbuffer;
@@ -1470,7 +1479,7 @@ static void read_from_framebuffer(struct wined3d_surface *surface,
         /* glReadPixels returns the image upside down, and there is no way to
          * prevent this. Flip the lines in software. */
 
-        if (!(row = HeapAlloc(GetProcessHeap(), 0, row_pitch)))
+        if (!(row = heap_alloc(row_pitch)))
             goto error;
 
         if (data.buffer_object)
@@ -1491,7 +1500,7 @@ static void read_from_framebuffer(struct wined3d_surface *surface,
             top += row_pitch;
             bottom -= row_pitch;
         }
-        HeapFree(GetProcessHeap(), 0, row);
+        heap_free(row);
 
         if (data.buffer_object)
             GL_EXTCALL(glUnmapBuffer(GL_PIXEL_PACK_BUFFER));
@@ -2317,7 +2326,7 @@ static BOOL surface_load_texture(struct wined3d_surface *surface,
 
         src_mem = context_map_bo_address(context, &data, src_slice_pitch,
                 GL_PIXEL_UNPACK_BUFFER, WINED3D_MAP_READONLY);
-        if (!(dst_mem = HeapAlloc(GetProcessHeap(), 0, dst_slice_pitch)))
+        if (!(dst_mem = heap_alloc(dst_slice_pitch)))
         {
             ERR("Out of memory (%u).\n", dst_slice_pitch);
             context_release(context);
@@ -2341,7 +2350,7 @@ static BOOL surface_load_texture(struct wined3d_surface *surface,
 
         src_mem = context_map_bo_address(context, &data, src_slice_pitch,
                 GL_PIXEL_UNPACK_BUFFER, WINED3D_MAP_READONLY);
-        if (!(dst_mem = HeapAlloc(GetProcessHeap(), 0, dst_slice_pitch)))
+        if (!(dst_mem = heap_alloc(dst_slice_pitch)))
         {
             ERR("Out of memory (%u).\n", dst_slice_pitch);
             context_release(context);
@@ -2361,7 +2370,7 @@ static BOOL surface_load_texture(struct wined3d_surface *surface,
     wined3d_surface_upload_data(surface, gl_info, &format, &src_rect,
             src_row_pitch, &dst_point, srgb, wined3d_const_bo_address(&data));
 
-    HeapFree(GetProcessHeap(), 0, dst_mem);
+    heap_free(dst_mem);
 
     return TRUE;
 }
@@ -2437,7 +2446,7 @@ static void fbo_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    HeapFree(GetProcessHeap(), 0, blitter);
+    heap_free(blitter);
 }
 
 static void fbo_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
@@ -2511,7 +2520,7 @@ void wined3d_fbo_blitter_create(struct wined3d_blitter **next, const struct wine
     if ((wined3d_settings.offscreen_rendering_mode != ORM_FBO) || !gl_info->fbo_ops.glBlitFramebuffer)
         return;
 
-    if (!(blitter = HeapAlloc(GetProcessHeap(), 0, sizeof(*blitter))))
+    if (!(blitter = heap_alloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -2529,7 +2538,7 @@ static void raw_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    HeapFree(GetProcessHeap(), 0, blitter);
+    heap_free(blitter);
 }
 
 /* Context activation is done by the caller. */
@@ -2643,7 +2652,7 @@ void wined3d_raw_blitter_create(struct wined3d_blitter **next, const struct wine
     if (!gl_info->supported[ARB_COPY_IMAGE])
         return;
 
-    if (!(blitter = HeapAlloc(GetProcessHeap(), 0, sizeof(*blitter))))
+    if (!(blitter = heap_alloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -2661,7 +2670,7 @@ static void ffp_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    HeapFree(GetProcessHeap(), 0, blitter);
+    heap_free(blitter);
 }
 
 static BOOL ffp_blit_supported(enum wined3d_blit_op blit_op, const struct wined3d_context *context,
@@ -2938,7 +2947,7 @@ void wined3d_ffp_blitter_create(struct wined3d_blitter **next, const struct wine
 {
     struct wined3d_blitter *blitter;
 
-    if (!(blitter = HeapAlloc(GetProcessHeap(), 0, sizeof(*blitter))))
+    if (!(blitter = heap_alloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -2956,7 +2965,7 @@ static void cpu_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    HeapFree(GetProcessHeap(), 0, blitter);
+    heap_free(blitter);
 }
 
 static HRESULT surface_cpu_blt_compressed(const BYTE *src_data, BYTE *dst_data,
@@ -3749,7 +3758,7 @@ struct wined3d_blitter *wined3d_cpu_blitter_create(void)
 {
     struct wined3d_blitter *blitter;
 
-    if (!(blitter = HeapAlloc(GetProcessHeap(), 0, sizeof(*blitter))))
+    if (!(blitter = heap_alloc(sizeof(*blitter))))
         return NULL;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -3778,7 +3787,7 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
     DWORD src_ds_flags, dst_ds_flags;
     struct wined3d_context *context;
     enum wined3d_blit_op blit_op;
-    BOOL scale, convert;
+    BOOL scale, convert, resolve;
 
     static const DWORD simple_blit = WINED3D_BLT_SRC_CKEY
             | WINED3D_BLT_SRC_CKEY_OVERRIDE
@@ -3844,6 +3853,7 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
     scale = src_rect->right - src_rect->left != dst_rect->right - dst_rect->left
             || src_rect->bottom - src_rect->top != dst_rect->bottom - dst_rect->top;
     convert = src_texture->resource.format->id != dst_texture->resource.format->id;
+    resolve = src_texture->resource.multisample_type != dst_texture->resource.multisample_type;
 
     dst_ds_flags = dst_texture->resource.format_flags
             & (WINED3DFMT_FLAG_DEPTH | WINED3DFMT_FLAG_STENCIL);
@@ -3954,7 +3964,7 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
 
         return WINED3D_OK;
     }
-    else if ((flags & WINED3D_BLT_RAW) || (!scale && !convert))
+    else if ((flags & WINED3D_BLT_RAW) || (!scale && !convert && !resolve))
     {
         blit_op = WINED3D_BLIT_OP_RAW_BLIT;
     }

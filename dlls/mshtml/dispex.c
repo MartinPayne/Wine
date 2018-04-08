@@ -64,6 +64,7 @@ typedef struct {
 
 struct dispex_data_t {
     dispex_static_data_t *desc;
+    compat_mode_t compat_mode;
 
     DWORD func_cnt;
     DWORD func_size;
@@ -209,6 +210,7 @@ HRESULT get_class_typeinfo(const CLSID *clsid, ITypeInfo **typeinfo)
     CASE_VT(VT_I2, INT16, V_I2);                        \
     CASE_VT(VT_UI2, UINT16, V_UI2);                     \
     CASE_VT(VT_I4, INT32, V_I4);                        \
+    CASE_VT(VT_UI4, UINT32, V_UI4);                     \
     CASE_VT(VT_R4, float, V_R4);                        \
     CASE_VT(VT_BSTR, BSTR, V_BSTR);                     \
     CASE_VT(VT_BOOL, VARIANT_BOOL, V_BOOL)
@@ -410,6 +412,7 @@ static dispex_data_t *preprocess_dispex_data(dispex_static_data_t *desc, compat_
         return NULL;
     }
     data->desc = desc;
+    data->compat_mode = compat_mode;
     data->func_cnt = 0;
     data->func_disp_cnt = 0;
     data->func_size = 16;
@@ -1363,7 +1366,9 @@ HRESULT remove_attribute(DispatchEx *This, DISPID id, VARIANT_BOOL *success)
 
 compat_mode_t dispex_compat_mode(DispatchEx *dispex)
 {
-    return dispex->info->desc->vtbl->get_compat_mode(dispex);
+    return dispex->info != dispex->info->desc->delayed_init_info
+        ? dispex->info->compat_mode
+        : dispex->info->desc->vtbl->get_compat_mode(dispex);
 }
 
 static dispex_data_t *ensure_dispex_info(dispex_static_data_t *desc, compat_mode_t compat_mode)

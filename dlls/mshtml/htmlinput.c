@@ -1490,7 +1490,7 @@ static dispex_static_data_t HTMLInputElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLInputElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLInputElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLInputElement *ret;
     nsresult nsres;
@@ -1506,7 +1506,7 @@ HRESULT HTMLInputElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLInputElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLInputElement, (void**)&ret->nsinput);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLInputElement, (void**)&ret->nsinput);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;
@@ -1590,7 +1590,7 @@ static HRESULT WINAPI HTMLLabelElement_put_htmlFor(IHTMLLabelElement *iface, BST
 
     nsAString_InitDepend(&for_str, forW);
     nsAString_InitDepend(&val_str, v);
-    nsres = nsIDOMHTMLElement_SetAttribute(This->element.nselem, &for_str, &val_str);
+    nsres = nsIDOMElement_SetAttribute(This->element.dom_element, &for_str, &val_str);
     nsAString_Finish(&for_str);
     nsAString_Finish(&val_str);
     if(NS_FAILED(nsres)) {
@@ -1686,7 +1686,7 @@ static dispex_static_data_t HTMLLabelElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLLabelElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLLabelElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLLabelElement *ret;
 
@@ -2037,7 +2037,7 @@ static dispex_static_data_t HTMLButtonElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLButtonElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLButtonElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLButtonElement *ret;
     nsresult nsres;
@@ -2051,7 +2051,7 @@ HRESULT HTMLButtonElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLButtonElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLButtonElement, (void**)&ret->nsbutton);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLButtonElement, (void**)&ret->nsbutton);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;

@@ -350,8 +350,6 @@ static const struct message setstate_seq[] =
     { BM_SETSTATE, sent },
     { WM_APP, sent|wparam|lparam, 0, 0 },
     { WM_PAINT, sent },
-    { WM_NCPAINT, sent|optional }, /* FIXME: Wine sends it */
-    { WM_ERASEBKGND, sent|defwinproc|optional },
     { WM_PAINT, sent|optional },
     { 0 }
 };
@@ -372,8 +370,6 @@ static const struct message setstate_user_seq[] =
     { WM_COMMAND, sent|wparam|parent, MAKEWPARAM(ID_BUTTON, BN_HILITE) },
     { WM_APP, sent|wparam|lparam, 0, 0 },
     { WM_PAINT, sent },
-    { WM_NCPAINT, sent|optional }, /* FIXME: Wine sends it */
-    { WM_ERASEBKGND, sent|defwinproc|optional },
     { 0 }
 };
 
@@ -444,8 +440,7 @@ static const struct message setcheck_radio_redraw_seq[] =
     { WM_STYLECHANGED, sent|wparam|defwinproc, GWL_STYLE },
     { WM_APP, sent|wparam|lparam, 0, 0 },
     { WM_PAINT, sent },
-    { WM_NCPAINT, sent|optional }, /* FIXME: Wine sends it */
-    { WM_ERASEBKGND, sent|defwinproc|optional },
+    { WM_NCPAINT, sent|defwinproc|optional }, /* FIXME: Wine sends it */
     { 0 }
 };
 
@@ -459,7 +454,7 @@ static HWND create_button(DWORD style, HWND parent)
         style |= WS_CHILD|BS_NOTIFY;
         menuid = (HMENU)ID_BUTTON;
     }
-    hwnd = CreateWindowExA(0, "Button", "test", style, 0, 0, 50, 14, parent, menuid, 0, NULL);
+    hwnd = CreateWindowExA(0, WC_BUTTONA, "test", style, 0, 0, 50, 14, parent, menuid, 0, NULL);
     ok(hwnd != NULL, "failed to create a button, 0x%08x, %p\n", style, parent);
     pSetWindowSubclass(hwnd, button_subclass_proc, 0, 0);
     return hwnd;
@@ -511,6 +506,18 @@ static void test_button_messages(void)
         { BS_OWNERDRAW, DLGC_BUTTON,
           setfocus_ownerdraw_seq, killfocus_ownerdraw_seq, setstyle_ownerdraw_seq,
           setstate_ownerdraw_seq, clearstate_ownerdraw_seq, setcheck_ignored_seq },
+        { BS_SPLITBUTTON, DLGC_BUTTON | DLGC_UNDEFPUSHBUTTON | DLGC_WANTARROWS,
+          setfocus_seq, killfocus_seq, setstyle_seq,
+          setstate_seq, setstate_seq, setcheck_ignored_seq },
+        { BS_DEFSPLITBUTTON, DLGC_BUTTON | DLGC_DEFPUSHBUTTON | DLGC_WANTARROWS,
+          setfocus_seq, killfocus_seq, setstyle_seq,
+          setstate_seq, setstate_seq, setcheck_ignored_seq },
+        { BS_COMMANDLINK, DLGC_BUTTON | DLGC_UNDEFPUSHBUTTON,
+          setfocus_seq, killfocus_seq, setstyle_seq,
+          setstate_seq, setstate_seq, setcheck_ignored_seq },
+        { BS_DEFCOMMANDLINK, DLGC_BUTTON | DLGC_DEFPUSHBUTTON,
+          setfocus_seq, killfocus_seq, setstyle_seq,
+          setstate_seq, setstate_seq, setcheck_ignored_seq },
     };
     const struct message *seq;
     unsigned int i;
@@ -550,7 +557,15 @@ static void test_button_messages(void)
             ok(style == button[i].style, "expected style %x got %x\n", button[i].style, style);
 
         dlg_code = SendMessageA(hwnd, WM_GETDLGCODE, 0, 0);
-        ok(dlg_code == button[i].dlg_code, "%u: wrong dlg_code %08x\n", i, dlg_code);
+        if (button[i].style == BS_SPLITBUTTON ||
+                button[i].style == BS_DEFSPLITBUTTON ||
+                button[i].style == BS_COMMANDLINK ||
+                button[i].style == BS_DEFCOMMANDLINK)
+        {
+            ok(dlg_code == button[i].dlg_code || broken(dlg_code == DLGC_BUTTON) /* WinXP */, "%u: wrong dlg_code %08x\n", i, dlg_code);
+        }
+        else
+            ok(dlg_code == button[i].dlg_code, "%u: wrong dlg_code %08x\n", i, dlg_code);
 
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -576,7 +591,8 @@ static void test_button_messages(void)
         SendMessageA(hwnd, BM_SETSTYLE, button[i].style | BS_BOTTOM, TRUE);
         SendMessageA(hwnd, WM_APP, 0, 0); /* place a separator mark here */
         while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
-        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setstyle, "BM_SETSTYLE on a button", TRUE);
+        todo = button[i].style == BS_OWNERDRAW;
+        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setstyle, "BM_SETSTYLE on a button", todo);
 
         style = GetWindowLongA(hwnd, GWL_STYLE);
         style &= ~(WS_VISIBLE | WS_CHILD | BS_NOTIFY);
@@ -591,7 +607,7 @@ static void test_button_messages(void)
         SendMessageA(hwnd, BM_SETSTATE, TRUE, 0);
         SendMessageA(hwnd, WM_APP, 0, 0); /* place a separator mark here */
         while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
-        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setstate, "BM_SETSTATE/TRUE on a button", TRUE);
+        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setstate, "BM_SETSTATE/TRUE on a button", FALSE);
 
         state = SendMessageA(hwnd, BM_GETSTATE, 0, 0);
         ok(state == BST_PUSHED, "expected state 0x0004, got %04x\n", state);
@@ -605,7 +621,7 @@ static void test_button_messages(void)
         SendMessageA(hwnd, BM_SETSTATE, FALSE, 0);
         SendMessageA(hwnd, WM_APP, 0, 0); /* place a separator mark here */
         while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
-        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].clearstate, "BM_SETSTATE/FALSE on a button", TRUE);
+        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].clearstate, "BM_SETSTATE/FALSE on a button", FALSE);
 
         state = SendMessageA(hwnd, BM_GETSTATE, 0, 0);
         ok(state == 0, "expected state 0, got %04x\n", state);
@@ -623,17 +639,14 @@ static void test_button_messages(void)
             button[i].style == BS_AUTORADIOBUTTON)
         {
             seq = setcheck_radio_seq;
-            todo = TRUE;
         }
         else
-        {
             seq = setcheck_ignored_seq;
-            todo = FALSE;
-        }
+
         SendMessageA(hwnd, BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessageA(hwnd, WM_APP, 0, 0); /* place a separator mark here */
         while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
-        ok_sequence(sequences, COMBINED_SEQ_INDEX, seq, "BM_SETCHECK on a button", todo);
+        ok_sequence(sequences, COMBINED_SEQ_INDEX, seq, "BM_SETCHECK on a button", FALSE);
 
         state = SendMessageA(hwnd, BM_GETCHECK, 0, 0);
         ok(state == BST_UNCHECKED, "expected BST_UNCHECKED, got %04x\n", state);
@@ -647,23 +660,23 @@ static void test_button_messages(void)
         SendMessageA(hwnd, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageA(hwnd, WM_APP, 0, 0); /* place a separator mark here */
         while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setcheck, "BM_SETCHECK on a button", FALSE);
 
+        state = SendMessageA(hwnd, BM_GETCHECK, 0, 0);
         if (button[i].style == BS_PUSHBUTTON ||
             button[i].style == BS_DEFPUSHBUTTON ||
             button[i].style == BS_GROUPBOX ||
             button[i].style == BS_USERBUTTON ||
-            button[i].style == BS_OWNERDRAW)
+            button[i].style == BS_OWNERDRAW ||
+            button[i].style == BS_SPLITBUTTON ||
+            button[i].style == BS_DEFSPLITBUTTON ||
+            button[i].style == BS_COMMANDLINK ||
+            button[i].style == BS_DEFCOMMANDLINK)
         {
-            ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setcheck, "BM_SETCHECK on a button", FALSE);
-            state = SendMessageA(hwnd, BM_GETCHECK, 0, 0);
             ok(state == BST_UNCHECKED, "expected check BST_UNCHECKED, got %04x\n", state);
         }
         else
-        {
-            ok_sequence(sequences, COMBINED_SEQ_INDEX, button[i].setcheck, "BM_SETCHECK on a button", TRUE);
-            state = SendMessageA(hwnd, BM_GETCHECK, 0, 0);
             ok(state == BST_CHECKED, "expected check BST_CHECKED, got %04x\n", state);
-        }
 
         style = GetWindowLongA(hwnd, GWL_STYLE);
         style &= ~(WS_CHILD | BS_NOTIFY | WS_VISIBLE);
@@ -715,21 +728,22 @@ static void test_button_class(void)
 
     ret = GetClassInfoExA(NULL, WC_BUTTONA, &exA);
     ok(ret, "got %d\n", ret);
-todo_wine
     ok(IS_WNDPROC_HANDLE(exA.lpfnWndProc), "got %p\n", exA.lpfnWndProc);
+    ok(exA.cbClsExtra == 0, "Unexpected class bytes %d.\n", exA.cbClsExtra);
+    ok(exA.cbWndExtra == sizeof(void *), "Unexpected window bytes %d.\n", exA.cbWndExtra);
 
     ret = GetClassInfoExW(NULL, WC_BUTTONW, &exW);
     ok(ret, "got %d\n", ret);
     ok(!IS_WNDPROC_HANDLE(exW.lpfnWndProc), "got %p\n", exW.lpfnWndProc);
+    ok(exW.cbClsExtra == 0, "Unexpected class bytes %d.\n", exW.cbClsExtra);
+    ok(exW.cbWndExtra == sizeof(void *), "Unexpected window bytes %d.\n", exW.cbWndExtra);
 
     /* check that versioned class is also accessible */
     nameW = get_versioned_classname(WC_BUTTONW);
     ok(lstrcmpW(nameW, WC_BUTTONW), "got %s\n", wine_dbgstr_w(nameW));
 
     ret = GetClassInfoExW(NULL, nameW, &ex2W);
-todo_wine
     ok(ret, "got %d\n", ret);
-if (ret) /* TODO: remove once Wine is fixed */
     ok(ex2W.lpfnWndProc == exW.lpfnWndProc, "got %p, %p\n", exW.lpfnWndProc, ex2W.lpfnWndProc);
 
     /* Check reported class name */
@@ -745,10 +759,8 @@ if (ret) /* TODO: remove once Wine is fixed */
 
     /* explicitly create with versioned class name */
     hwnd = CreateWindowExW(0, nameW, testW, BS_CHECKBOX, 0, 0, 50, 14, NULL, 0, 0, NULL);
-todo_wine
     ok(hwnd != NULL, "failed to create a window %s\n", wine_dbgstr_w(nameW));
-if (hwnd)
-{
+
     len = GetClassNameA(hwnd, buffA, sizeof(buffA));
     ok(len == strlen(buffA), "got %d\n", len);
     ok(!strcmp(buffA, "Button"), "got %s\n", buffA);
@@ -758,7 +770,6 @@ if (hwnd)
     ok(!strcmp(buffA, "Button"), "got %s\n", buffA);
 
     DestroyWindow(hwnd);
-}
 }
 
 static void register_parent_class(void)

@@ -43,7 +43,24 @@ static LANGID (WINAPI *pGetUserDefaultUILanguage)(void);
 
 static BOOL is_ie9plus;
 
-static const char doc_blank[] = "<html></html>";
+static enum {
+    COMPAT_NONE,
+    COMPAT_IE9
+} compat_mode = COMPAT_NONE;
+
+static const char doc_blank[] =
+    "<html></html>";
+
+static const char doc_blank_ie9[] =
+    "<!DOCTYPE html>\n"
+    "<html>"
+    " <head>"
+    "  <meta http-equiv=\"x-ua-compatible\" content=\"IE=9\" />"
+    " </head>"
+    " <body>"
+    " </body>"
+    "</html>";
+
 static const char doc_str1[] = "<html><body>test</body></html>";
 static const char range_test_str[] =
     "<html><body>test \na<font size=\"2\">bc\t123<br /> it's\r\n  \t</font>text<br /></body></html>";
@@ -135,7 +152,9 @@ typedef enum {
     ET_LINK,
     ET_LABEL,
     ET_BUTTON,
-    ET_AREA
+    ET_AREA,
+    ET_SVG,
+    ET_CIRCLE
 } elem_type_t;
 
 static const IID * const none_iids[] = {
@@ -503,7 +522,9 @@ static const elem_type_info_t elem_type_infos[] = {
     {"LINK",      link_iids,        &DIID_DispHTMLLinkElement,      &CLSID_HTMLLinkElement},
     {"LABEL",     label_iids,       &DIID_DispHTMLLabelElement,     &CLSID_HTMLLabelElement},
     {"BUTTON",    button_iids,      &DIID_DispHTMLButtonElement,    &CLSID_HTMLButtonElement},
-    {"AREA",      area_iids,        &DIID_DispHTMLAreaElement,      &CLSID_HTMLAreaElement}
+    {"AREA",      area_iids,        &DIID_DispHTMLAreaElement,      &CLSID_HTMLAreaElement},
+    {"svg",       elem_iids,        NULL},
+    {"circle",    elem_iids,        NULL}
 };
 
 static int strcmp_wa(LPCWSTR strw, const char *stra)
@@ -757,7 +778,7 @@ static void _test_disp2(unsigned line, IUnknown *unk, const IID *diid, const IID
     IID iid;
     HRESULT hres;
 
-    if(_test_get_dispid(line, unk, &iid))
+    if(_test_get_dispid(line, unk, &iid) && compat_mode < COMPAT_IE9)
         ok_(__FILE__,line) (IsEqualGUID(&iid, diid) || broken(diid2 && IsEqualGUID(&iid, diid2)),
                 "unexpected guid %s\n", wine_dbgstr_guid(&iid));
 
@@ -773,7 +794,7 @@ static void _test_disp2(unsigned line, IUnknown *unk, const IID *diid, const IID
     ok_(__FILE__,line)(hres == E_NOINTERFACE, "Got IManagedObject iface\n");
     ok_(__FILE__,line)(!u, "u = %p\n", u);
 
-    if(val)
+    if(val && compat_mode < COMPAT_IE9) /* FIXME: Enable those tests in IE9+ mode */
         _test_disp_value(line, unk, val);
 
     if(clsid) {
@@ -2735,7 +2756,10 @@ static void _test_elem_collection(unsigned line, IUnknown *unk,
     V_I4(&name) = -1;
     disp = (void*)0xdeadbeef;
     hres = IHTMLElementCollection_item(col, name, index, &disp);
-    ok_(__FILE__,line) (hres == E_INVALIDARG, "item failed: %08x, expected E_INVALIDARG\n", hres);
+    if(compat_mode < COMPAT_IE9)
+        ok_(__FILE__,line) (hres == E_INVALIDARG, "item failed: %08x, expected E_INVALIDARG\n", hres);
+    else
+        ok_(__FILE__,line) (hres == S_OK, "item failed: %08x\n", hres);
     ok_(__FILE__,line) (disp == NULL, "disp != NULL\n");
 
     IHTMLElementCollection_Release(col);
@@ -4560,8 +4584,9 @@ static void _test_form_put_encoding(unsigned line, IUnknown *unk, HRESULT exp_hr
         _test_form_encoding(line, unk, encoding);
 }
 
-#define test_form_elements(a) _test_form_elements(__LINE__,a)
-static void _test_form_elements(unsigned line, IUnknown *unk)
+#define test_form_elements(a,b,c) _test_form_elements(__LINE__,a,b,c)
+static void _test_form_elements(unsigned line, IUnknown *unk, const elem_type_t *elem_types,
+                                LONG elem_types_cnt)
 {
     IHTMLFormElement *form = _get_form_iface(line, unk);
     IDispatch *disp;
@@ -4571,7 +4596,10 @@ static void _test_form_elements(unsigned line, IUnknown *unk)
     hres = IHTMLFormElement_get_elements(form, &disp);
     ok_(__FILE__,line)(hres == S_OK, "get_elements failed: %08x\n", hres);
     ok_(__FILE__,line)(disp != NULL, "disp = NULL\n");
-    ok_(__FILE__,line)(iface_cmp((IUnknown*)form, (IUnknown*)disp), "disp != form\n");
+    if(compat_mode < COMPAT_IE9)
+        ok_(__FILE__,line)(iface_cmp((IUnknown*)form, (IUnknown*)disp), "disp != form\n");
+    else
+        _test_elem_collection(line, (IUnknown*)disp, elem_types, elem_types_cnt);
 
     IDispatch_Release(disp);
     IHTMLFormElement_Release(form);
@@ -4623,7 +4651,7 @@ static void test_select_form(IUnknown *uselect, IUnknown  *uform)
     ok(form != NULL, "form == NULL\n");
 
     test_form_length((IUnknown*)form, 2);
-    test_form_elements((IUnknown*)form);
+    test_form_elements((IUnknown*)form, NULL, 0);
     test_form_name((IUnknown*)form, "form_name");
 
     ok(iface_cmp(uform, (IUnknown*)form), "Expected %p, got %p\n", uform, form);
@@ -5361,7 +5389,10 @@ static void test_form_item(IHTMLElement *elem)
     V_I4(&name) = -1;
     disp = (void*)0xdeadbeef;
     hres = IHTMLFormElement_item(form, name, index, &disp);
-    ok(hres == E_INVALIDARG, "item failed: %08x, expected E_INVALIDARG\n", hres);
+    if(compat_mode < COMPAT_IE9)
+        ok(hres == E_INVALIDARG, "item failed: %08x, expected E_INVALIDARG\n", hres);
+    else
+        ok(hres == S_OK, "item failed: %08x\n", hres);
     ok(!disp, "disp = %p\n", disp);
 
     V_I4(&name) = 2;
@@ -8865,7 +8896,7 @@ static void test_elems(IHTMLDocument2 *doc)
     ok(elem != NULL, "elem == NULL\n");
     if(elem) {
         test_form_length((IUnknown*)elem, 0);
-        test_form_elements((IUnknown*)elem);
+        test_form_elements((IUnknown*)elem, NULL, 0);
         IHTMLElement_Release(elem);
     }
 
@@ -9230,53 +9261,6 @@ static void test_elems2(IHTMLDocument2 *doc)
     test_elem_all((IUnknown*)div, outer_types, 1);
     IHTMLElement_Release(elem2);
 
-    test_elem_set_innerhtml((IUnknown*)div, "<textarea id=\"ta\"></textarea>");
-    elem = get_elem_by_id(doc, "ta", TRUE);
-    if(elem) {
-        IHTMLFormElement *form;
-
-        test_textarea_value((IUnknown*)elem, NULL);
-        test_textarea_put_value((IUnknown*)elem, "test");
-        test_textarea_defaultvalue((IUnknown*)elem, NULL);
-        test_textarea_put_defaultvalue((IUnknown*)elem, "defval text");
-        test_textarea_put_value((IUnknown*)elem, "test");
-        test_textarea_readonly((IUnknown*)elem, VARIANT_FALSE);
-        test_textarea_put_readonly((IUnknown*)elem, VARIANT_TRUE);
-        test_textarea_put_readonly((IUnknown*)elem, VARIANT_FALSE);
-        test_textarea_type((IUnknown*)elem);
-
-        form = get_textarea_form((IUnknown*)elem);
-        ok(!form, "form = %p\n", form);
-
-        test_elem_istextedit(elem, VARIANT_TRUE);
-
-        IHTMLElement_Release(elem);
-    }
-
-    test_elem_set_innerhtml((IUnknown*)div, "<textarea id=\"ta\">default text</textarea>");
-    elem = get_elem_by_id(doc, "ta", TRUE);
-    if(elem) {
-        test_textarea_defaultvalue((IUnknown*)elem, "default text");
-        IHTMLElement_Release(elem);
-    }
-
-    test_elem_set_innerhtml((IUnknown*)div, "<form id=\"fid\"><textarea id=\"ta\"></textarea></form>");
-    elem = get_elem_by_id(doc, "ta", TRUE);
-    if(elem) {
-        IHTMLFormElement *form;
-
-        elem2 = get_elem_by_id(doc, "fid", TRUE);
-        ok(elem2 != NULL, "elem2 == NULL\n");
-
-        form = get_textarea_form((IUnknown*)elem);
-        ok(form != NULL, "form = NULL\n");
-        ok(iface_cmp((IUnknown*)form, (IUnknown*)elem2), "form != elem2\n");
-
-        IHTMLFormElement_Release(form);
-        IHTMLElement_Release(elem2);
-        IHTMLElement_Release(elem);
-    }
-
     test_elem_set_innerhtml((IUnknown*)div,
             "<input value=\"val\" id =\"inputid\"  />");
     elem = get_elem_by_id(doc, "inputid", TRUE);
@@ -9290,35 +9274,6 @@ static void test_elems2(IHTMLDocument2 *doc)
 
     test_elem_set_innerhtml((IUnknown*)div, "");
     test_insert_adjacent_elems(doc, div);
-
-    test_elem_set_innerhtml((IUnknown*)div,
-            "<form id=\"form\"><input type=\"button\" /><div><input type=\"text\" id=\"inputid\"/></div></textarea>");
-    elem = get_elem_by_id(doc, "form", TRUE);
-    if(elem) {
-        test_form_length((IUnknown*)elem, 2);
-        test_form_item(elem);
-        test_form_action((IUnknown*)elem, NULL);
-        test_form_put_action((IUnknown*)elem, "about:blank");
-        test_form_method((IUnknown*)elem, "get");
-        test_form_put_method((IUnknown*)elem, S_OK, "post");
-        test_form_put_method((IUnknown*)elem, E_INVALIDARG, "put");
-        test_form_method((IUnknown*)elem, "post");
-        test_form_name((IUnknown*)elem, NULL);
-        test_form_put_name((IUnknown*)elem, "Name");
-        test_form_encoding((IUnknown*)elem, "application/x-www-form-urlencoded");
-        test_form_put_encoding((IUnknown*)elem, S_OK, "text/plain");
-        test_form_put_encoding((IUnknown*)elem, S_OK, "multipart/form-data");
-        test_form_put_encoding((IUnknown*)elem, E_INVALIDARG, "image/png");
-        test_form_encoding((IUnknown*)elem, "multipart/form-data");
-        test_form_elements((IUnknown*)elem);
-        test_form_reset((IUnknown*)elem);
-        test_form_target((IUnknown*)elem);
-        IHTMLElement_Release(elem);
-
-        elem = get_elem_by_id(doc, "inputid", TRUE);
-        test_input_get_form((IUnknown*)elem, "form");
-        IHTMLElement_Release(elem);
-    }
 
     test_elem_set_innerhtml((IUnknown*)div,
             "<form id=\"form\" name=\"form_name\"><select id=\"sform\"><option id=\"oform\"></option></select><button id=\"btnid\"></button></form>");
@@ -9373,6 +9328,139 @@ static void test_elems2(IHTMLDocument2 *doc)
     test_blocked(doc, div);
     test_elem_names(doc);
 
+    IHTMLElement_Release(div);
+}
+
+static void test_textarea_element(IHTMLDocument2 *doc, IHTMLElement *parent)
+{
+    IHTMLElement *form_elem, *elem;
+    IHTMLFormElement *form;
+
+    test_elem_set_innerhtml((IUnknown*)parent,
+                            "<form id=\"fid\"><textarea id=\"ta\"></textarea></form>");
+    elem = get_elem_by_id(doc, "ta", TRUE);
+    test_elem_type((IUnknown*)elem, ET_TEXTAREA);
+
+    form_elem = get_elem_by_id(doc, "fid", TRUE);
+    ok(form_elem != NULL, "form_elem == NULL\n");
+
+    form = get_textarea_form((IUnknown*)elem);
+    ok(form != NULL, "form = NULL\n");
+    ok(iface_cmp((IUnknown*)form, (IUnknown*)form_elem), "form != form_elem\n");
+
+    IHTMLFormElement_Release(form);
+    IHTMLElement_Release(form_elem);
+    IHTMLElement_Release(elem);
+
+    test_elem_set_innerhtml((IUnknown*)parent, "<textarea id=\"ta\"></textarea>");
+    elem = get_elem_by_id(doc, "ta", TRUE);
+
+    test_textarea_value((IUnknown*)elem, NULL);
+    test_textarea_put_value((IUnknown*)elem, "test");
+    test_textarea_defaultvalue((IUnknown*)elem, NULL);
+    test_textarea_put_defaultvalue((IUnknown*)elem, "defval text");
+    test_textarea_put_value((IUnknown*)elem, "test");
+    test_textarea_readonly((IUnknown*)elem, VARIANT_FALSE);
+    test_textarea_put_readonly((IUnknown*)elem, VARIANT_TRUE);
+    test_textarea_put_readonly((IUnknown*)elem, VARIANT_FALSE);
+    test_textarea_type((IUnknown*)elem);
+
+    form = get_textarea_form((IUnknown*)elem);
+    ok(!form, "form = %p\n", form);
+
+    test_elem_istextedit(elem, VARIANT_TRUE);
+
+    IHTMLElement_Release(elem);
+
+    test_elem_set_innerhtml((IUnknown*)parent, "<textarea id=\"ta\">default text</textarea>");
+    elem = get_elem_by_id(doc, "ta", TRUE);
+    test_textarea_defaultvalue((IUnknown*)elem, "default text");
+    IHTMLElement_Release(elem);
+}
+
+static void test_form_element(IHTMLDocument2 *doc, IHTMLElement *parent)
+{
+    IHTMLElement *elem, *input_elem;
+
+    static const elem_type_t elems_textarea_input[] = { ET_TEXTAREA, ET_INPUT };
+
+    test_elem_set_innerhtml((IUnknown*)parent,
+            "<form id=\"form\">"
+             "<textarea></textarea>"
+             "<div><input type=\"text\" id=\"inputid\" /></div>"
+             "</form>");
+    elem = get_elem_by_id(doc, "form", TRUE);
+    test_elem_type((IUnknown*)elem, ET_FORM);
+
+    test_form_length((IUnknown*)elem, 2);
+    test_form_item(elem);
+    test_form_action((IUnknown*)elem, NULL);
+    test_form_put_action((IUnknown*)elem, "about:blank");
+    test_form_method((IUnknown*)elem, "get");
+    test_form_put_method((IUnknown*)elem, S_OK, "post");
+    test_form_put_method((IUnknown*)elem, E_INVALIDARG, "put");
+    test_form_method((IUnknown*)elem, "post");
+    test_form_name((IUnknown*)elem, NULL);
+    test_form_put_name((IUnknown*)elem, "Name");
+    test_form_encoding((IUnknown*)elem, "application/x-www-form-urlencoded");
+    test_form_put_encoding((IUnknown*)elem, S_OK, "text/plain");
+    test_form_put_encoding((IUnknown*)elem, S_OK, "multipart/form-data");
+    test_form_put_encoding((IUnknown*)elem, E_INVALIDARG, "image/png");
+    test_form_encoding((IUnknown*)elem, "multipart/form-data");
+    test_form_elements((IUnknown*)elem, elems_textarea_input,
+                       sizeof(elems_textarea_input)/sizeof(*elems_textarea_input));
+    test_form_reset((IUnknown*)elem);
+    test_form_target((IUnknown*)elem);
+
+    input_elem = get_elem_by_id(doc, "inputid", TRUE);
+    test_input_get_form((IUnknown*)input_elem, "form");
+    IHTMLElement_Release(input_elem);
+
+    IHTMLElement_Release(elem);
+}
+
+static void test_svg_element(IHTMLDocument2 *doc, IHTMLElement *parent)
+{
+    IHTMLDOMNode *svg_node, *circle_node;
+
+    test_elem_set_innerhtml((IUnknown*)parent,
+            "<svg width=\"100\" height=\"100\" id=\"svgid\">"
+            "<circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"black\" />"
+            "</svg>");
+    svg_node = get_first_child((IUnknown*)parent);
+    if(compat_mode < COMPAT_IE9) {
+        todo_wine
+        ok(!svg_node, "svg_node != NULL\n");
+        if(svg_node)
+            IHTMLDOMNode_Release(svg_node);
+        return;
+    }
+    ok(svg_node != NULL, "svg_node = NULL\n");
+    test_elem_type((IUnknown*)svg_node, ET_SVG);
+
+    circle_node = get_first_child((IUnknown*)svg_node);
+    ok(circle_node != NULL, "circle_node = NULL\n");
+    if(!circle_node)
+        return;
+    test_elem_type((IUnknown*)circle_node, ET_CIRCLE);
+
+    IHTMLDOMNode_Release(circle_node);
+    IHTMLDOMNode_Release(svg_node);
+};
+
+static void test_dom_elements(IHTMLDocument2 *doc)
+{
+    IHTMLElement *body, *div;
+
+    body = doc_get_body(doc);
+    test_elem_set_innerhtml((IUnknown*)body, "<div id=\"parentdiv\"></div>");
+    div = get_doc_elem_by_id(doc, "parentdiv");
+
+    test_textarea_element(doc, div);
+    test_form_element(doc, div);
+    test_svg_element(doc, div);
+
+    IHTMLElement_Release(body);
     IHTMLElement_Release(div);
 }
 
@@ -10719,6 +10807,12 @@ START_TEST(dom)
     if (winetest_interactive || ! is_ie_hardened()) {
         run_domtest(elem_test_str, test_elems);
         run_domtest(elem_test2_str, test_elems2);
+        run_domtest(doc_blank, test_dom_elements);
+        if(is_ie9plus) {
+            compat_mode = COMPAT_IE9;
+            run_domtest(doc_blank_ie9, test_dom_elements);
+            compat_mode = COMPAT_NONE;
+        }
         run_domtest(noscript_str, test_noscript);
     }else {
         skip("IE running in Enhanced Security Configuration\n");

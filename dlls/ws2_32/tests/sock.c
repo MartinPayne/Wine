@@ -1181,7 +1181,7 @@ static void test_WithWSAStartup(void)
     struct
     {
         SOCKET src, dst, dup_src, dup_dst;
-    } pairs[128];
+    } pairs[32];
     DWORD error;
 
     res = WSAStartup( version, &data );
@@ -1250,7 +1250,8 @@ static void test_WithWSAStartup(void)
             res = getsockname(sock, (struct sockaddr *)&saddr, &size);
             error = WSAGetLastError();
             ok(res == SOCKET_ERROR, "Test[%d]: getsockname should have failed\n", i);
-            ok(error == WSAENOTSOCK, "Test[%d]: expected 10038, got %d\n", i, error);
+            if (res == SOCKET_ERROR)
+                ok(error == WSAENOTSOCK, "Test[%d]: expected 10038, got %d\n", i, error);
         }
     }
 

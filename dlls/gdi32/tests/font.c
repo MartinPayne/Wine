@@ -1128,7 +1128,7 @@ static int CALLBACK create_font_proc(const LOGFONTA *lpelfe,
     return 1;
 }
 
-static void ABCWidths_helper(const char* description, HDC hdc, WORD *glyphs, ABC *base_abci, ABC *base_abcw, ABCFLOAT *base_abcf, INT todo)
+static void ABCWidths_helper(const char* description, HDC hdc, WORD *glyphs, const ABC *base_abci, const ABC *base_abcw, const ABCFLOAT *base_abcf)
 {
     ABC abc[1];
     ABCFLOAT abcf[1];
@@ -1137,26 +1137,20 @@ static void ABCWidths_helper(const char* description, HDC hdc, WORD *glyphs, ABC
     ret = pGetCharABCWidthsI(hdc, 0, 1, glyphs, abc);
     ok(ret, "%s: GetCharABCWidthsI should have succeeded\n", description);
     ok ((INT)abc->abcB > 0, "%s: abcB should be positive\n", description);
-    todo_wine_if (todo)
-        ok(abc->abcA * base_abci->abcA >= 0, "%s: abcA's sign should be unchanged\n", description);
-    todo_wine_if (todo)
-        ok(abc->abcC * base_abci->abcC >= 0, "%s: abcC's sign should be unchanged\n", description);
+    ok(abc->abcA * base_abci->abcA >= 0, "%s: abcA's sign should be unchanged\n", description);
+    ok(abc->abcC * base_abci->abcC >= 0, "%s: abcC's sign should be unchanged\n", description);
 
     ret = pGetCharABCWidthsW(hdc, 'i', 'i', abc);
     ok(ret, "%s: GetCharABCWidthsW should have succeeded\n", description);
     ok ((INT)abc->abcB > 0, "%s: abcB should be positive\n", description);
-    todo_wine_if (todo)
-        ok(abc->abcA * base_abcw->abcA >= 0, "%s: abcA's sign should be unchanged\n", description);
-    todo_wine_if (todo)
-        ok(abc->abcC * base_abcw->abcC >= 0, "%s: abcC's sign should be unchanged\n", description);
+    ok(abc->abcA * base_abcw->abcA >= 0, "%s: abcA's sign should be unchanged\n", description);
+    ok(abc->abcC * base_abcw->abcC >= 0, "%s: abcC's sign should be unchanged\n", description);
 
     ret = pGetCharABCWidthsFloatW(hdc, 'i', 'i', abcf);
     ok(ret, "%s: GetCharABCWidthsFloatW should have succeeded\n", description);
     ok (abcf->abcfB > 0.0, "%s: abcfB should be positive\n", description);
-    todo_wine_if (todo)
-        ok(abcf->abcfA * base_abcf->abcfA >= 0.0, "%s: abcfA's sign should be unchanged\n", description);
-    todo_wine_if (todo)
-        ok(abcf->abcfC * base_abcf->abcfC >= 0.0, "%s: abcfC's sign should be unchanged\n", description);
+    ok(abcf->abcfA * base_abcf->abcfA >= 0.0, "%s: abcfA's sign should be unchanged\n", description);
+    ok(abcf->abcfC * base_abcf->abcfC >= 0.0, "%s: abcfC's sign should be unchanged\n", description);
 }
 
 static void test_GetCharABCWidths(void)
@@ -1346,6 +1340,56 @@ static void test_GetCharABCWidths(void)
        "got %d, expected %d (C)\n", abc[0].abcC, abcw[0].abcC);
 
     DeleteObject(SelectObject(hdc, hfont));
+
+    /* test abcA == gmptGlyphOrigin.x && abcB == gmBlackBoxX
+       in various widths. */
+    for (i = 1; i <= 2; i++)
+    {
+        UINT j;
+        UINT code;
+
+        memset(&lf, 0, sizeof(lf));
+        lf.lfHeight = 20;
+        switch(i)
+        {
+        case 1:
+            strcpy(lf.lfFaceName, "Tahoma");
+            code = 'a';
+            break;
+        case 2:
+            strcpy(lf.lfFaceName, "Times New Roman");
+            lf.lfItalic = TRUE;
+            code = 'f';
+            break;
+        }
+        if (!is_truetype_font_installed(lf.lfFaceName))
+        {
+            skip("%s is not installed\n", lf.lfFaceName);
+            continue;
+        }
+        for (j = 1; j <= 80; j++)
+        {
+            GLYPHMETRICS gm;
+
+            lf.lfWidth = j;
+            hfont = CreateFontIndirectA(&lf);
+            hfont = SelectObject(hdc, hfont);
+
+            nb = GetGlyphOutlineA(hdc, code, GGO_METRICS, &gm, 0, NULL, &mat);
+            ok(nb, "GetGlyphOutlineA should have succeeded at width %d\n", i);
+
+            ret = GetCharABCWidthsA(hdc, code, code, abc);
+            ok(ret, "GetCharABCWidthsA should have succeeded at width %d\n", i);
+
+            ok(abc[0].abcA == gm.gmptGlyphOrigin.x,
+               "abcA(%d) and gmptGlyphOrigin.x(%d) values are different at width %d\n",
+               abc[0].abcA, gm.gmptGlyphOrigin.x, i);
+            ok(abc[0].abcB == gm.gmBlackBoxX,
+               "abcB(%d) and gmBlackBoxX(%d) values are different at width %d\n",
+               abc[0].abcB, gm.gmBlackBoxX, i);
+            DeleteObject(SelectObject(hdc, hfont));
+        }
+    }
     ReleaseDC(NULL, hdc);
 
     trace("ABC sign test for a variety of transforms:\n");
@@ -1369,17 +1413,17 @@ static void test_GetCharABCWidths(void)
     ret = pGetCharABCWidthsFloatW(hdc, 'i', 'i', abcf);
     ok(ret, "GetCharABCWidthsFloatW should have succeeded\n");
 
-    ABCWidths_helper("LTR", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("LTR", hdc, glyphs, abc, abcw, abcf);
     SetWindowExtEx(hdc, -1, -1, NULL);
     SetGraphicsMode(hdc, GM_COMPATIBLE);
-    ABCWidths_helper("LTR -1 compatible", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("LTR -1 compatible", hdc, glyphs, abc, abcw, abcf);
     SetGraphicsMode(hdc, GM_ADVANCED);
-    ABCWidths_helper("LTR -1 advanced", hdc, glyphs, abc, abcw, abcf, 1);
+    ABCWidths_helper("LTR -1 advanced", hdc, glyphs, abc, abcw, abcf);
     SetWindowExtEx(hdc, 1, 1, NULL);
     SetGraphicsMode(hdc, GM_COMPATIBLE);
-    ABCWidths_helper("LTR 1 compatible", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("LTR 1 compatible", hdc, glyphs, abc, abcw, abcf);
     SetGraphicsMode(hdc, GM_ADVANCED);
-    ABCWidths_helper("LTR 1 advanced", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("LTR 1 advanced", hdc, glyphs, abc, abcw, abcf);
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);
@@ -1391,17 +1435,17 @@ static void test_GetCharABCWidths(void)
     SetMapMode(hdc, MM_ANISOTROPIC);
     SelectObject(hdc, hfont);
 
-    ABCWidths_helper("RTL", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("RTL", hdc, glyphs, abc, abcw, abcf);
     SetWindowExtEx(hdc, -1, -1, NULL);
     SetGraphicsMode(hdc, GM_COMPATIBLE);
-    ABCWidths_helper("RTL -1 compatible", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("RTL -1 compatible", hdc, glyphs, abc, abcw, abcf);
     SetGraphicsMode(hdc, GM_ADVANCED);
-    ABCWidths_helper("RTL -1 advanced", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("RTL -1 advanced", hdc, glyphs, abc, abcw, abcf);
     SetWindowExtEx(hdc, 1, 1, NULL);
     SetGraphicsMode(hdc, GM_COMPATIBLE);
-    ABCWidths_helper("RTL 1 compatible", hdc, glyphs, abc, abcw, abcf, 0);
+    ABCWidths_helper("RTL 1 compatible", hdc, glyphs, abc, abcw, abcf);
     SetGraphicsMode(hdc, GM_ADVANCED);
-    ABCWidths_helper("RTL 1 advanced", hdc, glyphs, abc, abcw, abcf, 1);
+    ABCWidths_helper("RTL 1 advanced", hdc, glyphs, abc, abcw, abcf);
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);
@@ -5885,7 +5929,7 @@ static void check_vertical_metrics(const char *face)
     GLYPHMETRICS rgm, vgm;
     const UINT code = 0x5EAD, height = 1000;
     WORD idx;
-    ABC abc;
+    ABC abc, vabc;
     OUTLINETEXTMETRICA otm;
     USHORT numOfLongVerMetrics;
 
@@ -5913,6 +5957,15 @@ static void check_vertical_metrics(const char *face)
     hfont_prev = SelectObject(hdc, hfont);
     ret = GetGlyphOutlineW(hdc, code, GGO_METRICS, &vgm, 0, NULL, &mat);
     ok(ret != GDI_ERROR, "GetGlyphOutlineW failed\n");
+    ret = GetCharABCWidthsW(hdc, code, code, &vabc);
+    ok(ret, "GetCharABCWidthsW failed\n");
+    ok(vabc.abcA == vgm.gmptGlyphOrigin.x, "expected %d, got %d\n",
+       vabc.abcA, vgm.gmptGlyphOrigin.x);
+    ok(vabc.abcB == vgm.gmBlackBoxX, "expected %d, got %d\n",
+       vabc.abcB, vgm.gmBlackBoxX);
+    ok(vabc.abcA + vabc.abcB + vabc.abcC == vgm.gmCellIncX,
+       "expected %d, got %d\n",
+       vabc.abcA + vabc.abcB + vabc.abcC, vgm.gmCellIncX);
 
     memset(&otm, 0, sizeof(otm));
     otm.otmSize = sizeof(otm);
@@ -6372,7 +6425,7 @@ static void test_GetCharWidth32(void)
     SetGraphicsMode(hdc, GM_ADVANCED);
     ret = pGetCharWidth32W(hdc, 'a', 'a', &bufferW);
     ok(ret, "GetCharWidth32W should have succeeded\n");
-    todo_wine ok (bufferW > 0," Width should be greater than zero\n");
+    ok (bufferW > 0," Width should be greater than zero\n");
     SetWindowExtEx(hdc, 1,1,NULL);
     SetGraphicsMode(hdc, GM_COMPATIBLE);
     ret = pGetCharWidth32W(hdc, 'a', 'a', &bufferW);
@@ -6412,7 +6465,7 @@ static void test_GetCharWidth32(void)
     SetGraphicsMode(hdc, GM_ADVANCED);
     ret = pGetCharWidth32W(hdc, 'a', 'a', &bufferW);
     ok(ret, "GetCharWidth32W should have succeeded\n");
-    todo_wine ok (bufferW > 0," Width should be greater than zero\n");
+    ok (bufferW > 0," Width should be greater than zero\n");
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);

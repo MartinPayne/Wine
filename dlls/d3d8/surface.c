@@ -244,7 +244,7 @@ static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
     }
 
     hr = wined3d_resource_map(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx,
-            &map_desc, rect ? &box : NULL, flags);
+            &map_desc, rect ? &box : NULL, wined3dmapflags_from_d3dmapflags(flags));
     wined3d_mutex_unlock();
 
     if (SUCCEEDED(hr))
@@ -306,7 +306,7 @@ static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
     d3d8_resource_cleanup(&surface->resource);
-    HeapFree(GetProcessHeap(), 0, surface);
+    heap_free(surface);
 }
 
 static const struct wined3d_parent_ops d3d8_surface_wined3d_parent_ops =

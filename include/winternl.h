@@ -1965,7 +1965,19 @@ typedef struct _SECTION_IMAGE_INFORMATION {
   USHORT DllCharacteristics;
   USHORT Machine;
   BOOLEAN ImageContainsCode;
-  UCHAR ImageFlags;
+  union
+  {
+      UCHAR ImageFlags;
+      struct
+      {
+          UCHAR ComPlusNativeReady        : 1;
+          UCHAR ComPlusILOnly             : 1;
+          UCHAR ImageDynamicallyRelocated : 1;
+          UCHAR ImageMappedFlat           : 1;
+          UCHAR BaseBelow4gb              : 1;
+          UCHAR Reserved                  : 3;
+      } DUMMYSTRUCTNAME;
+  } DUMMYUNIONNAME;
   ULONG LoaderFlags;
   ULONG ImageFileSize;
   ULONG CheckSum;
@@ -2912,18 +2924,6 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
 
 
 #ifdef __WINESRC__
-
-/* FIXME: private structure for vm86 mode, stored in teb->GdiTebBatch */
-typedef struct
-{
-    DWORD        dpmi_vif;
-    DWORD        vm86_pending;
-} WINE_VM86_TEB_INFO;
-
-static inline WINE_VM86_TEB_INFO *get_vm86_teb_info(void)
-{
-    return (WINE_VM86_TEB_INFO *)&NtCurrentTeb()->GdiTebBatch;
-}
 
 /* The thread information for 16-bit threads */
 /* NtCurrentTeb()->SubSystemTib points to this */

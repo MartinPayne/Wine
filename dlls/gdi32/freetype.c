@@ -7008,7 +7008,7 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
         origin_x = left;
         origin_y = top;
         abc->abcA = origin_x >> 6;
-        abc->abcB = metrics.width >> 6;
+        abc->abcB = (metrics.width + 63) >> 6;
     } else {
         INT xc, yc;
 	FT_Vector vec;
@@ -7050,6 +7050,7 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
             pFT_Vector_Transform(&vec, &transMat);
             origin_x = (vec.x + left) & -64;
             origin_y = (vec.y + top + 63) & -64;
+            lsb -= metrics.horiBearingY;
         }
         else
         {
@@ -7064,19 +7065,20 @@ static DWORD get_glyph_outline(GdiFont *incoming_font, UINT glyph, UINT format,
         gm.gmCellIncY = adv.y >> 6;
 
         adv = get_advance_metric(incoming_font, font, &metrics, &transMatUnrotated, vertical_metrics);
+        adv.x = pFT_Vector_Length(&adv);
+        adv.y = 0;
 
         vec.x = lsb;
         vec.y = 0;
         pFT_Vector_Transform(&vec, &transMatUnrotated);
-        abc->abcA = vec.x >> 6;
+        if(lsb > 0) abc->abcA = pFT_Vector_Length(&vec) >> 6;
+        else abc->abcA = -((pFT_Vector_Length(&vec) + 63) >> 6);
 
-        vec.x = metrics.width;
+        /* We use lsb again to avoid rounding errors */
+        vec.x = lsb + (tategaki ? metrics.height : metrics.width);
         vec.y = 0;
         pFT_Vector_Transform(&vec, &transMatUnrotated);
-        if (vec.x >= 0)
-            abc->abcB = vec.x >> 6;
-        else
-            abc->abcB = -vec.x >> 6;
+        abc->abcB = ((pFT_Vector_Length(&vec) + 63) >> 6) - abc->abcA;
     }
 
     width  = (right - left) >> 6;

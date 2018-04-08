@@ -38,21 +38,10 @@
 /* various real-mode code stubs */
 struct DPMI_segments
 {
-    WORD wrap_seg;
-    WORD xms_seg;
-    WORD dpmi_seg;
-    WORD dpmi_sel;
-    WORD int48_sel;
     WORD int16_sel;
     WORD relay_code_sel;
     WORD relay_data_sel;
 };
-
-/* 48-bit segmented pointers for DOS DPMI32 */
-typedef struct {
-  WORD  selector;
-  DWORD offset;
-} SEGPTR48, FARPROC48;
 
 typedef void (*DOSRELAY)(CONTEXT*,void*);
 typedef void (WINAPI *RMCBPROC)(CONTEXT*);
@@ -95,8 +84,7 @@ extern struct DPMI_segments *DOSVM_dpmi_segments DECLSPEC_HIDDEN;
  *       segmented mode is recognized by checking whether 'seg' is 32-bit
  *       selector which is neither system selector nor zero.
  */
-#define CTX_SEG_OFF_TO_LIN(context,seg,off) \
-    (ISV86(context) ? PTR_REAL_TO_LIN((seg),(off)) : wine_ldt_get_ptr((seg),(off)))
+#define CTX_SEG_OFF_TO_LIN(context,seg,off) (wine_ldt_get_ptr((seg),(off)))
 
 #define INT_BARF(context,num) \
     ERR( "int%x: unknown/not implemented parameters:\n" \
@@ -133,7 +121,6 @@ extern struct DPMI_segments *DOSVM_dpmi_segments DECLSPEC_HIDDEN;
 #define RESET_CFLAG(context) ((context)->EFlags &= ~0x0001)
 #define SET_ZFLAG(context)   ((context)->EFlags |= 0x0040)
 #define RESET_ZFLAG(context) ((context)->EFlags &= ~0x0040)
-#define ISV86(context)       ((context)->EFlags & 0x00020000)
 
 #define SET_AX(context,val)  ((void)((context)->Eax = ((context)->Eax & ~0xffff) | (WORD)(val)))
 #define SET_BX(context,val)  ((void)((context)->Ebx = ((context)->Ebx & ~0xffff) | (WORD)(val)))
@@ -231,16 +218,13 @@ typedef struct
 
 /* dosvm.c */
 extern void DOSVM_Exit( WORD retval ) DECLSPEC_HIDDEN;
-extern LPVOID DOSVM_AllocDataUMB(DWORD, WORD *, WORD *) DECLSPEC_HIDDEN;
+extern LPVOID DOSVM_AllocDataUMB(DWORD, WORD *) DECLSPEC_HIDDEN;
 extern void DOSVM_InitSegments(void) DECLSPEC_HIDDEN;
 
 /* dma.c */
 extern int DMA_Transfer(int channel,int reqlength,void* buffer) DECLSPEC_HIDDEN;
 extern void DMA_ioport_out( WORD port, BYTE val ) DECLSPEC_HIDDEN;
 extern BYTE DMA_ioport_in( WORD port ) DECLSPEC_HIDDEN;
-
-/* dosaspi.c */
-extern void DOSVM_ASPIHandler(CONTEXT*) DECLSPEC_HIDDEN;
 
 /* dosmem.c */
 extern BIOSDATA *DOSVM_BiosData( void ) DECLSPEC_HIDDEN;
@@ -281,11 +265,6 @@ extern void WINAPI DOSVM_Int2fHandler(CONTEXT*) DECLSPEC_HIDDEN;
 
 /* int31.c */
 extern void WINAPI DOSVM_Int31Handler(CONTEXT*) DECLSPEC_HIDDEN;
-extern void WINAPI DOSVM_RawModeSwitchHandler(CONTEXT*) DECLSPEC_HIDDEN;
-extern BOOL DOSVM_IsDos32(void) DECLSPEC_HIDDEN;
-extern FARPROC16 DPMI_AllocInternalRMCB(RMCBPROC) DECLSPEC_HIDDEN;
-extern int DPMI_CallRMProc(CONTEXT*,LPWORD,int,int) DECLSPEC_HIDDEN;
-extern BOOL DOSVM_CheckWrappers(CONTEXT*) DECLSPEC_HIDDEN;
 
 /* int67.c */
 extern void WINAPI DOSVM_Int67Handler(CONTEXT*) DECLSPEC_HIDDEN;
@@ -296,12 +275,8 @@ extern void        __wine_call_int_handler( CONTEXT *, BYTE ) DECLSPEC_HIDDEN;
 extern void        DOSVM_CallBuiltinHandler( CONTEXT *, BYTE ) DECLSPEC_HIDDEN;
 extern BOOL        DOSVM_EmulateInterruptPM( CONTEXT *, BYTE ) DECLSPEC_HIDDEN;
 extern FARPROC16   DOSVM_GetPMHandler16( BYTE ) DECLSPEC_HIDDEN;
-extern FARPROC48   DOSVM_GetPMHandler48( BYTE ) DECLSPEC_HIDDEN;
-extern FARPROC16   DOSVM_GetRMHandler( BYTE ) DECLSPEC_HIDDEN;
 extern void        DOSVM_HardwareInterruptPM( CONTEXT *, BYTE ) DECLSPEC_HIDDEN;
 extern void        DOSVM_SetPMHandler16( BYTE, FARPROC16 ) DECLSPEC_HIDDEN;
-extern void        DOSVM_SetPMHandler48( BYTE, FARPROC48 ) DECLSPEC_HIDDEN;
-extern void        DOSVM_SetRMHandler( BYTE, FARPROC16 ) DECLSPEC_HIDDEN;
 
 /* ioports.c */
 extern DWORD DOSVM_inport( int port, int size ) DECLSPEC_HIDDEN;

@@ -59,10 +59,17 @@ typedef enum {
 typedef struct {
     DispatchEx dispex;
     IDOMEvent IDOMEvent_iface;
+    IDOMUIEvent IDOMUIEvent_iface;
+    IDOMMouseEvent IDOMMouseEvent_iface;
+    IDOMKeyboardEvent IDOMKeyboardEvent_iface;
 
     LONG ref;
 
     nsIDOMEvent *nsevent;
+    nsIDOMUIEvent *ui_event;
+    nsIDOMMouseEvent *mouse_event;
+    nsIDOMKeyEvent *keyboard_event;
+
     eventid_t event_id;
     WCHAR *type;
     EventTarget *target;
@@ -72,13 +79,14 @@ typedef struct {
     BOOL cancelable;
     BOOL prevent_default;
     BOOL stop_propagation;
+    BOOL stop_immediate_propagation;
     DOM_EVENT_PHASE phase;
 
     IHTMLEventObj *event_obj;
     BOOL no_event_obj;
 } DOMEvent;
 
-void check_event_attr(HTMLDocumentNode*,nsIDOMHTMLElement*) DECLSPEC_HIDDEN;
+void check_event_attr(HTMLDocumentNode*,nsIDOMElement*) DECLSPEC_HIDDEN;
 void release_event_target(EventTarget*) DECLSPEC_HIDDEN;
 HRESULT set_event_handler(EventTarget*,eventid_t,VARIANT*) DECLSPEC_HIDDEN;
 HRESULT get_event_handler(EventTarget*,eventid_t,VARIANT*) DECLSPEC_HIDDEN;

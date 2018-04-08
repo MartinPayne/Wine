@@ -2666,8 +2666,11 @@ static void test_iframe_connections(IHTMLDocument2 *doc)
 
 static void test_create_event(IHTMLDocument2 *doc)
 {
+    IDOMKeyboardEvent *keyboard_event;
+    IDOMMouseEvent *mouse_event;
     IDocumentEvent *doc_event;
     IEventTarget *event_target;
+    IDOMUIEvent *ui_event;
     IHTMLElement *elem;
     IDOMEvent *event;
     VARIANT_BOOL b;
@@ -2719,6 +2722,52 @@ static void test_create_event(IHTMLDocument2 *doc)
     ok(hres == E_INVALIDARG, "dispatchEvent failed: %08x\n", hres);
 
     IEventTarget_Release(event_target);
+
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMUIEvent, (void**)&ui_event);
+    ok(hres == E_NOINTERFACE, "QueryInterface(IID_IDOMUIEvent returned %08x\n", hres);
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMMouseEvent, (void**)&mouse_event);
+    ok(hres == E_NOINTERFACE, "QueryInterface(IID_IDOMMouseEvent returned %08x\n", hres);
+
+    IDOMEvent_Release(event);
+
+    str = a2bstr("MouseEvent");
+    hres = IDocumentEvent_createEvent(doc_event, str, &event);
+    SysFreeString(str);
+    ok(hres == S_OK, "createEvent failed: %08x\n", hres);
+
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMUIEvent, (void**)&ui_event);
+    ok(hres == S_OK, "QueryInterface(IID_IDOMUIEvent returned %08x\n", hres);
+    IDOMUIEvent_Release(ui_event);
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMMouseEvent, (void**)&mouse_event);
+    ok(hres == S_OK, "QueryInterface(IID_IDOMMouseEvent returned %08x\n", hres);
+    IDOMMouseEvent_Release(mouse_event);
+
+    IDOMEvent_Release(event);
+
+    str = a2bstr("UIEvent");
+    hres = IDocumentEvent_createEvent(doc_event, str, &event);
+    SysFreeString(str);
+    ok(hres == S_OK, "createEvent failed: %08x\n", hres);
+
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMUIEvent, (void**)&ui_event);
+    ok(hres == S_OK, "QueryInterface(IID_IDOMUIEvent returned %08x\n", hres);
+    IDOMUIEvent_Release(ui_event);
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMMouseEvent, (void**)&mouse_event);
+    ok(hres == E_NOINTERFACE, "QueryInterface(IID_IDOMMouseEvent returned %08x\n", hres);
+
+    IDOMEvent_Release(event);
+
+    str = a2bstr("KeyboardEvent");
+    hres = IDocumentEvent_createEvent(doc_event, str, &event);
+    SysFreeString(str);
+    ok(hres == S_OK, "createEvent failed: %08x\n", hres);
+
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMUIEvent, (void**)&ui_event);
+    ok(hres == S_OK, "QueryInterface(IID_IDOMUIEvent returned %08x\n", hres);
+    IDOMUIEvent_Release(ui_event);
+    hres = IDOMEvent_QueryInterface(event, &IID_IDOMKeyboardEvent, (void**)&keyboard_event);
+    ok(hres == S_OK, "QueryInterface(IID_IDOMKeyboardEvent returned %08x\n", hres);
+    IDOMKeyboardEvent_Release(keyboard_event);
 
     IDOMEvent_Release(event);
 

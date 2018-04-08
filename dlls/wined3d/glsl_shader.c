@@ -474,7 +474,7 @@ void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL 
     {
         const char *ptr, *line;
 
-        log = HeapAlloc(GetProcessHeap(), 0, length);
+        log = heap_alloc(length);
         /* The info log is supposed to be zero-terminated, but at least some
          * versions of fglrx don't terminate the string properly. The reported
          * length does include the terminator, so explicitly set it to zero
@@ -496,7 +496,7 @@ void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL 
             FIXME("Info log received from GLSL shader #%u:\n", id);
             while ((line = get_info_log_line(&ptr))) FIXME("    %.*s", (int)(ptr - line), line);
         }
-        HeapFree(GetProcessHeap(), 0, log);
+        heap_free(log);
     }
 }
 
@@ -528,7 +528,7 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
     char *source = NULL;
 
     GL_EXTCALL(glGetProgramiv(program, GL_ATTACHED_SHADERS, &shader_count));
-    if (!(shaders = wined3d_calloc(shader_count, sizeof(*shaders))))
+    if (!(shaders = heap_calloc(shader_count, sizeof(*shaders))))
     {
         ERR("Failed to allocate shader array memory.\n");
         return;
@@ -544,13 +544,12 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
 
         if (source_size < tmp)
         {
-            HeapFree(GetProcessHeap(), 0, source);
+            heap_free(source);
 
-            source = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, tmp);
-            if (!source)
+            if (!(source = heap_alloc_zero(tmp)))
             {
                 ERR("Failed to allocate %d bytes for shader source.\n", tmp);
-                HeapFree(GetProcessHeap(), 0, shaders);
+                heap_free(shaders);
                 return;
             }
             source_size = tmp;
@@ -569,8 +568,8 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
         FIXME("\n");
     }
 
-    HeapFree(GetProcessHeap(), 0, source);
-    HeapFree(GetProcessHeap(), 0, shaders);
+    heap_free(source);
+    heap_free(shaders);
 }
 
 /* Context activation is done by the caller. */
@@ -944,16 +943,16 @@ static void shader_glsl_init_transform_feedback(const struct wined3d_context *co
 
     shader_glsl_generate_transform_feedback_varyings(so_desc, buffer, NULL, &count, NULL, &length, mode);
 
-    if (!(varyings = wined3d_calloc(count, sizeof(*varyings))))
+    if (!(varyings = heap_calloc(count, sizeof(*varyings))))
     {
         ERR("Out of memory.\n");
         string_buffer_release(&priv->string_buffers, buffer);
         return;
     }
-    if (!(strings = wined3d_calloc(length, sizeof(*strings))))
+    if (!(strings = heap_calloc(length, sizeof(*strings))))
     {
         ERR("Out of memory.\n");
-        HeapFree(GetProcessHeap(), 0, varyings);
+        heap_free(varyings);
         string_buffer_release(&priv->string_buffers, buffer);
         return;
     }
@@ -962,8 +961,8 @@ static void shader_glsl_init_transform_feedback(const struct wined3d_context *co
     GL_EXTCALL(glTransformFeedbackVaryings(program_id, count, varyings, mode));
     checkGLcall("glTransformFeedbackVaryings");
 
-    HeapFree(GetProcessHeap(), 0, varyings);
-    HeapFree(GetProcessHeap(), 0, strings);
+    heap_free(varyings);
+    heap_free(strings);
     string_buffer_release(&priv->string_buffers, buffer);
 }
 
@@ -2589,6 +2588,14 @@ static void shader_generate_glsl_declarations(const struct wined3d_context *cont
                     sampler_type = "samplerCubeArrayShadow";
                 else
                     sampler_type = "samplerCubeArray";
+                break;
+
+            case WINED3D_SHADER_RESOURCE_TEXTURE_2DMS:
+                sampler_type = "sampler2DMS";
+                break;
+
+            case WINED3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY:
+                sampler_type = "sampler2DMSArray";
                 break;
 
             default:
@@ -5886,15 +5893,28 @@ static void shader_glsl_bufinfo(const struct wined3d_shader_instruction *ins)
     shader_addline(buffer, ", %u)%s);\n", resource_info->stride, dst_swizzle);
 }
 
+static BOOL is_multisampled(enum wined3d_shader_resource_type resource_type)
+{
+    return resource_type == WINED3D_SHADER_RESOURCE_TEXTURE_2DMS
+            || resource_type == WINED3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY;
+}
+
+static BOOL is_mipmapped(enum wined3d_shader_resource_type resource_type)
+{
+    return resource_type != WINED3D_SHADER_RESOURCE_BUFFER && !is_multisampled(resource_type);
+}
+
 static void shader_glsl_resinfo(const struct wined3d_shader_instruction *ins)
 {
     const struct wined3d_shader_version *version = &ins->ctx->reg_maps->shader_version;
     const struct wined3d_gl_info *gl_info = ins->ctx->gl_info;
+    struct wined3d_string_buffer *buffer = ins->ctx->buffer;
     enum wined3d_shader_resource_type resource_type;
     enum wined3d_shader_register_type reg_type;
     unsigned int resource_idx, bind_idx, i;
     enum wined3d_data_type dst_data_type;
     struct glsl_src_param lod_param;
+    BOOL supports_mipmaps;
     char dst_swizzle[6];
     DWORD write_mask;
 
@@ -5903,9 +5923,6 @@ static void shader_glsl_resinfo(const struct wined3d_shader_instruction *ins)
         dst_data_type = WINED3D_DATA_UINT;
     else if (ins->flags)
         FIXME("Unhandled flags %#x.\n", ins->flags);
-
-    write_mask = shader_glsl_append_dst_ext(ins->ctx->buffer, ins, &ins->dst[0], dst_data_type);
-    shader_glsl_get_swizzle(&ins->src[1], FALSE, write_mask, dst_swizzle);
 
     reg_type = ins->src[1].reg.type;
     resource_idx = ins->src[1].reg.idx[0].offset;
@@ -5925,54 +5942,62 @@ static void shader_glsl_resinfo(const struct wined3d_shader_instruction *ins)
     if (resource_type >= ARRAY_SIZE(resource_type_info))
     {
         ERR("Unexpected resource type %#x.\n", resource_type);
-        resource_type = WINED3D_SHADER_RESOURCE_TEXTURE_2D;
+        return;
     }
 
+    write_mask = shader_glsl_append_dst_ext(buffer, ins, &ins->dst[0], dst_data_type);
+    shader_glsl_get_swizzle(&ins->src[1], FALSE, write_mask, dst_swizzle);
+
     if (dst_data_type == WINED3D_DATA_UINT)
-        shader_addline(ins->ctx->buffer, "uvec4(");
+        shader_addline(buffer, "uvec4(");
     else
-        shader_addline(ins->ctx->buffer, "vec4(");
+        shader_addline(buffer, "vec4(");
 
     if (reg_type == WINED3DSPR_RESOURCE)
     {
-        shader_addline(ins->ctx->buffer, "textureSize(%s_sampler%u, %s), ",
-                shader_glsl_get_prefix(version->type), bind_idx, lod_param.param_str);
+        shader_addline(buffer, "textureSize(%s_sampler%u",
+                shader_glsl_get_prefix(version->type), bind_idx);
+    }
+    else
+    {
+        shader_addline(buffer, "imageSize(%s_image%u",
+                shader_glsl_get_prefix(version->type), bind_idx);
+    }
 
-        for (i = 0; i < 3 - resource_type_info[resource_type].resinfo_size; ++i)
-            shader_addline(ins->ctx->buffer, "0, ");
+    supports_mipmaps = is_mipmapped(resource_type) && reg_type != WINED3DSPR_UAV;
+    if (supports_mipmaps)
+        shader_addline(buffer, ", %s", lod_param.param_str);
+    shader_addline(buffer, "), ");
 
+    for (i = 0; i < 3 - resource_type_info[resource_type].resinfo_size; ++i)
+        shader_addline(buffer, "0, ");
+
+    if (supports_mipmaps)
+    {
         if (gl_info->supported[ARB_TEXTURE_QUERY_LEVELS])
         {
-            shader_addline(ins->ctx->buffer, "textureQueryLevels(%s_sampler%u)",
+            shader_addline(buffer, "textureQueryLevels(%s_sampler%u)",
                     shader_glsl_get_prefix(version->type), bind_idx);
         }
         else
         {
-            FIXME("textureQueryLevels is not supported, returning 1 mipmap level.\n");
-            shader_addline(ins->ctx->buffer, "1");
+            FIXME("textureQueryLevels is not supported, returning 1 level.\n");
+            shader_addline(buffer, "1");
         }
     }
     else
     {
-        shader_addline(ins->ctx->buffer, "imageSize(%s_image%u), ",
-                shader_glsl_get_prefix(version->type), bind_idx);
-
-        for (i = 0; i < 3 - resource_type_info[resource_type].resinfo_size; ++i)
-            shader_addline(ins->ctx->buffer, "0, ");
-
-        /* For UAVs the returned miplevel count is always 1. */
-        shader_addline(ins->ctx->buffer, "1");
+        shader_addline(buffer, "1");
     }
 
-    shader_addline(ins->ctx->buffer, ")%s);\n", dst_swizzle);
+    shader_addline(buffer, ")%s);\n", dst_swizzle);
 }
 
-/* FIXME: The current implementation does not handle multisample textures correctly. */
 static void shader_glsl_ld(const struct wined3d_shader_instruction *ins)
 {
     const struct wined3d_shader_reg_maps *reg_maps = ins->ctx->reg_maps;
+    struct glsl_src_param coord_param, lod_param, sample_param;
     unsigned int resource_idx, sampler_idx, sampler_bind_idx;
-    struct glsl_src_param coord_param, lod_param;
     struct glsl_sample_function sample_function;
     DWORD flags = WINED3D_GLSL_SAMPLE_LOAD;
     BOOL has_lod_param;
@@ -5988,15 +6013,24 @@ static void shader_glsl_ld(const struct wined3d_shader_instruction *ins)
         ERR("Invalid resource index %u.\n", resource_idx);
         return;
     }
-    has_lod_param = reg_maps->resource_info[resource_idx].type != WINED3D_SHADER_RESOURCE_BUFFER;
+    has_lod_param = is_mipmapped(reg_maps->resource_info[resource_idx].type);
 
     shader_glsl_get_sample_function(ins->ctx, resource_idx, sampler_idx, flags, &sample_function);
     shader_glsl_add_src_param(ins, &ins->src[0], sample_function.coord_mask, &coord_param);
     shader_glsl_add_src_param(ins, &ins->src[0], WINED3DSP_WRITEMASK_3, &lod_param);
     sampler_bind_idx = shader_glsl_find_sampler(&reg_maps->sampler_map, resource_idx, sampler_idx);
-    shader_glsl_gen_sample_code(ins, sampler_bind_idx, &sample_function, ins->src[1].swizzle,
-            NULL, NULL, has_lod_param ? lod_param.param_str : NULL, &ins->texel_offset,
-            "%s", coord_param.param_str);
+    if (is_multisampled(reg_maps->resource_info[resource_idx].type))
+    {
+        shader_glsl_add_src_param(ins, &ins->src[2], WINED3DSP_WRITEMASK_0, &sample_param);
+        shader_glsl_gen_sample_code(ins, sampler_bind_idx, &sample_function, ins->src[1].swizzle,
+                NULL, NULL, NULL, &ins->texel_offset, "%s, %s", coord_param.param_str, sample_param.param_str);
+    }
+    else
+    {
+        shader_glsl_gen_sample_code(ins, sampler_bind_idx, &sample_function, ins->src[1].swizzle,
+                NULL, NULL, has_lod_param ? lod_param.param_str : NULL, &ins->texel_offset,
+                "%s", coord_param.param_str);
+    }
     shader_glsl_release_sample_function(ins->ctx, &sample_function);
 }
 
@@ -6814,7 +6848,7 @@ static void delete_glsl_program_entry(struct shader_glsl_priv *priv, const struc
         list_remove(&entry->ps.shader_entry);
     if (entry->cs.id)
         list_remove(&entry->cs.shader_entry);
-    HeapFree(GetProcessHeap(), 0, entry);
+    heap_free(entry);
 }
 
 static void shader_glsl_setup_vs3_output(struct shader_glsl_priv *priv,
@@ -6833,7 +6867,7 @@ static void shader_glsl_setup_vs3_output(struct shader_glsl_priv *priv,
     unsigned int i, j;
     char reg_mask[6];
 
-    set = wined3d_calloc(max_varyings, sizeof(*set));
+    set = heap_calloc(max_varyings, sizeof(*set));
 
     for (i = 0; i < input_signature->element_count; ++i)
     {
@@ -6917,7 +6951,7 @@ static void shader_glsl_setup_vs3_output(struct shader_glsl_priv *priv,
             shader_addline(buffer, "%s.%s = vec%u(0.0);\n", destination->buffer, reg_mask, size);
     }
 
-    HeapFree(GetProcessHeap(), 0, set);
+    heap_free(set);
     string_buffer_release(&priv->string_buffers, destination);
 }
 
@@ -8258,8 +8292,7 @@ static GLuint find_glsl_pshader(const struct wined3d_context *context,
 
     if (!shader->backend_data)
     {
-        shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data));
-        if (!shader->backend_data)
+        if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
         {
             ERR("Failed to allocate backend data.\n");
             return 0;
@@ -8283,16 +8316,16 @@ static GLuint find_glsl_pshader(const struct wined3d_context *context,
     }
 
     TRACE("No matching GL shader found for shader %p, compiling a new shader.\n", shader);
-    if(shader_data->shader_array_size == shader_data->num_gl_shaders) {
+    if (shader_data->shader_array_size == shader_data->num_gl_shaders)
+    {
         if (shader_data->num_gl_shaders)
         {
             new_size = shader_data->shader_array_size + max(1, shader_data->shader_array_size / 2);
-            new_array = HeapReAlloc(GetProcessHeap(), 0, shader_data->gl_shaders.ps,
-                    new_size * sizeof(*gl_shaders));
+            new_array = heap_realloc(shader_data->gl_shaders.ps, new_size * sizeof(*gl_shaders));
         }
         else
         {
-            new_array = HeapAlloc(GetProcessHeap(), 0, sizeof(*gl_shaders));
+            new_array = heap_alloc(sizeof(*gl_shaders));
             new_size = 1;
         }
 
@@ -8350,8 +8383,7 @@ static GLuint find_glsl_vshader(const struct wined3d_context *context, struct sh
 
     if (!shader->backend_data)
     {
-        shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data));
-        if (!shader->backend_data)
+        if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
         {
             ERR("Failed to allocate backend data.\n");
             return 0;
@@ -8372,16 +8404,16 @@ static GLuint find_glsl_vshader(const struct wined3d_context *context, struct sh
 
     TRACE("No matching GL shader found for shader %p, compiling a new shader.\n", shader);
 
-    if(shader_data->shader_array_size == shader_data->num_gl_shaders) {
+    if (shader_data->shader_array_size == shader_data->num_gl_shaders)
+    {
         if (shader_data->num_gl_shaders)
         {
             new_size = shader_data->shader_array_size + max(1, shader_data->shader_array_size / 2);
-            new_array = HeapReAlloc(GetProcessHeap(), 0, shader_data->gl_shaders.vs,
-                    new_size * sizeof(*gl_shaders));
+            new_array = heap_realloc(shader_data->gl_shaders.vs, new_size * sizeof(*gl_shaders));
         }
         else
         {
-            new_array = HeapAlloc(GetProcessHeap(), 0, sizeof(*gl_shaders));
+            new_array = heap_alloc(sizeof(*gl_shaders));
             new_size = 1;
         }
 
@@ -8413,7 +8445,7 @@ static GLuint find_glsl_hull_shader(const struct wined3d_context *context,
 
     if (!shader->backend_data)
     {
-        if (!(shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data))))
+        if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
         {
             ERR("Failed to allocate backend data.\n");
             return 0;
@@ -8431,9 +8463,8 @@ static GLuint find_glsl_hull_shader(const struct wined3d_context *context,
     TRACE("No matching GL shader found for shader %p, compiling a new shader.\n", shader);
 
     assert(!shader_data->gl_shaders.hs);
-    new_array = HeapAlloc(GetProcessHeap(), 0, sizeof(*new_array));
     new_size = 1;
-    if (!new_array)
+    if (!(new_array = heap_alloc(sizeof(*new_array))))
     {
         ERR("Failed to allocate GL shaders array.\n");
         return 0;
@@ -8459,7 +8490,7 @@ static GLuint find_glsl_domain_shader(const struct wined3d_context *context,
 
     if (!shader->backend_data)
     {
-        if (!(shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data))))
+        if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
         {
             ERR("Failed to allocate backend data.\n");
             return 0;
@@ -8479,12 +8510,11 @@ static GLuint find_glsl_domain_shader(const struct wined3d_context *context,
     if (shader_data->num_gl_shaders)
     {
         new_size = shader_data->shader_array_size + 1;
-        new_array = HeapReAlloc(GetProcessHeap(), 0, shader_data->gl_shaders.ds,
-                new_size * sizeof(*new_array));
+        new_array = heap_realloc(shader_data->gl_shaders.ds, new_size * sizeof(*new_array));
     }
     else
     {
-        new_array = HeapAlloc(GetProcessHeap(), 0, sizeof(*new_array));
+        new_array = heap_alloc(sizeof(*new_array));
         new_size = 1;
     }
 
@@ -8515,7 +8545,7 @@ static GLuint find_glsl_geometry_shader(const struct wined3d_context *context,
 
     if (!shader->backend_data)
     {
-        if (!(shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data))))
+        if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
         {
             ERR("Failed to allocate backend data.\n");
             return 0;
@@ -8535,12 +8565,11 @@ static GLuint find_glsl_geometry_shader(const struct wined3d_context *context,
     if (shader_data->num_gl_shaders)
     {
         new_size = shader_data->shader_array_size + 1;
-        new_array = HeapReAlloc(GetProcessHeap(), 0, shader_data->gl_shaders.gs,
-                new_size * sizeof(*new_array));
+        new_array = heap_realloc(shader_data->gl_shaders.gs, new_size * sizeof(*new_array));
     }
     else
     {
-        new_array = HeapAlloc(GetProcessHeap(), 0, sizeof(*new_array));
+        new_array = heap_alloc(sizeof(*new_array));
         new_size = 1;
     }
 
@@ -9686,7 +9715,7 @@ static struct glsl_ffp_vertex_shader *shader_glsl_find_ffp_vertex_shader(struct 
     if ((entry = wine_rb_get(&priv->ffp_vertex_shaders, settings)))
         return WINE_RB_ENTRY_VALUE(entry, struct glsl_ffp_vertex_shader, desc.entry);
 
-    if (!(shader = HeapAlloc(GetProcessHeap(), 0, sizeof(*shader))))
+    if (!(shader = heap_alloc(sizeof(*shader))))
         return NULL;
 
     shader->desc.settings = *settings;
@@ -9707,7 +9736,7 @@ static struct glsl_ffp_fragment_shader *shader_glsl_find_ffp_fragment_shader(str
     if ((desc = find_ffp_frag_shader(&priv->ffp_fragment_shaders, args)))
         return CONTAINING_RECORD(desc, struct glsl_ffp_fragment_shader, entry);
 
-    if (!(glsl_desc = HeapAlloc(GetProcessHeap(), 0, sizeof(*glsl_desc))))
+    if (!(glsl_desc = heap_alloc(sizeof(*glsl_desc))))
         return NULL;
 
     glsl_desc->entry.settings = *args;
@@ -9879,26 +9908,26 @@ static HRESULT shader_glsl_compile_compute_shader(struct shader_glsl_priv *priv,
     struct glsl_shader_prog_link *entry;
     GLuint shader_id, program_id;
 
-    if (!(entry = HeapAlloc(GetProcessHeap(), 0, sizeof(*entry))))
+    if (!(entry = heap_alloc(sizeof(*entry))))
     {
         ERR("Out of memory.\n");
         return E_OUTOFMEMORY;
     }
 
-    if (!(shader->backend_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader_data))))
+    if (!(shader->backend_data = heap_alloc_zero(sizeof(*shader_data))))
     {
         ERR("Failed to allocate backend data.\n");
-        HeapFree(GetProcessHeap(), 0, entry);
+        heap_free(entry);
         return E_OUTOFMEMORY;
     }
     shader_data = shader->backend_data;
     gl_shaders = shader_data->gl_shaders.cs;
 
-    if (!(shader_data->gl_shaders.cs = HeapAlloc(GetProcessHeap(), 0, sizeof(*gl_shaders))))
+    if (!(shader_data->gl_shaders.cs = heap_alloc(sizeof(*gl_shaders))))
     {
         ERR("Failed to allocate GL shader array.\n");
-        HeapFree(GetProcessHeap(), 0, entry);
-        HeapFree(GetProcessHeap(), 0, shader->backend_data);
+        heap_free(entry);
+        heap_free(shader->backend_data);
         shader->backend_data = NULL;
         return E_OUTOFMEMORY;
     }
@@ -10131,7 +10160,7 @@ static void set_glsl_shader_program(const struct wined3d_context *context, const
     TRACE("Created new GLSL shader program %u.\n", program_id);
 
     /* Create the entry */
-    entry = HeapAlloc(GetProcessHeap(), 0, sizeof(struct glsl_shader_prog_link));
+    entry = heap_alloc(sizeof(*entry));
     entry->id = program_id;
     entry->vs.id = vs_id;
     entry->hs.id = hs_id;
@@ -10575,7 +10604,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
 
     if (!shader_data || !shader_data->num_gl_shaders)
     {
-        HeapFree(GetProcessHeap(), 0, shader_data);
+        heap_free(shader_data);
         shader->backend_data = NULL;
         return;
     }
@@ -10602,7 +10631,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.ps);
+                heap_free(shader_data->gl_shaders.ps);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, ps.shader_entry)
@@ -10624,7 +10653,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.vs);
+                heap_free(shader_data->gl_shaders.vs);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, vs.shader_entry)
@@ -10646,7 +10675,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.hs);
+                heap_free(shader_data->gl_shaders.hs);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, hs.shader_entry)
@@ -10668,7 +10697,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.ds);
+                heap_free(shader_data->gl_shaders.ds);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, ds.shader_entry)
@@ -10690,7 +10719,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.gs);
+                heap_free(shader_data->gl_shaders.gs);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, gs.shader_entry)
@@ -10712,7 +10741,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
                     GL_EXTCALL(glDeleteShader(gl_shaders[i].id));
                     checkGLcall("glDeleteShader");
                 }
-                HeapFree(GetProcessHeap(), 0, shader_data->gl_shaders.cs);
+                heap_free(shader_data->gl_shaders.cs);
 
                 LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, linked_programs,
                         struct glsl_shader_prog_link, cs.shader_entry)
@@ -10730,7 +10759,7 @@ static void shader_glsl_destroy(struct wined3d_shader *shader)
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, shader->backend_data);
+    heap_free(shader->backend_data);
     shader->backend_data = NULL;
 
     context_release(context);
@@ -10768,9 +10797,9 @@ static BOOL constant_heap_init(struct constant_heap *heap, unsigned int constant
     SIZE_T size = (constant_count + 1) * sizeof(*heap->entries)
             + constant_count * sizeof(*heap->contained)
             + constant_count * sizeof(*heap->positions);
-    void *mem = HeapAlloc(GetProcessHeap(), 0, size);
+    void *mem;
 
-    if (!mem)
+    if (!(mem = heap_alloc(size)))
     {
         ERR("Failed to allocate memory\n");
         return FALSE;
@@ -10788,24 +10817,27 @@ static BOOL constant_heap_init(struct constant_heap *heap, unsigned int constant
 
 static void constant_heap_free(struct constant_heap *heap)
 {
-    HeapFree(GetProcessHeap(), 0, heap->entries);
+    heap_free(heap->entries);
 }
 
 static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct wined3d_vertex_pipe_ops *vertex_pipe,
         const struct fragment_pipeline *fragment_pipe)
 {
-    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
-    struct shader_glsl_priv *priv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct shader_glsl_priv));
     SIZE_T stack_size = wined3d_log2i(max(WINED3D_MAX_VS_CONSTS_F, WINED3D_MAX_PS_CONSTS_F)) + 1;
+    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
     struct fragment_caps fragment_caps;
     void *vertex_priv, *fragment_priv;
+    struct shader_glsl_priv *priv;
+
+    if (!(priv = heap_alloc_zero(sizeof(*priv))))
+        return E_OUTOFMEMORY;
 
     string_buffer_list_init(&priv->string_buffers);
 
     if (!(vertex_priv = vertex_pipe->vp_alloc(&glsl_shader_backend, priv)))
     {
         ERR("Failed to initialize vertex pipe.\n");
-        HeapFree(GetProcessHeap(), 0, priv);
+        heap_free(priv);
         return E_FAIL;
     }
 
@@ -10813,7 +10845,7 @@ static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct win
     {
         ERR("Failed to initialize fragment pipe.\n");
         vertex_pipe->vp_free(device);
-        HeapFree(GetProcessHeap(), 0, priv);
+        heap_free(priv);
         return E_FAIL;
     }
 
@@ -10823,7 +10855,7 @@ static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct win
         goto fail;
     }
 
-    if (!(priv->stack = wined3d_calloc(stack_size, sizeof(*priv->stack))))
+    if (!(priv->stack = heap_calloc(stack_size, sizeof(*priv->stack))))
     {
         ERR("Failed to allocate memory.\n");
         goto fail;
@@ -10859,11 +10891,11 @@ static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct win
 fail:
     constant_heap_free(&priv->pconst_heap);
     constant_heap_free(&priv->vconst_heap);
-    HeapFree(GetProcessHeap(), 0, priv->stack);
+    heap_free(priv->stack);
     string_buffer_free(&priv->shader_buffer);
     fragment_pipe->free_private(device);
     vertex_pipe->vp_free(device);
-    HeapFree(GetProcessHeap(), 0, priv);
+    heap_free(priv);
     return E_OUTOFMEMORY;
 }
 
@@ -10875,20 +10907,21 @@ static void shader_glsl_free(struct wined3d_device *device)
     wine_rb_destroy(&priv->program_lookup, NULL, NULL);
     constant_heap_free(&priv->pconst_heap);
     constant_heap_free(&priv->vconst_heap);
-    HeapFree(GetProcessHeap(), 0, priv->stack);
+    heap_free(priv->stack);
     string_buffer_list_cleanup(&priv->string_buffers);
     string_buffer_free(&priv->shader_buffer);
     priv->fragment_pipe->free_private(device);
     priv->vertex_pipe->vp_free(device);
 
-    HeapFree(GetProcessHeap(), 0, device->shader_priv);
+    heap_free(device->shader_priv);
     device->shader_priv = NULL;
 }
 
 static BOOL shader_glsl_allocate_context_data(struct wined3d_context *context)
 {
     struct glsl_context_data *ctx_data;
-    if (!(ctx_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx_data))))
+
+    if (!(ctx_data = heap_alloc_zero(sizeof(*ctx_data))))
         return FALSE;
     ctx_data->vertex_color_clamp = GL_FIXED_ONLY_ARB;
     context->shader_backend_data = ctx_data;
@@ -10897,7 +10930,7 @@ static BOOL shader_glsl_allocate_context_data(struct wined3d_context *context)
 
 static void shader_glsl_free_context_data(struct wined3d_context *context)
 {
-    HeapFree(GetProcessHeap(), 0, context->shader_backend_data);
+    heap_free(context->shader_backend_data);
 }
 
 static void shader_glsl_init_context_state(struct wined3d_context *context)
@@ -11139,7 +11172,7 @@ static const SHADER_HANDLER shader_glsl_instruction_handler_table[WINED3DSIH_TAB
     /* WINED3DSIH_ITOF                             */ shader_glsl_to_float,
     /* WINED3DSIH_LABEL                            */ shader_glsl_label,
     /* WINED3DSIH_LD                               */ shader_glsl_ld,
-    /* WINED3DSIH_LD2DMS                           */ NULL,
+    /* WINED3DSIH_LD2DMS                           */ shader_glsl_ld,
     /* WINED3DSIH_LD_RAW                           */ shader_glsl_ld_raw_structured,
     /* WINED3DSIH_LD_STRUCTURED                    */ shader_glsl_ld_raw_structured,
     /* WINED3DSIH_LD_UAV_TYPED                     */ shader_glsl_ld_uav,
@@ -11337,7 +11370,7 @@ static void shader_glsl_free_ffp_vertex_shader(struct wine_rb_entry *entry, void
         delete_glsl_program_entry(ctx->priv, ctx->gl_info, program);
     }
     ctx->gl_info->gl_ops.ext.p_glDeleteShader(shader->id);
-    HeapFree(GetProcessHeap(), 0, shader);
+    heap_free(shader);
 }
 
 /* Context activation is done by the caller. */
@@ -11834,7 +11867,7 @@ static void shader_glsl_free_ffp_fragment_shader(struct wine_rb_entry *entry, vo
         delete_glsl_program_entry(ctx->priv, ctx->gl_info, program);
     }
     ctx->gl_info->gl_ops.ext.p_glDeleteShader(shader->id);
-    HeapFree(GetProcessHeap(), 0, shader);
+    heap_free(shader);
 }
 
 /* Context activation is done by the caller. */

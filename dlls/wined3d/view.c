@@ -44,15 +44,21 @@ static GLenum get_texture_view_target(const struct wined3d_gl_info *gl_info,
     }
     view_types[] =
     {
-        {GL_TEXTURE_CUBE_MAP,  0,                          GL_TEXTURE_CUBE_MAP},
-        {GL_TEXTURE_RECTANGLE, 0,                          GL_TEXTURE_RECTANGLE},
-        {GL_TEXTURE_2D,        0,                          GL_TEXTURE_2D},
-        {GL_TEXTURE_2D,        WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_ARRAY},
-        {GL_TEXTURE_2D_ARRAY,  0,                          GL_TEXTURE_2D},
-        {GL_TEXTURE_2D_ARRAY,  WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_ARRAY},
-        {GL_TEXTURE_2D_ARRAY,  WINED3D_VIEW_TEXTURE_CUBE,  GL_TEXTURE_CUBE_MAP},
-        {GL_TEXTURE_2D_ARRAY,  WINED3D_VIEW_CUBE_ARRAY,    GL_TEXTURE_CUBE_MAP_ARRAY, ARB_TEXTURE_CUBE_MAP_ARRAY},
-        {GL_TEXTURE_3D,        0,                          GL_TEXTURE_3D},
+        {GL_TEXTURE_CUBE_MAP,  0, GL_TEXTURE_CUBE_MAP},
+        {GL_TEXTURE_RECTANGLE, 0, GL_TEXTURE_RECTANGLE},
+        {GL_TEXTURE_3D,        0, GL_TEXTURE_3D},
+
+        {GL_TEXTURE_2D,       0,                          GL_TEXTURE_2D},
+        {GL_TEXTURE_2D,       WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_ARRAY},
+        {GL_TEXTURE_2D_ARRAY, 0,                          GL_TEXTURE_2D},
+        {GL_TEXTURE_2D_ARRAY, WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_ARRAY},
+        {GL_TEXTURE_2D_ARRAY, WINED3D_VIEW_TEXTURE_CUBE,  GL_TEXTURE_CUBE_MAP},
+        {GL_TEXTURE_2D_ARRAY, WINED3D_VIEW_CUBE_ARRAY,    GL_TEXTURE_CUBE_MAP_ARRAY, ARB_TEXTURE_CUBE_MAP_ARRAY},
+
+        {GL_TEXTURE_2D_MULTISAMPLE,       0,                          GL_TEXTURE_2D_MULTISAMPLE},
+        {GL_TEXTURE_2D_MULTISAMPLE,       WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_MULTISAMPLE_ARRAY},
+        {GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 0,                          GL_TEXTURE_2D_MULTISAMPLE},
+        {GL_TEXTURE_2D_MULTISAMPLE_ARRAY, WINED3D_VIEW_TEXTURE_ARRAY, GL_TEXTURE_2D_MULTISAMPLE_ARRAY},
     };
     unsigned int i;
 
@@ -331,7 +337,7 @@ static void wined3d_rendertarget_view_destroy_object(void *object)
         context_release(context);
     }
 
-    HeapFree(GetProcessHeap(), 0, view);
+    heap_free(view);
 }
 
 ULONG CDECL wined3d_rendertarget_view_decref(struct wined3d_rendertarget_view *view)
@@ -594,12 +600,12 @@ HRESULT CDECL wined3d_rendertarget_view_create(const struct wined3d_view_desc *d
     TRACE("desc %p, resource %p, parent %p, parent_ops %p, view %p.\n",
             desc, resource, parent, parent_ops, view);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_rendertarget_view_init(object, desc, resource, parent, parent_ops)))
     {
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         WARN("Failed to initialise view, hr %#x.\n", hr);
         return hr;
     }
@@ -654,7 +660,7 @@ static void wined3d_shader_resource_view_destroy_object(void *object)
         context_release(context);
     }
 
-    HeapFree(GetProcessHeap(), 0, view);
+    heap_free(view);
 }
 
 ULONG CDECL wined3d_shader_resource_view_decref(struct wined3d_shader_resource_view *view)
@@ -770,12 +776,12 @@ HRESULT CDECL wined3d_shader_resource_view_create(const struct wined3d_view_desc
     TRACE("desc %p, resource %p, parent %p, parent_ops %p, view %p.\n",
             desc, resource, parent, parent_ops, view);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_shader_resource_view_init(object, desc, resource, parent, parent_ops)))
     {
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         WARN("Failed to initialise view, hr %#x.\n", hr);
         return hr;
     }
@@ -946,7 +952,7 @@ static void wined3d_unordered_access_view_destroy_object(void *object)
         context_release(context);
     }
 
-    HeapFree(GetProcessHeap(), 0, view);
+    heap_free(view);
 }
 
 ULONG CDECL wined3d_unordered_access_view_decref(struct wined3d_unordered_access_view *view)
@@ -1138,12 +1144,12 @@ HRESULT CDECL wined3d_unordered_access_view_create(const struct wined3d_view_des
     TRACE("desc %p, resource %p, parent %p, parent_ops %p, view %p.\n",
             desc, resource, parent, parent_ops, view);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_unordered_access_view_init(object, desc, resource, parent, parent_ops)))
     {
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         WARN("Failed to initialise view, hr %#x.\n", hr);
         return hr;
     }

@@ -34,12 +34,21 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "wine/unicode.h"
 
 #include "d3d9.h"
 #include "wine/wined3d.h"
 
+#define D3D9_MAX_VERTEX_SHADER_CONSTANTF 256
+#define D3D9_MAX_TEXTURE_UNITS 20
+#define D3D9_MAX_SIMULTANEOUS_RENDERTARGETS 4
+
 #define D3DPRESENTFLAGS_MASK 0x00000fffu
+
+#define D3D9_TEXTURE_MIPMAP_DIRTY 0x1
+
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 extern const struct wined3d_parent_ops d3d9_null_wined3d_parent_ops DECLSPEC_HIDDEN;
 
@@ -47,6 +56,7 @@ HRESULT vdecl_convert_fvf(DWORD FVF, D3DVERTEXELEMENT9 **ppVertexElements) DECLS
 D3DFORMAT d3dformat_from_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
 BOOL is_gdi_compat_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
 enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format) DECLSPEC_HIDDEN;
+unsigned int wined3dmapflags_from_d3dmapflags(unsigned int flags) DECLSPEC_HIDDEN;
 void present_parameters_from_wined3d_swapchain_desc(D3DPRESENT_PARAMETERS *present_parameters,
         const struct wined3d_swapchain_desc *swapchain_desc) DECLSPEC_HIDDEN;
 void d3dcaps_from_wined3dcaps(D3DCAPS9 *caps, const WINED3DCAPS *wined3d_caps) DECLSPEC_HIDDEN;
@@ -91,6 +101,9 @@ struct d3d9_device
     struct wined3d_buffer *index_buffer;
     UINT index_buffer_size;
     UINT index_buffer_pos;
+
+    struct d3d9_texture *textures[D3D9_MAX_TEXTURE_UNITS];
+    struct d3d9_surface *render_targets[D3D9_MAX_SIMULTANEOUS_RENDERTARGETS];
 
     LONG device_state;
     BOOL in_destruction;
@@ -198,6 +211,10 @@ struct d3d9_texture
     struct wined3d_texture *wined3d_texture;
     IDirect3DDevice9Ex *parent_device;
     struct list rtv_list;
+    DWORD usage;
+    BOOL flags;
+    struct wined3d_shader_resource_view *wined3d_srv;
+    D3DTEXTUREFILTERTYPE autogen_filter_type;
 };
 
 HRESULT cubetexture_init(struct d3d9_texture *texture, struct d3d9_device *device,
@@ -207,6 +224,8 @@ HRESULT texture_init(struct d3d9_texture *texture, struct d3d9_device *device,
 HRESULT volumetexture_init(struct d3d9_texture *texture, struct d3d9_device *device,
         UINT width, UINT height, UINT depth, UINT levels, DWORD usage, D3DFORMAT format, D3DPOOL pool) DECLSPEC_HIDDEN;
 struct d3d9_texture *unsafe_impl_from_IDirect3DBaseTexture9(IDirect3DBaseTexture9 *iface) DECLSPEC_HIDDEN;
+void d3d9_texture_flag_auto_gen_mipmap(struct d3d9_texture *texture) DECLSPEC_HIDDEN;
+void d3d9_texture_gen_auto_mipmap(struct d3d9_texture *texture) DECLSPEC_HIDDEN;
 
 struct d3d9_stateblock
 {
@@ -246,9 +265,6 @@ struct d3d9_vertexshader
 HRESULT vertexshader_init(struct d3d9_vertexshader *shader,
         struct d3d9_device *device, const DWORD *byte_code) DECLSPEC_HIDDEN;
 struct d3d9_vertexshader *unsafe_impl_from_IDirect3DVertexShader9(IDirect3DVertexShader9 *iface) DECLSPEC_HIDDEN;
-
-#define D3D9_MAX_VERTEX_SHADER_CONSTANTF 256
-#define D3D9_MAX_SIMULTANEOUS_RENDERTARGETS 4
 
 struct d3d9_pixelshader
 {
@@ -299,11 +315,13 @@ static inline D3DPOOL d3dpool_from_wined3daccess(unsigned int access, unsigned i
     }
 }
 
-static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool)
+static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool, unsigned int usage)
 {
     switch (pool)
     {
         case D3DPOOL_DEFAULT:
+            if (usage & D3DUSAGE_DYNAMIC)
+                return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP;
             return WINED3D_RESOURCE_ACCESS_GPU;
         case D3DPOOL_MANAGED:
             return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
@@ -313,6 +331,11 @@ static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool)
         default:
             return 0;
     }
+}
+
+static inline DWORD wined3dusage_from_d3dusage(unsigned int usage)
+{
+    return usage & WINED3DUSAGE_MASK;
 }
 
 #endif /* __WINE_D3D9_PRIVATE_H */

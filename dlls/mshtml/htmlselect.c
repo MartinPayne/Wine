@@ -425,6 +425,11 @@ static HRESULT WINAPI HTMLSelectElement_add(IHTMLSelectElement *iface, IHTMLElem
         return E_INVALIDARG;
     }
 
+    if(!element_obj->html_element) {
+        FIXME("Not HTML element\n");
+        return E_NOTIMPL;
+    }
+
     nsvariant = create_nsvariant();
     if(!nsvariant)
         return E_FAIL;
@@ -444,7 +449,7 @@ static HRESULT WINAPI HTMLSelectElement_add(IHTMLSelectElement *iface, IHTMLElem
     }
 
     if(NS_SUCCEEDED(nsres))
-        nsres = nsIDOMHTMLSelectElement_Add(This->nsselect, element_obj->nselem, (nsIVariant*)nsvariant);
+        nsres = nsIDOMHTMLSelectElement_Add(This->nsselect, element_obj->html_element, (nsIVariant*)nsvariant);
     nsIWritableVariant_Release(nsvariant);
     if(NS_FAILED(nsres)) {
         ERR("Add failed: %08x\n", nsres);
@@ -721,7 +726,7 @@ static dispex_static_data_t HTMLSelectElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLSelectElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLSelectElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLSelectElement *ret;
     nsresult nsres;
@@ -735,8 +740,7 @@ HRESULT HTMLSelectElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLSelectElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLSelectElement,
-                                             (void**)&ret->nsselect);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLSelectElement, (void**)&ret->nsselect);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;
