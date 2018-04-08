@@ -451,7 +451,7 @@ char* CDECL _Getdays(void)
 
 #if _MSVCR_VER >= 110
 /*********************************************************************
- *		_W_Getdays (MSVCR100.@)
+ *		_W_Getdays (MSVCR110.@)
  */
 MSVCRT_wchar_t* CDECL _W_Getdays(void)
 {
@@ -519,7 +519,7 @@ char* CDECL _Getmonths(void)
 
 #if _MSVCR_VER >= 110
 /*********************************************************************
- *		_W_Getmonths (MSVCR100.@)
+ *		_W_Getmonths (MSVCR110.@)
  */
 MSVCRT_wchar_t* CDECL _W_Getmonths(void)
 {
@@ -1641,8 +1641,9 @@ MSVCRT__locale_t CDECL MSVCRT__create_locale(int category, const char *locale)
     return loc;
 }
 
+#if _MSVCR_VER >= 110
 /*********************************************************************
- *      _wcreate_locale (MSVCRT.@)
+ *      _wcreate_locale (MSVCR110.@)
  */
 MSVCRT__locale_t CDECL MSVCRT__wcreate_locale(int category, const MSVCRT_wchar_t *locale)
 {
@@ -1665,6 +1666,7 @@ MSVCRT__locale_t CDECL MSVCRT__wcreate_locale(int category, const MSVCRT_wchar_t
     MSVCRT_free(str);
     return loc;
 }
+#endif
 
 /*********************************************************************
  *             setlocale (MSVCRT.@)

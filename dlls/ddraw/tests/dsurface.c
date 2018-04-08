@@ -368,47 +368,6 @@ static HRESULT WINAPI enumCB(IDirectDrawSurface *surf, DDSURFACEDESC *desc, void
     return DDENUMRET_OK;
 }
 
-static void EnumTest(void)
-{
-    HRESULT rc;
-    DDSURFACEDESC ddsd;
-    IDirectDrawSurface *surface;
-    struct enumstruct ctx;
-
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_MIPMAPCOUNT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_COMPLEX | DDSCAPS_MIPMAP;
-    U2(ddsd).dwMipMapCount = 3;
-    ddsd.dwWidth = 32;
-    ddsd.dwHeight = 32;
-    rc = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface, NULL);
-    ok(rc==DD_OK,"CreateSurface returned: %x\n",rc);
-
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.expected[0] = surface;
-    rc = IDirectDrawSurface_GetAttachedSurface(ctx.expected[0], &ddsd.ddsCaps, &ctx.expected[1]);
-    ok(rc == DD_OK, "GetAttachedSurface returned %08x\n", rc);
-    rc = IDirectDrawSurface_GetAttachedSurface(ctx.expected[1], &ddsd.ddsCaps, &ctx.expected[2]);
-    ok(rc == DD_OK, "GetAttachedSurface returned %08x\n", rc);
-    rc = IDirectDrawSurface_GetAttachedSurface(ctx.expected[2], &ddsd.ddsCaps, &ctx.expected[3]);
-    ok(rc == DDERR_NOTFOUND, "GetAttachedSurface returned %08x\n", rc);
-    ok(!ctx.expected[3], "expected NULL pointer\n");
-    ctx.count = 0;
-
-    rc = IDirectDraw_EnumSurfaces(lpDD, DDENUMSURFACES_DOESEXIST | DDENUMSURFACES_ALL, &ddsd, &ctx, enumCB);
-    ok(rc == DD_OK, "IDirectDraw_EnumSurfaces returned %08x\n", rc);
-    ok(ctx.count == 3, "%d surfaces enumerated, expected 3\n", ctx.count);
-
-    ctx.count = 0;
-    rc = IDirectDraw_EnumSurfaces(lpDD, DDENUMSURFACES_DOESEXIST | DDENUMSURFACES_ALL, NULL, &ctx, enumCB);
-    ok(rc == DD_OK, "IDirectDraw_EnumSurfaces returned %08x\n", rc);
-    ok(ctx.count == 3, "%d surfaces enumerated, expected 3\n", ctx.count);
-
-    IDirectDrawSurface_Release(ctx.expected[2]);
-    IDirectDrawSurface_Release(ctx.expected[1]);
-    IDirectDrawSurface_Release(surface);
-}
-
 struct compare
 {
     DWORD width, height;
@@ -2517,60 +2476,6 @@ static void partial_block_lock_test(void)
     IDirectDraw7_Release(dd7);
 }
 
-static void create_surface_test(void)
-{
-    HRESULT hr;
-    IDirectDraw2 *ddraw2;
-    IDirectDraw4 *ddraw4;
-    IDirectDraw7 *ddraw7;
-    IDirectDrawSurface *surface;
-    IDirectDrawSurface4 *surface4;
-    IDirectDrawSurface7 *surface7;
-
-    hr = IDirectDraw_CreateSurface(lpDD, NULL, &surface, NULL);
-    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
-            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
-
-    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw2, (void **) &ddraw2);
-    ok(SUCCEEDED(hr), "QueryInterface failed, hr %#x.\n", hr);
-
-    hr = IDirectDraw2_CreateSurface(ddraw2, NULL, &surface, NULL);
-    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
-            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
-
-    IDirectDraw2_Release(ddraw2);
-
-    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw4, (void **) &ddraw4);
-    ok(SUCCEEDED(hr), "QueryInterface failed, hr %#x.\n", hr);
-
-    hr = IDirectDraw4_CreateSurface(ddraw4, NULL, &surface4, NULL);
-    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
-            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
-
-    IDirectDraw4_Release(ddraw4);
-
-    if (!pDirectDrawCreateEx)
-    {
-        skip("DirectDrawCreateEx not available, skipping IDirectDraw7 tests.\n");
-        return;
-    }
-    hr = pDirectDrawCreateEx(NULL, (void **) &ddraw7, &IID_IDirectDraw7, NULL);
-    ok(SUCCEEDED(hr), "DirectDrawCreateEx failed, hr %#x.\n", hr);
-
-    hr = IDirectDraw7_CreateSurface(ddraw7, NULL, &surface7, NULL);
-    ok(hr == DDERR_NOCOOPERATIVELEVELSET, "CreateSurface(ddsd=NULL, pre-SCL) returned %#x,"
-            " expected %#x.\n", hr, DDERR_NOCOOPERATIVELEVELSET);
-
-    hr = IDirectDraw7_SetCooperativeLevel(ddraw7, NULL, DDSCL_NORMAL);
-    ok(hr == DD_OK, "SetCooperativeLevel failed, hr %#x.\n", hr);
-
-    hr = IDirectDraw7_CreateSurface(ddraw7, NULL, &surface7, NULL);
-    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
-            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
-
-    IDirectDraw7_Release(ddraw7);
-}
-
 START_TEST(dsurface)
 {
     HRESULT ret;
@@ -2609,7 +2514,6 @@ START_TEST(dsurface)
     GetDDInterface_2();
     GetDDInterface_4();
     GetDDInterface_7();
-    EnumTest();
     CubeMapTest();
     CompressedTest();
     SizeTest();
@@ -2623,6 +2527,5 @@ START_TEST(dsurface)
     zbufferbitdepth_test();
     pixelformat_flag_test();
     partial_block_lock_test();
-    create_surface_test();
     ReleaseDirectDraw();
 }
