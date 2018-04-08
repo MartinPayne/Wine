@@ -1324,7 +1324,7 @@ static GLenum buffer_type_hint_from_bind_flags(const struct wined3d_gl_info *gl_
 }
 
 static HRESULT buffer_init(struct wined3d_buffer *buffer, struct wined3d_device *device,
-        UINT size, DWORD usage, enum wined3d_format_id format_id, enum wined3d_pool pool, unsigned int bind_flags,
+        UINT size, DWORD usage, enum wined3d_format_id format_id, unsigned int access, unsigned int bind_flags,
         const struct wined3d_sub_resource_data *data, void *parent, const struct wined3d_parent_ops *parent_ops)
 {
     const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
@@ -1350,9 +1350,8 @@ static HRESULT buffer_init(struct wined3d_buffer *buffer, struct wined3d_device 
         return E_INVALIDARG;
     }
 
-    hr = resource_init(&buffer->resource, device, WINED3D_RTYPE_BUFFER, format,
-            WINED3D_MULTISAMPLE_NONE, 0, usage, pool, size, 1, 1, size, parent, parent_ops, &buffer_resource_ops);
-    if (FAILED(hr))
+    if (FAILED(hr = resource_init(&buffer->resource, device, WINED3D_RTYPE_BUFFER, format, WINED3D_MULTISAMPLE_NONE,
+            0, usage, access, size, 1, 1, size, parent, parent_ops, &buffer_resource_ops)))
     {
         WARN("Failed to initialize resource, hr %#x.\n", hr);
         return hr;
@@ -1365,7 +1364,8 @@ static HRESULT buffer_init(struct wined3d_buffer *buffer, struct wined3d_device 
             buffer, buffer->resource.size, buffer->resource.usage,
             debug_d3dformat(buffer->resource.format->id), buffer->resource.heap_memory);
 
-    if (device->create_parms.flags & WINED3DCREATE_SOFTWARE_VERTEXPROCESSING || pool == WINED3D_POOL_MANAGED)
+    if (device->create_parms.flags & WINED3DCREATE_SOFTWARE_VERTEXPROCESSING
+            || wined3d_resource_access_is_managed(access))
     {
         /* SWvp and managed buffers always return the same pointer in buffer
          * maps and retain data in DISCARD maps. Keep a system memory copy of
@@ -1383,9 +1383,9 @@ static HRESULT buffer_init(struct wined3d_buffer *buffer, struct wined3d_device 
     {
         TRACE("Not creating a BO because GL_ARB_vertex_buffer is not supported.\n");
     }
-    else if (buffer->resource.pool == WINED3D_POOL_SYSTEM_MEM)
+    else if (!(access & WINED3D_RESOURCE_ACCESS_GPU))
     {
-        TRACE("Not creating a BO because the buffer is in system memory.\n");
+        TRACE("Not creating a BO because the buffer is not GPU accessible.\n");
     }
     else if (!dynamic_buffer_ok && (buffer->resource.usage & WINED3DUSAGE_DYNAMIC))
     {
@@ -1429,7 +1429,8 @@ HRESULT CDECL wined3d_buffer_create(struct wined3d_device *device, const struct 
     FIXME("Ignoring access flags (pool).\n");
 
     if (FAILED(hr = buffer_init(object, device, desc->byte_width, desc->usage, WINED3DFMT_UNKNOWN,
-            WINED3D_POOL_MANAGED, desc->bind_flags, data, parent, parent_ops)))
+            WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP,
+            desc->bind_flags, data, parent, parent_ops)))
     {
         WARN("Failed to initialize buffer, hr %#x.\n", hr);
         HeapFree(GetProcessHeap(), 0, object);
@@ -1444,6 +1445,25 @@ HRESULT CDECL wined3d_buffer_create(struct wined3d_device *device, const struct 
     return WINED3D_OK;
 }
 
+static DWORD resource_access_from_pool(enum wined3d_pool pool)
+{
+    switch (pool)
+    {
+        case WINED3D_POOL_DEFAULT:
+            return WINED3D_RESOURCE_ACCESS_GPU;
+
+        case WINED3D_POOL_MANAGED:
+            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+
+        case WINED3D_POOL_SYSTEM_MEM:
+            return WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+
+        default:
+            FIXME("Unhandled pool %#x.\n", pool);
+            return 0;
+    }
+}
+
 HRESULT CDECL wined3d_buffer_create_vb(struct wined3d_device *device, UINT size, DWORD usage, enum wined3d_pool pool,
         void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_buffer **buffer)
 {
@@ -1453,11 +1473,11 @@ HRESULT CDECL wined3d_buffer_create_vb(struct wined3d_device *device, UINT size,
     TRACE("device %p, size %u, usage %#x, pool %#x, parent %p, parent_ops %p, buffer %p.\n",
             device, size, usage, pool, parent, parent_ops, buffer);
 
-    if (pool == WINED3D_POOL_SCRATCH)
+    if (usage & WINED3DUSAGE_SCRATCH)
     {
         /* The d3d9 tests shows that this is not allowed. It doesn't make much
          * sense anyway, SCRATCH buffers wouldn't be usable anywhere. */
-        WARN("Vertex buffer in WINED3D_POOL_SCRATCH requested, returning WINED3DERR_INVALIDCALL.\n");
+        WARN("Vertex buffer with WINED3DUSAGE_SCRATCH requested, returning WINED3DERR_INVALIDCALL.\n");
         *buffer = NULL;
         return WINED3DERR_INVALIDCALL;
     }
@@ -1469,9 +1489,8 @@ HRESULT CDECL wined3d_buffer_create_vb(struct wined3d_device *device, UINT size,
         return WINED3DERR_OUTOFVIDEOMEMORY;
     }
 
-    hr = buffer_init(object, device, size, usage, WINED3DFMT_UNKNOWN,
-            pool, WINED3D_BIND_VERTEX_BUFFER, NULL, parent, parent_ops);
-    if (FAILED(hr))
+    if (FAILED(hr = buffer_init(object, device, size, usage, WINED3DFMT_UNKNOWN,
+            resource_access_from_pool(pool), WINED3D_BIND_VERTEX_BUFFER, NULL, parent, parent_ops)))
     {
         WARN("Failed to initialize buffer, hr %#x.\n", hr);
         HeapFree(GetProcessHeap(), 0, object);
@@ -1500,10 +1519,8 @@ HRESULT CDECL wined3d_buffer_create_ib(struct wined3d_device *device, UINT size,
         return WINED3DERR_OUTOFVIDEOMEMORY;
     }
 
-    hr = buffer_init(object, device, size, usage | WINED3DUSAGE_STATICDECL,
-            WINED3DFMT_UNKNOWN, pool, WINED3D_BIND_INDEX_BUFFER, NULL,
-            parent, parent_ops);
-    if (FAILED(hr))
+    if (FAILED(hr = buffer_init(object, device, size, usage | WINED3DUSAGE_STATICDECL, WINED3DFMT_UNKNOWN,
+            resource_access_from_pool(pool), WINED3D_BIND_INDEX_BUFFER, NULL, parent, parent_ops)))
     {
         WARN("Failed to initialize buffer, hr %#x\n", hr);
         HeapFree(GetProcessHeap(), 0, object);

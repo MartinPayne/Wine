@@ -29,7 +29,7 @@
 #include "winuser.h"
 #include "objbase.h"
 
-#include "d3d11_1.h"
+#include "d3d11_4.h"
 #ifdef D3D11_INIT_GUID
 #include "initguid.h"
 #endif
@@ -67,6 +67,7 @@ void d3d11_primitive_topology_from_wined3d_primitive_type(enum wined3d_primitive
 void wined3d_primitive_type_from_d3d11_primitive_topology(D3D11_PRIMITIVE_TOPOLOGY topology,
         enum wined3d_primitive_type *type, unsigned int *patch_vertex_count) DECLSPEC_HIDDEN;
 unsigned int wined3d_getdata_flags_from_d3d11_async_getdata_flags(unsigned int d3d11_flags) DECLSPEC_HIDDEN;
+UINT d3d11_bind_flags_from_wined3d_usage(DWORD wined3d_usage) DECLSPEC_HIDDEN;
 DWORD wined3d_usage_from_d3d11(UINT bind_flags, enum D3D11_USAGE usage) DECLSPEC_HIDDEN;
 struct wined3d_resource *wined3d_resource_from_d3d11_resource(ID3D11Resource *resource) DECLSPEC_HIDDEN;
 struct wined3d_resource *wined3d_resource_from_d3d10_resource(ID3D10Resource *resource) DECLSPEC_HIDDEN;
@@ -81,6 +82,10 @@ UINT d3d11_cpu_access_flags_from_d3d10_cpu_access_flags(UINT cpu_access_flags) D
 UINT d3d10_cpu_access_flags_from_d3d11_cpu_access_flags(UINT cpu_access_flags) DECLSPEC_HIDDEN;
 UINT d3d11_resource_misc_flags_from_d3d10_resource_misc_flags(UINT resource_misc_flags) DECLSPEC_HIDDEN;
 UINT d3d10_resource_misc_flags_from_d3d11_resource_misc_flags(UINT resource_misc_flags) DECLSPEC_HIDDEN;
+
+BOOL validate_d3d11_resource_access_flags(D3D11_RESOURCE_DIMENSION resource_dimension,
+        D3D11_USAGE usage, UINT bind_flags, UINT cpu_access_flags,
+        D3D_FEATURE_LEVEL feature_level) DECLSPEC_HIDDEN;
 
 HRESULT d3d_get_private_data(struct wined3d_private_store *store,
         REFGUID guid, UINT *data_size, void *data) DECLSPEC_HIDDEN;
@@ -126,9 +131,9 @@ struct d3d_texture2d
     ID3D11Device *device;
 };
 
-static inline struct d3d_texture2d *impl_from_ID3D10Texture2D(ID3D10Texture2D *iface)
+static inline struct d3d_texture2d *impl_from_ID3D11Texture2D(ID3D11Texture2D *iface)
 {
-    return CONTAINING_RECORD(iface, struct d3d_texture2d, ID3D10Texture2D_iface);
+    return CONTAINING_RECORD(iface, struct d3d_texture2d, ID3D11Texture2D_iface);
 }
 
 HRESULT d3d_texture2d_create(struct d3d_device *device, const D3D11_TEXTURE2D_DESC *desc,

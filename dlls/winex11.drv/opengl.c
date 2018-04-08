@@ -163,6 +163,8 @@ typedef XID GLXPbuffer;
 #define GLX_CONTEXT_MAJOR_VERSION_ARB     0x2091
 #define GLX_CONTEXT_MINOR_VERSION_ARB     0x2092
 #define GLX_CONTEXT_FLAGS_ARB             0x2094
+/** GLX_ARB_create_context_no_error */
+#define GLX_CONTEXT_OPENGL_NO_ERROR_ARB   0x31B3
 /** GLX_ARB_create_context_profile */
 #define GLX_CONTEXT_PROFILE_MASK_ARB      0x9126
 /** GLX_ATI_pixel_format_float */
@@ -1368,10 +1370,13 @@ static BOOL create_gl_drawable( HWND hwnd, struct gl_drawable *gl )
         XSetWindowAttributes attrib;
 
         attrib.override_redirect = True;
+        attrib.border_pixel = 0;
         if (!dummy_parent)
         {
+            attrib.colormap = default_colormap;
             dummy_parent = XCreateWindow( gdi_display, root_window, -1, -1, 1, 1, 0, default_visual.depth,
-                                         InputOutput, default_visual.visual, CWOverrideRedirect, &attrib );
+                                          InputOutput, default_visual.visual,
+                                          CWColormap | CWBorderPixel | CWOverrideRedirect, &attrib );
             XMapWindow( gdi_display, dummy_parent );
         }
         gl->colormap = XCreateColormap(gdi_display, dummy_parent, gl->visual->visual,
@@ -1386,7 +1391,7 @@ static BOOL create_gl_drawable( HWND hwnd, struct gl_drawable *gl )
         gl->window = XCreateWindow( gdi_display, dummy_parent, 0, 0,
                                       gl->rect.right - gl->rect.left, gl->rect.bottom - gl->rect.top,
                                       0, gl->visual->depth, InputOutput, gl->visual->visual,
-                                      CWColormap | CWOverrideRedirect, &attrib );
+                                      CWColormap | CWBorderPixel | CWOverrideRedirect, &attrib );
         if (gl->window)
         {
             gl->drawable = pglXCreateWindow( gdi_display, gl->format->fbconfig, gl->window, NULL );
@@ -2118,6 +2123,12 @@ static struct wgl_context *X11DRV_wglCreateContextAttribsARB( HDC hdc, struct wg
                     pContextAttribList += 2;
                     ret->numAttribs++;
                     break;
+                case WGL_CONTEXT_OPENGL_NO_ERROR_ARB:
+                    pContextAttribList[0] = GLX_CONTEXT_OPENGL_NO_ERROR_ARB;
+                    pContextAttribList[1] = attribList[1];
+                    pContextAttribList += 2;
+                    ret->numAttribs++;
+                    break;
                 case WGL_CONTEXT_PROFILE_MASK_ARB:
                     pContextAttribList[0] = GLX_CONTEXT_PROFILE_MASK_ARB;
                     pContextAttribList[1] = attribList[1];
@@ -2143,7 +2154,7 @@ static struct wgl_context *X11DRV_wglCreateContextAttribsARB( HDC hdc, struct wg
         if ((err = X11DRV_check_error()) || !ret->ctx)
         {
             /* In the future we should convert the GLX error to a win32 one here if needed */
-            ERR("Context creation failed (error %x)\n", err);
+            WARN("Context creation failed (error %#x).\n", err);
             HeapFree( GetProcessHeap(), 0, ret );
             ret = NULL;
         }
@@ -3179,6 +3190,8 @@ static void X11DRV_WineGL_LoadExtensions(void)
         register_extension( "WGL_ARB_create_context" );
         opengl_funcs.ext.p_wglCreateContextAttribsARB = X11DRV_wglCreateContextAttribsARB;
 
+        if (has_extension( WineGLInfo.glxExtensions, "GLX_ARB_create_context_no_error" ))
+            register_extension( "WGL_ARB_create_context_no_error" );
         if (has_extension( WineGLInfo.glxExtensions, "GLX_ARB_create_context_profile"))
             register_extension("WGL_ARB_create_context_profile");
     }

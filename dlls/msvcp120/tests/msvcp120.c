@@ -24,6 +24,64 @@
 #include "wine/test.h"
 #include "winbase.h"
 
+DWORD expect_idx;
+
+#define DEFINE_EXPECT(func) \
+    BOOL expect_ ## func, called_ ## func
+
+struct expect_struct {
+    DEFINE_EXPECT(queue_char__Allocate_page);
+    DEFINE_EXPECT(queue_char__Deallocate_page);
+    DEFINE_EXPECT(queue_char__Move_item);
+    DEFINE_EXPECT(queue_char__Copy_item);
+    DEFINE_EXPECT(queue_char__Assign_and_destroy_item);
+};
+
+#define SET_EXPECT(func) \
+    do { \
+        struct expect_struct *p = TlsGetValue(expect_idx); \
+        ok(p != NULL, "expect_struct not initialized\n"); \
+        p->expect_ ## func = TRUE; \
+    }while(0)
+
+#define CHECK_EXPECT2(func) \
+    do { \
+        struct expect_struct *p = TlsGetValue(expect_idx); \
+        ok(p != NULL, "expect_struct not initialized\n"); \
+        ok(p->expect_ ##func, "unexpected call " #func "\n"); \
+        p->called_ ## func = TRUE; \
+    }while(0)
+
+#define CHECK_EXPECT(func) \
+    do { \
+        struct expect_struct *p = TlsGetValue(expect_idx); \
+        ok(p != NULL, "expect_struct not initialized\n"); \
+        CHECK_EXPECT2(func); \
+        p->expect_ ## func = FALSE; \
+    }while(0)
+
+#define CHECK_CALLED(func) \
+    do { \
+        struct expect_struct *p = TlsGetValue(expect_idx); \
+        ok(p != NULL, "expect_struct not initialized\n"); \
+        ok(p->called_ ## func, "expected " #func "\n"); \
+        p->expect_ ## func = p->called_ ## func = FALSE; \
+    }while(0)
+
+static void alloc_expect_struct(void)
+{
+    struct expect_struct *p = malloc(sizeof(*p));
+    memset(p, 0, sizeof(*p));
+    ok(TlsSetValue(expect_idx, p), "TlsSetValue failed\n");
+}
+
+static void free_expect_struct(void)
+{
+    struct expect_struct *p = TlsGetValue(expect_idx);
+    ok(TlsSetValue(expect_idx, NULL), "TlsSetValue failed\n");
+    free(p);
+}
+
 #undef __thiscall
 #ifdef __i386__
 #define __thiscall __stdcall
@@ -278,6 +336,30 @@ static BOOLEAN (WINAPI *pCreateSymbolicLinkA)(LPCSTR,LPCSTR,DWORD);
 
 static size_t (__cdecl *p_vector_base_v4__Segment_index_of)(size_t);
 
+typedef struct
+{
+    const vtable_ptr *vtable;
+    void *data;
+    size_t alloc_count;
+    size_t item_size;
+} queue_base_v4;
+
+typedef struct
+{
+    struct _Page *_Next;
+    size_t _Mask;
+    char data[1];
+} _Page;
+
+static queue_base_v4* (__thiscall *p_queue_base_v4_ctor)(queue_base_v4*, size_t);
+static void (__thiscall *p_queue_base_v4_dtor)(queue_base_v4*);
+static MSVCP_bool (__thiscall *p_queue_base_v4__Internal_empty)(queue_base_v4*);
+static size_t (__thiscall *p_queue_base_v4__Internal_size)(queue_base_v4*);
+static void (__thiscall *p_queue_base_v4__Internal_push)(queue_base_v4*, const void*);
+static void (__thiscall *p_queue_base_v4__Internal_move_push)(queue_base_v4*, void*);
+static MSVCP_bool (__thiscall *p_queue_base_v4__Internal_pop_if_present)(queue_base_v4*, void*);
+static void (__thiscall *p_queue_base_v4__Internal_finish_clear)(queue_base_v4*);
+
 static HMODULE msvcp;
 #define SETNOFAIL(x,y) x = (void*)GetProcAddress(msvcp,y)
 #define SET(x,y) do { SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y); } while(0)
@@ -395,6 +477,22 @@ static BOOL init(void)
                 "?_Mtx_unlock@threads@stdext@@YAXPEAX@Z");
         SET(p_vector_base_v4__Segment_index_of,
                 "?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KA_K_K@Z");
+        SET(p_queue_base_v4_ctor,
+                "??0_Concurrent_queue_base_v4@details@Concurrency@@IEAA@_K@Z");
+        SET(p_queue_base_v4_dtor,
+                "??1_Concurrent_queue_base_v4@details@Concurrency@@MEAA@XZ");
+        SET(p_queue_base_v4__Internal_empty,
+                "?_Internal_empty@_Concurrent_queue_base_v4@details@Concurrency@@IEBA_NXZ");
+        SET(p_queue_base_v4__Internal_size,
+                "?_Internal_size@_Concurrent_queue_base_v4@details@Concurrency@@IEBA_KXZ");
+        SET(p_queue_base_v4__Internal_push,
+                "?_Internal_push@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXPEBX@Z");
+        SET(p_queue_base_v4__Internal_move_push,
+                "?_Internal_move_push@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXPEAX@Z");
+        SET(p_queue_base_v4__Internal_pop_if_present,
+                "?_Internal_pop_if_present@_Concurrent_queue_base_v4@details@Concurrency@@IEAA_NPEAX@Z");
+        SET(p_queue_base_v4__Internal_finish_clear,
+                "?_Internal_finish_clear@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXXZ");
     } else {
         SET(p_tr2_sys__File_size,
                 "?_File_size@sys@tr2@std@@YA_KPBD@Z");
@@ -482,6 +580,22 @@ static BOOL init(void)
                 "?_Launch@_Pad@std@@QAEXPAU_Thrd_imp_t@@@Z");
         SET(p__Pad__Release,
                 "?_Release@_Pad@std@@QAEXXZ");
+        SET(p_queue_base_v4_ctor,
+                "??0_Concurrent_queue_base_v4@details@Concurrency@@IAE@I@Z");
+        SET(p_queue_base_v4_dtor,
+                "??1_Concurrent_queue_base_v4@details@Concurrency@@MAE@XZ");
+        SET(p_queue_base_v4__Internal_empty,
+                "?_Internal_empty@_Concurrent_queue_base_v4@details@Concurrency@@IBE_NXZ");
+        SET(p_queue_base_v4__Internal_size,
+                "?_Internal_size@_Concurrent_queue_base_v4@details@Concurrency@@IBEIXZ");
+        SET(p_queue_base_v4__Internal_push,
+                "?_Internal_push@_Concurrent_queue_base_v4@details@Concurrency@@IAEXPBX@Z");
+        SET(p_queue_base_v4__Internal_move_push,
+                "?_Internal_move_push@_Concurrent_queue_base_v4@details@Concurrency@@IAEXPAX@Z");
+        SET(p_queue_base_v4__Internal_pop_if_present,
+                "?_Internal_pop_if_present@_Concurrent_queue_base_v4@details@Concurrency@@IAE_NPAX@Z");
+        SET(p_queue_base_v4__Internal_finish_clear,
+                "?_Internal_finish_clear@_Concurrent_queue_base_v4@details@Concurrency@@IAEXXZ");
 #else
         SET(p__Thrd_current,
                 "_Thrd_current");
@@ -497,6 +611,22 @@ static BOOL init(void)
                 "?_Launch@_Pad@std@@QAAXPAU_Thrd_imp_t@@@Z");
         SET(p__Pad__Release,
                 "?_Release@_Pad@std@@QAAXXZ");
+        SET(p_queue_base_v4_ctor,
+                "??0_Concurrent_queue_base_v4@details@Concurrency@@IAA@I@Z");
+        SET(p_queue_base_v4_dtor,
+                "??1_Concurrent_queue_base_v4@details@Concurrency@@MAA@XZ");
+        SET(p_queue_base_v4__Internal_empty,
+                "?_Internal_empty@_Concurrent_queue_base_v4@details@Concurrency@@IBA_NXZ");
+        SET(p_queue_base_v4__Internal_size,
+                "?_Internal_size@_Concurrent_queue_base_v4@details@Concurrency@@IBAIXZ");
+        SET(p_queue_base_v4__Internal_push,
+                "?_Internal_push@_Concurrent_queue_base_v4@details@Concurrency@@IAAXPBX@Z");
+        SET(p_queue_base_v4__Internal_move_push,
+                "?_Internal_move_push@_Concurrent_queue_base_v4@details@Concurrency@@IAAXPAX@Z");
+        SET(p_queue_base_v4__Internal_pop_if_present,
+                "?_Internal_pop_if_present@_Concurrent_queue_base_v4@details@Concurrency@@IAA_NPAX@Z");
+        SET(p_queue_base_v4__Internal_finish_clear,
+                "?_Internal_finish_clear@_Concurrent_queue_base_v4@details@Concurrency@@IAAXXZ");
 #endif
     }
     SET(p__Thrd_equal,
@@ -2148,9 +2278,322 @@ static void test_vector_base_v4__Segment_index_of(void)
     }
 }
 
+static HANDLE block_start, block_end;
+static BOOL block;
+
+static void __thiscall queue_char__Move_item(
+#ifndef __i386__
+        queue_base_v4 *this,
+#endif
+        _Page *dst, size_t idx, void *src)
+{
+    CHECK_EXPECT(queue_char__Move_item);
+    if(block) {
+        block = FALSE;
+        SetEvent(block_start);
+        WaitForSingleObject(block_end, INFINITE);
+    }
+    memcpy(dst->data + idx, src, sizeof(char));
+}
+
+static void __thiscall queue_char__Copy_item(
+#ifndef __i386__
+        queue_base_v4 *this,
+#endif
+        _Page *dst, size_t idx, const void *src)
+{
+    CHECK_EXPECT(queue_char__Copy_item);
+    if(block) {
+        block = FALSE;
+        SetEvent(block_start);
+        WaitForSingleObject(block_end, INFINITE);
+    }
+    memcpy(dst->data + idx, src, sizeof(char));
+}
+
+static void __thiscall queue_char__Assign_and_destroy_item(
+#ifndef __i386__
+        queue_base_v4 *this,
+#endif
+        void *dst, _Page *src, size_t idx)
+{
+    CHECK_EXPECT(queue_char__Assign_and_destroy_item);
+    if(block) {
+        block = FALSE;
+        SetEvent(block_start);
+        WaitForSingleObject(block_end, INFINITE);
+    }
+    memcpy(dst, src->data + idx, sizeof(char));
+}
+
+#ifndef __i386__
+static _Page* __thiscall queue_char__Allocate_page(queue_base_v4 *this)
+#else
+static _Page* __thiscall queue_char__Allocate_page(void)
+#endif
+{
+    CHECK_EXPECT(queue_char__Allocate_page);
+    return malloc(sizeof(_Page) + sizeof(char[256]));
+}
+
+static void __thiscall queue_char__Deallocate_page(
+#ifndef __i386__
+        queue_base_v4 *this,
+#endif
+        _Page *page)
+{
+    CHECK_EXPECT2(queue_char__Deallocate_page);
+    free(page);
+}
+
+static const void* queue_char_vtbl[] =
+{
+    queue_char__Move_item,
+    queue_char__Copy_item,
+    queue_char__Assign_and_destroy_item,
+    NULL, /* dtor */
+    queue_char__Allocate_page,
+    queue_char__Deallocate_page
+};
+
+static DWORD WINAPI queue_move_push_thread(void *arg)
+{
+    queue_base_v4 *queue = arg;
+    char c = 'm';
+
+    alloc_expect_struct();
+    SET_EXPECT(queue_char__Allocate_page); /* ignore page allocations */
+    SET_EXPECT(queue_char__Move_item);
+    call_func2(p_queue_base_v4__Internal_move_push, queue, &c);
+    CHECK_CALLED(queue_char__Move_item);
+    free_expect_struct();
+    return 0;
+}
+
+static DWORD WINAPI queue_push_thread(void *arg)
+{
+    queue_base_v4 *queue = arg;
+    char c = 'c';
+
+    alloc_expect_struct();
+    SET_EXPECT(queue_char__Copy_item);
+    call_func2(p_queue_base_v4__Internal_push, queue, &c);
+    CHECK_CALLED(queue_char__Copy_item);
+    free_expect_struct();
+    return 0;
+}
+
+static DWORD WINAPI queue_pop_thread(void*arg)
+{
+    queue_base_v4 *queue = arg;
+    char c;
+
+    alloc_expect_struct();
+    SET_EXPECT(queue_char__Assign_and_destroy_item);
+    call_func2(p_queue_base_v4__Internal_pop_if_present, queue, &c);
+    CHECK_CALLED(queue_char__Assign_and_destroy_item);
+    free_expect_struct();
+    return 0;
+}
+
+static void test_queue_base_v4(void)
+{
+    queue_base_v4 queue;
+    HANDLE thread[2];
+    MSVCP_bool b;
+    size_t size;
+    DWORD ret;
+    int i;
+    char c;
+
+    block_start = CreateEventW(NULL, FALSE, FALSE, NULL);
+    block_end = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    call_func2(p_queue_base_v4_ctor, &queue, 0);
+    ok(queue.data != NULL, "queue.data = NULL\n");
+    ok(queue.alloc_count == 32, "queue.alloc_count = %ld\n", (long)queue.alloc_count);
+    ok(queue.item_size == 0, "queue.item_size = %ld\n", (long)queue.item_size);
+    call_func1(p_queue_base_v4_dtor, &queue);
+
+    call_func2(p_queue_base_v4_ctor, &queue, 8);
+    ok(queue.data != NULL, "queue.data = NULL\n");
+    ok(queue.alloc_count == 32, "queue.alloc_count = %ld\n", (long)queue.alloc_count);
+    ok(queue.item_size == 8, "queue.item_size = %ld\n", (long)queue.item_size);
+    call_func1(p_queue_base_v4_dtor, &queue);
+
+    call_func2(p_queue_base_v4_ctor, &queue, 16);
+    ok(queue.data != NULL, "queue.data = NULL\n");
+    ok(queue.alloc_count == 16, "queue.alloc_count = %ld\n", (long)queue.alloc_count);
+    ok(queue.item_size == 16, "queue.item_size = %ld\n", (long)queue.item_size);
+    b = (DWORD_PTR)call_func1(p_queue_base_v4__Internal_empty, &queue);
+    ok(b, "queue is not empty\n");
+    size = (size_t)call_func1(p_queue_base_v4__Internal_size, &queue);
+    ok(!size, "size = %ld\n", (long)size);
+    call_func1(p_queue_base_v4_dtor, &queue);
+
+    call_func2(p_queue_base_v4_ctor, &queue, 1);
+    queue.vtable = (void*)&queue_char_vtbl;
+
+    for(i=0; i<8; i++) {
+        SET_EXPECT(queue_char__Allocate_page);
+        SET_EXPECT(queue_char__Copy_item);
+        c = 'a'+i;
+        call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+        CHECK_CALLED(queue_char__Allocate_page);
+        CHECK_CALLED(queue_char__Copy_item);
+
+        b = (MSVCP_bool)(DWORD_PTR)call_func1(p_queue_base_v4__Internal_empty, &queue);
+        ok(!b, "queue is empty\n");
+        size = (size_t)call_func1(p_queue_base_v4__Internal_size, &queue);
+        ok(size == i+1, "size = %ld, expected %ld\n", (long)size, (long)i);
+    }
+
+    SET_EXPECT(queue_char__Copy_item);
+    c = 'a'+i;
+    call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+    CHECK_CALLED(queue_char__Copy_item);
+
+    for(i=0; i<9; i++) {
+        SET_EXPECT(queue_char__Assign_and_destroy_item);
+        b = (DWORD_PTR)call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+        CHECK_CALLED(queue_char__Assign_and_destroy_item);
+        ok(b, "pop returned false\n");
+        ok(c == 'a'+i, "got '%c', expected '%c'\n", c, 'a'+i);
+    }
+    b = (DWORD_PTR)call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+    ok(!b, "pop returned true\n");
+
+    for(i=0; i<247; i++) {
+        SET_EXPECT(queue_char__Copy_item);
+        c = 'a'+i;
+        call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+        CHECK_CALLED(queue_char__Copy_item);
+
+        size = (size_t)call_func1(p_queue_base_v4__Internal_size, &queue);
+        ok(size == i+1, "size = %ld, expected %ld\n", (long)size, (long)i);
+    }
+
+    SET_EXPECT(queue_char__Allocate_page);
+    SET_EXPECT(queue_char__Copy_item);
+    c = 'a'+i;
+    call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+    CHECK_CALLED(queue_char__Allocate_page);
+    CHECK_CALLED(queue_char__Copy_item);
+
+    for(i=0; i<239; i++) {
+        SET_EXPECT(queue_char__Assign_and_destroy_item);
+        b = (DWORD_PTR)call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+        CHECK_CALLED(queue_char__Assign_and_destroy_item);
+        ok(b, "pop returned false\n");
+        ok(c == (char)('a'+i), "got '%c', expected '%c'\n", c, 'a'+i);
+    }
+
+    SET_EXPECT(queue_char__Assign_and_destroy_item);
+    SET_EXPECT(queue_char__Deallocate_page);
+    b = (DWORD_PTR)call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+    CHECK_CALLED(queue_char__Assign_and_destroy_item);
+    CHECK_CALLED(queue_char__Deallocate_page);
+    ok(b, "pop returned false\n");
+    ok(c == (char)('a'+i), "got '%c', expected '%c'\n", c, 'a'+i);
+
+    /* destructor does't clear the memory, _Internal_finish_clear needs to be called */
+    SET_EXPECT(queue_char__Deallocate_page);
+    call_func1(p_queue_base_v4__Internal_finish_clear, &queue);
+    CHECK_CALLED(queue_char__Deallocate_page);
+
+    call_func1(p_queue_base_v4_dtor, &queue);
+
+    /* test parallel push */
+    call_func2(p_queue_base_v4_ctor, &queue, 1);
+    queue.vtable = (void*)&queue_char_vtbl;
+
+    block = TRUE;
+    thread[0] = CreateThread(NULL, 0, queue_move_push_thread, &queue, 0, NULL);
+    WaitForSingleObject(block_start, INFINITE);
+
+    c = 'a';
+    for(i=0; i<7; i++) {
+        SET_EXPECT(queue_char__Allocate_page);
+        SET_EXPECT(queue_char__Copy_item);
+        call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+        CHECK_CALLED(queue_char__Allocate_page);
+        CHECK_CALLED(queue_char__Copy_item);
+    }
+
+    thread[1] = CreateThread(NULL, 0, queue_push_thread, &queue, 0, NULL);
+    ret = WaitForSingleObject(thread[1], 100);
+    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", ret);
+
+    SetEvent(block_end);
+    WaitForSingleObject(thread[0], INFINITE);
+    WaitForSingleObject(thread[1], INFINITE);
+    CloseHandle(thread[0]);
+    CloseHandle(thread[1]);
+
+    /* test parallel pop */
+    block = TRUE;
+    thread[0] = CreateThread(NULL, 0, queue_pop_thread, &queue, 0, NULL);
+    WaitForSingleObject(block_start, INFINITE);
+
+    for(i=0; i<7; i++) {
+        SET_EXPECT(queue_char__Assign_and_destroy_item);
+        b = (DWORD_PTR)call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+        CHECK_CALLED(queue_char__Assign_and_destroy_item);
+        ok(b, "pop returned false\n");
+        ok(c == 'a', "got '%c', expected 'a'\n", c);
+    }
+
+    thread[1] = CreateThread(NULL, 0, queue_pop_thread, &queue, 0, NULL);
+    ret = WaitForSingleObject(thread[1], 100);
+    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", ret);
+
+    SetEvent(block_end);
+    WaitForSingleObject(thread[0], INFINITE);
+    WaitForSingleObject(thread[1], INFINITE);
+    CloseHandle(thread[0]);
+    CloseHandle(thread[1]);
+
+    /* test parallel push/pop */
+    for(i=0; i<8; i++) {
+        SET_EXPECT(queue_char__Copy_item);
+        call_func2(p_queue_base_v4__Internal_push, &queue, &c);
+        CHECK_CALLED(queue_char__Copy_item);
+    }
+
+    block = TRUE;
+    thread[0] = CreateThread(NULL, 0, queue_push_thread, &queue, 0, NULL);
+    WaitForSingleObject(block_start, INFINITE);
+
+    SET_EXPECT(queue_char__Assign_and_destroy_item);
+    call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+    CHECK_CALLED(queue_char__Assign_and_destroy_item);
+
+    SetEvent(block_end);
+    WaitForSingleObject(thread[0], INFINITE);
+    CloseHandle(thread[0]);
+
+    for(i=0; i<8; i++) {
+        SET_EXPECT(queue_char__Assign_and_destroy_item);
+        call_func2(p_queue_base_v4__Internal_pop_if_present, &queue, &c);
+        CHECK_CALLED(queue_char__Assign_and_destroy_item);
+    }
+
+    SET_EXPECT(queue_char__Deallocate_page);
+    call_func1(p_queue_base_v4__Internal_finish_clear, &queue);
+    CHECK_CALLED(queue_char__Deallocate_page);
+    call_func1(p_queue_base_v4_dtor, &queue);
+
+    CloseHandle(block_start);
+    CloseHandle(block_end);
+}
+
 START_TEST(msvcp120)
 {
     if(!init()) return;
+    expect_idx = TlsAlloc();
+    ok(expect_idx != TLS_OUT_OF_INDEXES, "TlsAlloc failed\n");
+    alloc_expect_struct();
+
     test__Xtime_diff_to_millis2();
     test_xtime_get();
     test__Getcvt();
@@ -2182,8 +2625,11 @@ START_TEST(msvcp120)
     test_threads__Mtx();
 
     test_vector_base_v4__Segment_index_of();
+    test_queue_base_v4();
 
     test_vbtable_size_exports();
 
+    free_expect_struct();
+    TlsFree(expect_idx);
     FreeLibrary(msvcp);
 }

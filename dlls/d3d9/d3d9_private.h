@@ -278,4 +278,41 @@ static inline struct d3d9_device *impl_from_IDirect3DDevice9Ex(IDirect3DDevice9E
     return CONTAINING_RECORD(iface, struct d3d9_device, IDirect3DDevice9Ex_iface);
 }
 
+static inline DWORD d3dusage_from_wined3dusage(unsigned int usage)
+{
+    return usage & WINED3DUSAGE_MASK;
+}
+
+static inline D3DPOOL d3dpool_from_wined3daccess(unsigned int access, unsigned int usage)
+{
+    switch (access & (WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU))
+    {
+        default:
+        case WINED3D_RESOURCE_ACCESS_GPU:
+            return D3DPOOL_DEFAULT;
+        case WINED3D_RESOURCE_ACCESS_CPU:
+            if (usage & WINED3DUSAGE_SCRATCH)
+                return D3DPOOL_SCRATCH;
+            return D3DPOOL_SYSTEMMEM;
+        case WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU:
+            return D3DPOOL_MANAGED;
+    }
+}
+
+static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool)
+{
+    switch (pool)
+    {
+        case D3DPOOL_DEFAULT:
+            return WINED3D_RESOURCE_ACCESS_GPU;
+        case D3DPOOL_MANAGED:
+            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+        case D3DPOOL_SYSTEMMEM:
+        case D3DPOOL_SCRATCH:
+            return WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+        default:
+            return 0;
+    }
+}
+
 #endif /* __WINE_D3D9_PRIVATE_H */

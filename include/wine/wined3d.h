@@ -50,6 +50,10 @@
 #define WINEDDERR_INVALIDRECT                                   MAKE_WINED3DHRESULT(150)
 #define WINEDDERR_OVERLAYNOTVISIBLE                             MAKE_WINED3DHRESULT(577)
 
+#define WINED3D_RESOURCE_ACCESS_GPU                             0x1u
+#define WINED3D_RESOURCE_ACCESS_CPU                             0x2u
+#define WINED3D_RESOURCE_ACCESS_MAP                             0x4u
+
 enum wined3d_light_type
 {
     WINED3D_LIGHT_POINT                     = 1,
@@ -681,7 +685,6 @@ enum wined3d_pool
     WINED3D_POOL_DEFAULT                    = 0,
     WINED3D_POOL_MANAGED                    = 1,
     WINED3D_POOL_SYSTEM_MEM                 = 2,
-    WINED3D_POOL_SCRATCH                    = 3,
 };
 
 enum wined3d_query_type
@@ -896,6 +899,7 @@ enum wined3d_shader_byte_code_format
 #define WINED3DUSAGE_TEXTAPI                                    0x10000000
 #define WINED3DUSAGE_MASK                                       0x10007fff
 
+#define WINED3DUSAGE_SCRATCH                                    0x00200000
 #define WINED3DUSAGE_PRIVATE                                    0x00400000
 #define WINED3DUSAGE_LEGACY_CUBEMAP                             0x00800000
 #define WINED3DUSAGE_TEXTURE                                    0x01000000
@@ -1712,6 +1716,7 @@ struct wined3d_swapchain_desc
     UINT backbuffer_height;
     enum wined3d_format_id backbuffer_format;
     UINT backbuffer_count;
+    DWORD backbuffer_usage;
     enum wined3d_multisample_type multisample_type;
     DWORD multisample_quality;
     enum wined3d_swap_effect swap_effect;
@@ -1730,26 +1735,26 @@ struct wined3d_resource_desc
     enum wined3d_resource_type resource_type;
     enum wined3d_format_id format;
     enum wined3d_multisample_type multisample_type;
-    UINT multisample_quality;
-    DWORD usage;
-    enum wined3d_pool pool;
-    UINT width;
-    UINT height;
-    UINT depth;
-    UINT size;
+    unsigned int multisample_quality;
+    unsigned int usage;
+    unsigned int access;
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth;
+    unsigned int size;
 };
 
 struct wined3d_sub_resource_desc
 {
     enum wined3d_format_id format;
     enum wined3d_multisample_type multisample_type;
-    UINT multisample_quality;
-    DWORD usage;
-    enum wined3d_pool pool;
-    UINT width;
-    UINT height;
-    UINT depth;
-    UINT size;
+    unsigned int multisample_quality;
+    unsigned int usage;
+    unsigned int access;
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth;
+    unsigned int size;
 };
 
 struct wined3d_clip_status

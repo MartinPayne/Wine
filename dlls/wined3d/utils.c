@@ -4129,6 +4129,22 @@ const char *debug_d3ddevicetype(enum wined3d_device_type device_type)
     }
 }
 
+const char *wined3d_debug_resource_access(DWORD access)
+{
+    char buf[91];
+
+    buf[0] = '\0';
+#define ACCESS_TO_STR(x) if (access & x) { strcat(buf, " | "#x); access &= ~x; }
+    ACCESS_TO_STR(WINED3D_RESOURCE_ACCESS_GPU);
+    ACCESS_TO_STR(WINED3D_RESOURCE_ACCESS_CPU);
+    ACCESS_TO_STR(WINED3D_RESOURCE_ACCESS_MAP);
+#undef ACCESS_TO_STR
+    if (access)
+        FIXME("Unrecognised access flag(s) %#x.\n", access);
+
+    return buf[0] ? wine_dbg_sprintf("%s", &buf[3]) : "0";
+}
+
 const char *debug_d3dusage(DWORD usage)
 {
     char buf[552];
@@ -4644,22 +4660,6 @@ const char *debug_d3dstate(DWORD state)
         return "STATE_STREAM_OUTPUT";
 
     return wine_dbg_sprintf("UNKNOWN_STATE(%#x)", state);
-}
-
-const char *debug_d3dpool(enum wined3d_pool pool)
-{
-    switch (pool)
-    {
-#define POOL_TO_STR(p) case p: return #p
-        POOL_TO_STR(WINED3D_POOL_DEFAULT);
-        POOL_TO_STR(WINED3D_POOL_MANAGED);
-        POOL_TO_STR(WINED3D_POOL_SYSTEM_MEM);
-        POOL_TO_STR(WINED3D_POOL_SCRATCH);
-#undef  POOL_TO_STR
-        default:
-            FIXME("Unrecognized pool %#x.\n", pool);
-            return "unrecognized";
-    }
 }
 
 const char *debug_fboattachment(GLenum attachment)

@@ -442,8 +442,8 @@ BOOL WINAPI ReadFile( HANDLE hFile, LPVOID buffer, DWORD bytesToRead,
         io_status = (PIO_STATUS_BLOCK)overlapped;
         if (((ULONG_PTR)hEvent & 1) == 0) cvalue = overlapped;
     }
+    else io_status->Information = 0;
     io_status->u.Status = STATUS_PENDING;
-    io_status->Information = 0;
 
     status = NtReadFile(hFile, hEvent, NULL, cvalue, io_status, buffer, bytesToRead, poffset, NULL);
 
@@ -453,8 +453,8 @@ BOOL WINAPI ReadFile( HANDLE hFile, LPVOID buffer, DWORD bytesToRead,
         status = io_status->u.Status;
     }
 
-    if (status != STATUS_PENDING && bytesRead)
-        *bytesRead = io_status->Information;
+    if (bytesRead)
+        *bytesRead = overlapped && status ? 0 : io_status->Information;
 
     if (status == STATUS_END_OF_FILE)
     {
@@ -565,8 +565,8 @@ BOOL WINAPI WriteFile( HANDLE hFile, LPCVOID buffer, DWORD bytesToWrite,
         piosb = (PIO_STATUS_BLOCK)overlapped;
         if (((ULONG_PTR)hEvent & 1) == 0) cvalue = overlapped;
     }
+    else piosb->Information = 0;
     piosb->u.Status = STATUS_PENDING;
-    piosb->Information = 0;
 
     status = NtWriteFile(hFile, hEvent, NULL, cvalue, piosb,
                          buffer, bytesToWrite, poffset, NULL);
@@ -577,8 +577,8 @@ BOOL WINAPI WriteFile( HANDLE hFile, LPCVOID buffer, DWORD bytesToWrite,
         status = piosb->u.Status;
     }
 
-    if (status != STATUS_PENDING && bytesWritten)
-        *bytesWritten = piosb->Information;
+    if (bytesWritten)
+        *bytesWritten = overlapped && status ? 0 : piosb->Information;
 
     if (status && status != STATUS_TIMEOUT)
     {
@@ -2818,6 +2818,16 @@ HANDLE WINAPI OpenFileById( HANDLE handle, LPFILE_ID_DESCRIPTOR id, DWORD access
         return INVALID_HANDLE_VALUE;
     }
     return result;
+}
+
+/***********************************************************************
+ *             ReOpenFile (KERNEL32.@)
+ */
+HANDLE WINAPI ReOpenFile(HANDLE handle_original, DWORD access, DWORD sharing, DWORD flags)
+{
+    FIXME("(%p, %d, %d, %d): stub\n", handle_original, access, sharing, flags);
+
+    return INVALID_HANDLE_VALUE;
 }
 
 

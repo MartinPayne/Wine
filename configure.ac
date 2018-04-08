@@ -54,6 +54,7 @@ AC_ARG_WITH(glu,       AS_HELP_STRING([--without-glu],[do not use the GLU librar
 AC_ARG_WITH(gnutls,    AS_HELP_STRING([--without-gnutls],[do not use GnuTLS (schannel support)]))
 AC_ARG_WITH(gsm,       AS_HELP_STRING([--without-gsm],[do not use libgsm (GSM 06.10 codec support)]),
             [if test "x$withval" = "xno"; then ac_cv_header_gsm_h=no; ac_cv_header_gsm_gsm_h=no; fi])
+AC_ARG_WITH(gssapi,    AS_HELP_STRING([--without-gssapi],[do not use GSSAPI (Kerberos SSP support)]))
 AC_ARG_WITH(gstreamer, AS_HELP_STRING([--without-gstreamer],[do not use GStreamer (codecs support)]))
 AC_ARG_WITH(hal,       AS_HELP_STRING([--without-hal],[do not use HAL (dynamic device support)]))
 AC_ARG_WITH(jpeg,      AS_HELP_STRING([--without-jpeg],[do not use JPEG]))
@@ -531,7 +532,6 @@ AC_CHECK_HEADERS(\
 	sys/uio.h \
 	sys/user.h \
 	sys/utsname.h \
-	sys/vm86.h \
 	sys/vnode.h \
 	sys/wait.h \
 	syscall.h \
@@ -1665,6 +1665,23 @@ fi
 WINE_NOTICE_WITH(krb5,[test "x$ac_cv_lib_soname_krb5" = "x"],
                  [libkrb5 ${notice_platform}development files not found, Kerberos won't be supported.])
 
+dnl **** Check for gssapi ****
+if test "x$with_gssapi" != "xno"
+then
+    WINE_PACKAGE_FLAGS(GSSAPI,[krb5-gssapi],,
+                       [`${KRB5_CONFIG:-krb5-config} --cflags gssapi 2>/dev/null`],
+                       [`${KRB5_CONFIG:-krb5-config} --libs gssapi 2>/dev/null`],
+        [AC_CHECK_HEADERS([gssapi/gssapi.h gssapi/gssapi_ext.h])
+        if test "$ac_cv_header_gssapi_gssapi_h" = "yes" -a "$ac_cv_header_gssapi_gssapi_ext_h" = "yes"
+        then
+            WINE_CHECK_SONAME(gssapi_krb5, gss_init_sec_context,,[GSSAPI_CFLAGS=""],[$GSSAPI_LIBS])
+        else
+            GSSAPI_CFLAGS=""
+        fi])
+fi
+WINE_NOTICE_WITH(gssapi,[test "x$ac_cv_lib_soname_gssapi_krb5" = "x"],
+                 [libgssapi_krb5 ${notice_platform}development files not found (or too old), no Kerberos SSP support.])
+
 dnl **** Check for libjpeg ****
 if test "x$with_jpeg" != "xno"
 then
@@ -1841,7 +1858,8 @@ then
   WINE_TRY_CFLAGS([-Wdeclaration-after-statement])
   WINE_TRY_CFLAGS([-Wempty-body])
   WINE_TRY_CFLAGS([-Wignored-qualifiers])
-  WINE_TRY_CFLAGS([-Wno-packed-not-aligned])
+  WINE_TRY_CFLAGS([-Wpacked-not-aligned],[EXTRACFLAGS="$EXTRACFLAGS -Wno-packed-not-aligned"])
+  WINE_TRY_CFLAGS([-Wpragma-pack],[EXTRACFLAGS="$EXTRACFLAGS -Wno-pragma-pack"])
   WINE_TRY_CFLAGS([-Wshift-overflow=2])
   WINE_TRY_CFLAGS([-Wstrict-prototypes])
   WINE_TRY_CFLAGS([-Wtype-limits])
@@ -2706,6 +2724,14 @@ then
     AC_DEFINE(HAVE___BUILTIN_POPCOUNT, 1, [Define to 1 if you have the `__builtin_popcount' built-in function.])
 fi
 
+AC_CACHE_CHECK([for __clear_cache], ac_cv_have___clear_cache,
+               AC_LINK_IFELSE([AC_LANG_PROGRAM(,[[__clear_cache((void*)0, (void*)0); return 0;]])],
+               [ac_cv_have___clear_cache="yes"], [ac_cv_have___clear_cache="no"]))
+if test "$ac_cv_have___clear_cache" = "yes"
+then
+    AC_DEFINE(HAVE___CLEAR_CACHE, 1, [Define to 1 if you have the `__clear_cache' (potentially built-in) function.])
+fi
+
 dnl *** check for the need to define platform-specific symbols
 
 case $host_cpu in
@@ -2866,6 +2892,7 @@ WINE_CONFIG_DLL(api-ms-win-core-rtlsupport-l1-2-0)
 WINE_CONFIG_DLL(api-ms-win-core-shlwapi-legacy-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-shlwapi-obsolete-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-shlwapi-obsolete-l1-2-0)
+WINE_CONFIG_DLL(api-ms-win-core-shutdown-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-sidebyside-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-string-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-core-string-l2-1-0)
@@ -2953,6 +2980,7 @@ WINE_CONFIG_DLL(api-ms-win-security-credentials-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-security-grouppolicy-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-security-lsalookup-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-security-lsalookup-l1-1-1)
+WINE_CONFIG_DLL(api-ms-win-security-lsalookup-l2-1-0)
 WINE_CONFIG_DLL(api-ms-win-security-lsalookup-l2-1-1)
 WINE_CONFIG_DLL(api-ms-win-security-lsapolicy-l1-1-0)
 WINE_CONFIG_DLL(api-ms-win-security-provider-l1-1-0)
@@ -3109,6 +3137,7 @@ WINE_CONFIG_TEST(dlls/ddrawex/tests)
 WINE_CONFIG_DLL(devenum,,[clean])
 WINE_CONFIG_TEST(dlls/devenum/tests)
 WINE_CONFIG_DLL(dhcpcsvc)
+WINE_CONFIG_DLL(dhtmled.ocx,,[clean])
 WINE_CONFIG_DLL(difxapi)
 WINE_CONFIG_DLL(dinput,,[clean,implib,staticimplib])
 WINE_CONFIG_TEST(dlls/dinput/tests)
@@ -3520,6 +3549,7 @@ WINE_CONFIG_TEST(dlls/setupapi/tests)
 WINE_CONFIG_DLL(setupx.dll16,enable_win16)
 WINE_CONFIG_DLL(sfc,,[implib])
 WINE_CONFIG_DLL(sfc_os,,[implib])
+WINE_CONFIG_DLL(shcore)
 WINE_CONFIG_DLL(shdoclc,,[clean])
 WINE_CONFIG_DLL(shdocvw,,[clean,implib])
 WINE_CONFIG_TEST(dlls/shdocvw/tests)

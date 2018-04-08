@@ -230,6 +230,34 @@ typedef struct _ACTIVATION_CONTEXT_STACK
     LIST_ENTRY                          FrameListCache;
 } ACTIVATION_CONTEXT_STACK, *PACTIVATION_CONTEXT_STACK;
 
+typedef struct _TEB_ACTIVE_FRAME_CONTEXT
+{
+    ULONG       Flags;
+    const char *FrameName;
+} TEB_ACTIVE_FRAME_CONTEXT, *PTEB_ACTIVE_FRAME_CONTEXT;
+
+typedef struct _TEB_ACTIVE_FRAME_CONTEXT_EX
+{
+    TEB_ACTIVE_FRAME_CONTEXT BasicContext;
+    const char              *SourceLocation;
+} TEB_ACTIVE_FRAME_CONTEXT_EX, *PTEB_ACTIVE_FRAME_CONTEXT_EX;
+
+typedef struct _TEB_ACTIVE_FRAME
+{
+    ULONG                     Flags;
+    struct _TEB_ACTIVE_FRAME *Previous;
+    TEB_ACTIVE_FRAME_CONTEXT *Context;
+} TEB_ACTIVE_FRAME, *PTEB_ACTIVE_FRAME;
+
+typedef struct _TEB_ACTIVE_FRAME_EX
+{
+    TEB_ACTIVE_FRAME BasicFrame;
+    void            *ExtensionIdentifier;
+} TEB_ACTIVE_FRAME_EX, *PTEB_ACTIVE_FRAME_EX;
+
+#define TEB_ACTIVE_FRAME_CONTEXT_FLAG_EXTENDED 0x00000001
+#define TEB_ACTIVE_FRAME_FLAG_EXTENDED         0x00000001
+
 /***********************************************************************
  * PEB data structure
  */
@@ -368,16 +396,17 @@ typedef struct _TEB
     ULONG                        WaitingOnLoaderLock;               /* f84/1760 */
     PVOID                        Reserved5[3];                      /* f88/1768 */
     PVOID                       *TlsExpansionSlots;                 /* f94/1780 */
-    ULONG                        ImpersonationLocale;               /* f98/1788 */
-    ULONG                        IsImpersonating;                   /* f9c/178c */
-    PVOID                        NlsCache;                          /* fa0/1790 */
-    PVOID                        ShimData;                          /* fa4/1798 */
-    ULONG                        HeapVirtualAffinity;               /* fa8/17a0 */
-    PVOID                        CurrentTransactionHandle;          /* fac/17a8 */
-    PVOID                        ActiveFrame;                       /* fb0/17b0 */
 #ifdef _WIN64
-    PVOID                        unknown[2];                        /*     17b8 */
+    PVOID                        DeallocationBStore;                /*    /1788 */
+    PVOID                        BStoreLimit;                       /*    /1790 */
 #endif
+    ULONG                        ImpersonationLocale;               /* f98/1798 */
+    ULONG                        IsImpersonating;                   /* f9c/179c */
+    PVOID                        NlsCache;                          /* fa0/17a0 */
+    PVOID                        ShimData;                          /* fa4/17a8 */
+    ULONG                        HeapVirtualAffinity;               /* fa8/17b0 */
+    PVOID                        CurrentTransactionHandle;          /* fac/17b8 */
+    TEB_ACTIVE_FRAME            *ActiveFrame;                       /* fb0/17c0 */
     PVOID                       *FlsSlots;                          /* fb4/17c8 */
 } TEB, *PTEB;
 
@@ -2563,6 +2592,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlGetControlSecurityDescriptor(PSECURITY_DESCRIPTOR, 
 NTSYSAPI ULONG     WINAPI RtlGetCurrentDirectory_U(ULONG, LPWSTR);
 NTSYSAPI PEB *     WINAPI RtlGetCurrentPeb(void);
 NTSYSAPI NTSTATUS  WINAPI RtlGetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR,PBOOLEAN,PACL *,PBOOLEAN);
+NTSYSAPI TEB_ACTIVE_FRAME * WINAPI RtlGetFrame(void);
 NTSYSAPI ULONG     WINAPI RtlGetFullPathName_U(PCWSTR,ULONG,PWSTR,PWSTR*);
 NTSYSAPI NTSTATUS  WINAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlGetLastNtStatus(void);
@@ -2630,8 +2660,10 @@ NTSYSAPI NTSTATUS  WINAPI RtlOemToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
 NTSYSAPI NTSTATUS  WINAPI RtlOpenCurrentUser(ACCESS_MASK,PHANDLE);
 NTSYSAPI PVOID     WINAPI RtlPcToFileHeader(PVOID,PVOID*);
 NTSYSAPI NTSTATUS  WINAPI RtlPinAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM);
+NTSYSAPI void      WINAPI RtlPopFrame(TEB_ACTIVE_FRAME*);
 NTSYSAPI BOOLEAN   WINAPI RtlPrefixString(const STRING*,const STRING*,BOOLEAN);
 NTSYSAPI BOOLEAN   WINAPI RtlPrefixUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);
+NTSYSAPI void      WINAPI RtlPushFrame(TEB_ACTIVE_FRAME*);
 NTSYSAPI NTSTATUS  WINAPI RtlQueryAtomInAtomTable(RTL_ATOM_TABLE,RTL_ATOM,ULONG*,ULONG*,WCHAR*,ULONG*);
 NTSYSAPI NTSTATUS  WINAPI RtlQueryDynamicTimeZoneInformation(RTL_DYNAMIC_TIME_ZONE_INFORMATION*);
 NTSYSAPI NTSTATUS  WINAPI RtlQueryEnvironmentVariable_U(PWSTR,PUNICODE_STRING,PUNICODE_STRING);

@@ -27,11 +27,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d11);
 
 /* ID3D11Texture2D methods */
 
-static inline struct d3d_texture2d *impl_from_ID3D11Texture2D(ID3D11Texture2D *iface)
-{
-    return CONTAINING_RECORD(iface, struct d3d_texture2d, ID3D11Texture2D_iface);
-}
-
 static HRESULT STDMETHODCALLTYPE d3d11_texture2d_QueryInterface(ID3D11Texture2D *iface, REFIID riid, void **object)
 {
     struct d3d_texture2d *texture = impl_from_ID3D11Texture2D(iface);
@@ -251,6 +246,11 @@ struct d3d_texture2d *unsafe_impl_from_ID3D11Texture2D(ID3D11Texture2D *iface)
 
 /* IUnknown methods */
 
+static inline struct d3d_texture2d *impl_from_ID3D10Texture2D(ID3D10Texture2D *iface)
+{
+    return CONTAINING_RECORD(iface, struct d3d_texture2d, ID3D10Texture2D_iface);
+}
+
 static HRESULT STDMETHODCALLTYPE d3d10_texture2d_QueryInterface(ID3D10Texture2D *iface, REFIID riid, void **object)
 {
     struct d3d_texture2d *texture = impl_from_ID3D10Texture2D(iface);
@@ -456,8 +456,12 @@ static BOOL is_gdi_compatible_texture(const D3D11_TEXTURE2D_DESC *desc)
     return TRUE;
 }
 
-static BOOL validate_texture2d_desc(const D3D11_TEXTURE2D_DESC *desc)
+static BOOL validate_texture2d_desc(const D3D11_TEXTURE2D_DESC *desc, D3D_FEATURE_LEVEL feature_level)
 {
+    if (!validate_d3d11_resource_access_flags(D3D11_RESOURCE_DIMENSION_TEXTURE2D,
+            desc->Usage, desc->BindFlags, desc->CPUAccessFlags, feature_level))
+        return FALSE;
+
     if (desc->MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE
             && desc->ArraySize < 6)
     {
@@ -492,7 +496,7 @@ HRESULT d3d_texture2d_create(struct d3d_device *device, const D3D11_TEXTURE2D_DE
     DWORD flags = 0;
     HRESULT hr;
 
-    if (!validate_texture2d_desc(desc))
+    if (!validate_texture2d_desc(desc, device->feature_level))
     {
         WARN("Failed to validate texture desc.\n");
         return E_INVALIDARG;
@@ -516,7 +520,7 @@ HRESULT d3d_texture2d_create(struct d3d_device *device, const D3D11_TEXTURE2D_DE
     wined3d_desc.multisample_type = desc->SampleDesc.Count > 1 ? desc->SampleDesc.Count : WINED3D_MULTISAMPLE_NONE;
     wined3d_desc.multisample_quality = desc->SampleDesc.Quality;
     wined3d_desc.usage = wined3d_usage_from_d3d11(desc->BindFlags, desc->Usage);
-    wined3d_desc.pool = WINED3D_POOL_DEFAULT;
+    wined3d_desc.access = WINED3D_RESOURCE_ACCESS_GPU;
     wined3d_desc.width = desc->Width;
     wined3d_desc.height = desc->Height;
     wined3d_desc.depth = 1;
@@ -973,7 +977,9 @@ static HRESULT d3d_texture3d_init(struct d3d_texture3d *texture, struct d3d_devi
     wined3d_desc.multisample_type = WINED3D_MULTISAMPLE_NONE;
     wined3d_desc.multisample_quality = 0;
     wined3d_desc.usage = wined3d_usage_from_d3d11(desc->BindFlags, desc->Usage);
-    wined3d_desc.pool = desc->Usage == D3D11_USAGE_STAGING ? WINED3D_POOL_MANAGED : WINED3D_POOL_DEFAULT;
+    wined3d_desc.access = WINED3D_RESOURCE_ACCESS_GPU;
+    if (desc->Usage == D3D11_USAGE_STAGING)
+        wined3d_desc.access |= WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
     wined3d_desc.width = desc->Width;
     wined3d_desc.height = desc->Height;
     wined3d_desc.depth = desc->Depth;

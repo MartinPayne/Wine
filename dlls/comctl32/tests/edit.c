@@ -2755,7 +2755,6 @@ static void test_EM_GETHANDLE(void)
     buffer = LocalLock(hmem);
     ok(buffer != NULL, "got %p (expected != NULL)\n", buffer);
     len = lstrlenW(buffer);
-todo_wine
     ok(len == lstrlenW(str1W) && !lstrcmpW(buffer, str1W), "Unexpected buffer contents %s, length %d.\n",
         wine_dbgstr_w(buffer), len);
     LocalUnlock(hmem);
@@ -2780,7 +2779,6 @@ todo_wine
 
     lstrcpyA(current, str0);
     r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
-todo_wine
     ok(r == lstrlenA(str1_1) && !lstrcmpA(current, str1_1),
         "Unexpected retval %d and text \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str1_1), str1_1);
 
@@ -2789,7 +2787,6 @@ todo_wine
     ok(r, "Failed to set text.\n");
 
     buffer = LocalLock(hmem);
-todo_wine
     ok(buffer != NULL && buffer[0] == '1', "Unexpected buffer contents\n");
     LocalUnlock(hmem);
 
@@ -2797,7 +2794,6 @@ todo_wine
     ok(r, "Failed to replace selection.\n");
 
     buffer = LocalLock(hmem);
-todo_wine
     ok(buffer != NULL && buffer[0] == '2', "Unexpected buffer contents\n");
     LocalUnlock(hmem);
 
@@ -2819,12 +2815,10 @@ todo_wine
     SendMessageA(hEdit, EM_SETHANDLE, (WPARAM)halloc, 0);
 
     len = SendMessageA(hEdit, WM_GETTEXTLENGTH, 0, 0);
-todo_wine
     ok(len == lstrlenA(str2), "got %d (expected %d)\n", len, lstrlenA(str2));
 
     lstrcpyA(current, str0);
     r = SendMessageA(hEdit, WM_GETTEXT, sizeof(current), (LPARAM)current);
-todo_wine
     ok(r == lstrlenA(str2) && !lstrcmpA(current, str2),
         "got %d and \"%s\" (expected %d and \"%s\")\n", r, current, lstrlenA(str2), str2);
 
@@ -2949,7 +2943,6 @@ static void test_EM_GETLINE(void)
         char buff[16];
         int r;
 
-    todo_wine_if(i == 0)
         ok(IsWindowUnicode(hwnd[i]), "Expected unicode window.\n");
 
         SendMessageA(hwnd[i], WM_SETTEXT, 0, (LPARAM)str);
@@ -2980,6 +2973,37 @@ static void test_EM_GETLINE(void)
 
         DestroyWindow(hwnd[i]);
     }
+}
+
+static int CALLBACK test_wordbreak_procA(char *text, int current, int length, int code)
+{
+    return -1;
+}
+
+static void test_wordbreak_proc(void)
+{
+    EDITWORDBREAKPROCA proc;
+    LRESULT ret;
+    HWND hwnd;
+
+    hwnd = create_editcontrol(ES_AUTOHSCROLL | ES_AUTOVSCROLL, 0);
+
+    proc = (void *)SendMessageA(hwnd, EM_GETWORDBREAKPROC, 0, 0);
+    ok(proc == NULL, "Unexpected wordbreak proc %p.\n", proc);
+
+    ret = SendMessageA(hwnd, EM_SETWORDBREAKPROC, 0, (LPARAM)test_wordbreak_procA);
+    ok(ret == 1, "Unexpected return value %ld.\n", ret);
+
+    proc = (void *)SendMessageA(hwnd, EM_GETWORDBREAKPROC, 0, 0);
+    ok(proc == test_wordbreak_procA, "Unexpected wordbreak proc %p.\n", proc);
+
+    ret = SendMessageA(hwnd, EM_SETWORDBREAKPROC, 0, 0);
+    ok(ret == 1, "Unexpected return value %ld.\n", ret);
+
+    proc = (void *)SendMessageA(hwnd, EM_GETWORDBREAKPROC, 0, 0);
+    ok(proc == NULL, "Unexpected wordbreak proc %p.\n", proc);
+
+    DestroyWindow(hwnd);
 }
 
 START_TEST(edit)
@@ -3022,6 +3046,7 @@ START_TEST(edit)
     test_EM_GETHANDLE();
     test_paste();
     test_EM_GETLINE();
+    test_wordbreak_proc();
 
     UnregisterWindowClasses();
 

@@ -484,25 +484,28 @@ static void surface_blt_fbo(const struct wined3d_device *device,
         context_restore(context, restore_rt);
 }
 
-static BOOL fbo_blitter_supported(const struct wined3d_gl_info *gl_info, enum wined3d_blit_op blit_op,
-        DWORD src_usage, enum wined3d_pool src_pool, const struct wined3d_format *src_format, DWORD src_location,
-        DWORD dst_usage, enum wined3d_pool dst_pool, const struct wined3d_format *dst_format, DWORD dst_location)
+static BOOL fbo_blitter_supported(enum wined3d_blit_op blit_op, const struct wined3d_gl_info *gl_info,
+        const struct wined3d_resource *src_resource, DWORD src_location,
+        const struct wined3d_resource *dst_resource, DWORD dst_location)
 {
+    const struct wined3d_format *src_format = src_resource->format;
+    const struct wined3d_format *dst_format = dst_resource->format;
+
     if ((wined3d_settings.offscreen_rendering_mode != ORM_FBO) || !gl_info->fbo_ops.glBlitFramebuffer)
         return FALSE;
 
     /* Source and/or destination need to be on the GL side */
-    if (src_pool == WINED3D_POOL_SYSTEM_MEM || dst_pool == WINED3D_POOL_SYSTEM_MEM)
+    if (!(src_resource->access & dst_resource->access & WINED3D_RESOURCE_ACCESS_GPU))
         return FALSE;
 
     switch (blit_op)
     {
         case WINED3D_BLIT_OP_COLOR_BLIT:
             if (!((src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_FBO_ATTACHABLE)
-                    || (src_usage & WINED3DUSAGE_RENDERTARGET)))
+                    || (src_resource->usage & WINED3DUSAGE_RENDERTARGET)))
                 return FALSE;
             if (!((dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_FBO_ATTACHABLE)
-                    || (dst_usage & WINED3DUSAGE_RENDERTARGET)))
+                    || (dst_resource->usage & WINED3DUSAGE_RENDERTARGET)))
                 return FALSE;
             if ((src_format->id != dst_format->id || dst_location == WINED3D_LOCATION_DRAWABLE)
                     && (!is_identity_fixup(src_format->color_fixup) || !is_identity_fixup(dst_format->color_fixup)))
@@ -1317,8 +1320,8 @@ static struct wined3d_texture *surface_convert_format(struct wined3d_texture *sr
     desc.format = dst_format->id;
     desc.multisample_type = WINED3D_MULTISAMPLE_NONE;
     desc.multisample_quality = 0;
-    desc.usage = WINED3DUSAGE_PRIVATE;
-    desc.pool = WINED3D_POOL_SCRATCH;
+    desc.usage = WINED3DUSAGE_SCRATCH | WINED3DUSAGE_PRIVATE;
+    desc.access = WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
     desc.width = wined3d_texture_get_level_width(src_texture, texture_level);
     desc.height = wined3d_texture_get_level_height(src_texture, texture_level);
     desc.depth = 1;
@@ -1987,10 +1990,10 @@ static HRESULT surface_blt_special(struct wined3d_surface *dst_surface, const RE
             dst_surface, wine_dbgstr_rect(dst_rect), src_surface, wine_dbgstr_rect(src_rect),
             flags, fx, debug_d3dtexturefiltertype(filter));
 
-    /* Get the swapchain. One of the surfaces has to be a primary surface */
-    if (dst_texture->resource.pool == WINED3D_POOL_SYSTEM_MEM)
+    /* Get the swapchain. One of the surfaces has to be a primary surface. */
+    if (!(dst_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU))
     {
-        WARN("Destination is in sysmem, rejecting gl blt\n");
+        WARN("Destination resource is not GPU accessible, rejecting GL blit.\n");
         return WINED3DERR_INVALIDCALL;
     }
 
@@ -1999,9 +2002,9 @@ static HRESULT surface_blt_special(struct wined3d_surface *dst_surface, const RE
     if (src_surface)
     {
         src_texture = src_surface->container;
-        if (src_texture->resource.pool == WINED3D_POOL_SYSTEM_MEM)
+        if (!(src_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU))
         {
-            WARN("Src is in sysmem, rejecting gl blt\n");
+            WARN("Source resource is not GPU accessible, rejecting GL blit.\n");
             return WINED3DERR_INVALIDCALL;
         }
 
@@ -2229,11 +2232,9 @@ static BOOL surface_load_texture(struct wined3d_surface *surface,
 
     if (!depth && sub_resource->locations & (WINED3D_LOCATION_TEXTURE_SRGB | WINED3D_LOCATION_TEXTURE_RGB)
             && (texture->resource.format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE_SRGB)
-            && fbo_blitter_supported(gl_info, WINED3D_BLIT_OP_COLOR_BLIT,
-                    texture->resource.usage, texture->resource.pool,
-                    texture->resource.format, WINED3D_LOCATION_TEXTURE_RGB,
-                    texture->resource.usage, texture->resource.pool,
-                    texture->resource.format, WINED3D_LOCATION_TEXTURE_SRGB))
+            && fbo_blitter_supported(WINED3D_BLIT_OP_COLOR_BLIT, gl_info,
+                    &texture->resource, WINED3D_LOCATION_TEXTURE_RGB,
+                    &texture->resource, WINED3D_LOCATION_TEXTURE_SRGB))
     {
         if (srgb)
             surface_blt_fbo(device, context, WINED3D_TEXF_POINT, surface, WINED3D_LOCATION_TEXTURE_RGB,
@@ -2252,9 +2253,8 @@ static BOOL surface_load_texture(struct wined3d_surface *surface,
                 WINED3D_LOCATION_RB_RESOLVED : WINED3D_LOCATION_RB_MULTISAMPLE;
         DWORD dst_location = srgb ? WINED3D_LOCATION_TEXTURE_SRGB : WINED3D_LOCATION_TEXTURE_RGB;
 
-        if (fbo_blitter_supported(gl_info, WINED3D_BLIT_OP_COLOR_BLIT,
-                texture->resource.usage, texture->resource.pool, texture->resource.format, src_location,
-                texture->resource.usage, texture->resource.pool, texture->resource.format, dst_location))
+        if (fbo_blitter_supported(WINED3D_BLIT_OP_COLOR_BLIT, gl_info,
+                &texture->resource, src_location, &texture->resource, dst_location))
             surface_blt_fbo(device, context, WINED3D_TEXF_POINT, surface, src_location,
                     &src_rect, surface, dst_location, &src_rect);
 
@@ -2470,9 +2470,8 @@ static DWORD fbo_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit
             blit_op = WINED3D_BLIT_OP_COLOR_BLIT;
     }
 
-    if (!fbo_blitter_supported(&device->adapter->gl_info, blit_op,
-            src_resource->usage, src_resource->pool, src_resource->format, src_location,
-            src_resource->usage, dst_resource->pool, dst_resource->format, dst_location))
+    if (!fbo_blitter_supported(blit_op, context->gl_info,
+            src_resource, src_location, dst_resource, dst_location))
     {
         if ((next = blitter->next))
             return next->ops->blitter_blit(next, op, context, src_surface, src_location,
@@ -2665,18 +2664,19 @@ static void ffp_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     HeapFree(GetProcessHeap(), 0, blitter);
 }
 
-static BOOL ffp_blit_supported(const struct wined3d_gl_info *gl_info,
-        const struct wined3d_d3d_info *d3d_info, enum wined3d_blit_op blit_op,
-        DWORD src_usage, enum wined3d_pool src_pool, const struct wined3d_format *src_format, DWORD src_location,
-        DWORD dst_usage, enum wined3d_pool dst_pool, const struct wined3d_format *dst_format, DWORD dst_location)
+static BOOL ffp_blit_supported(enum wined3d_blit_op blit_op, const struct wined3d_context *context,
+        const struct wined3d_resource *src_resource, DWORD src_location,
+        const struct wined3d_resource *dst_resource, DWORD dst_location)
 {
+    const struct wined3d_format *src_format = src_resource->format;
+    const struct wined3d_format *dst_format = dst_resource->format;
     BOOL decompress;
 
     decompress = src_format && (src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED)
             && !(dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED);
-    if (!decompress && (src_pool == WINED3D_POOL_SYSTEM_MEM || dst_pool == WINED3D_POOL_SYSTEM_MEM))
+    if (!decompress && !(src_resource->access & dst_resource->access & WINED3D_RESOURCE_ACCESS_GPU))
     {
-        TRACE("Source or destination is in system memory.\n");
+        TRACE("Source or destination resource is not GPU accessible.\n");
         return FALSE;
     }
 
@@ -2691,14 +2691,14 @@ static BOOL ffp_blit_supported(const struct wined3d_gl_info *gl_info,
     switch (blit_op)
     {
         case WINED3D_BLIT_OP_COLOR_BLIT_CKEY:
-            if (d3d_info->shader_color_key)
+            if (context->d3d_info->shader_color_key)
             {
                 TRACE("Color keying requires converted textures.\n");
                 return FALSE;
             }
         case WINED3D_BLIT_OP_COLOR_BLIT:
         case WINED3D_BLIT_OP_COLOR_BLIT_ALPHATEST:
-            if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
+            if (!context->gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
                 return FALSE;
 
             if (TRACE_ON(d3d))
@@ -2723,7 +2723,7 @@ static BOOL ffp_blit_supported(const struct wined3d_gl_info *gl_info,
                 }
             }
 
-            if (!(dst_usage & WINED3DUSAGE_RENDERTARGET))
+            if (!(dst_resource->usage & WINED3DUSAGE_RENDERTARGET))
             {
                 TRACE("Can only blit to render targets.\n");
                 return FALSE;
@@ -2744,14 +2744,16 @@ static BOOL ffp_blitter_use_cpu_clear(struct wined3d_rendertarget_view *view)
 
     resource = view->resource;
     if (resource->type == WINED3D_RTYPE_BUFFER)
-        return resource->pool == WINED3D_POOL_SYSTEM_MEM;
+        return !(resource->access & WINED3D_RESOURCE_ACCESS_GPU);
 
     texture = texture_from_resource(resource);
     locations = texture->sub_resources[view->sub_resource_idx].locations;
     if (locations & (resource->map_binding | WINED3D_LOCATION_DISCARDED))
-        return resource->pool == WINED3D_POOL_SYSTEM_MEM || (texture->flags & WINED3D_TEXTURE_PIN_SYSMEM);
+        return !(resource->access & WINED3D_RESOURCE_ACCESS_GPU)
+                || (texture->flags & WINED3D_TEXTURE_PIN_SYSMEM);
 
-    return resource->pool == WINED3D_POOL_SYSTEM_MEM && !(texture->flags & WINED3D_TEXTURE_CONVERTED);
+    return !(resource->access & WINED3D_RESOURCE_ACCESS_GPU)
+            && !(texture->flags & WINED3D_TEXTURE_CONVERTED);
 }
 
 static void ffp_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
@@ -2822,9 +2824,7 @@ static DWORD ffp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit
     dst_resource = &dst_texture->resource;
     device = dst_resource->device;
 
-    if (!ffp_blit_supported(&device->adapter->gl_info, &device->adapter->d3d_info, op,
-            src_resource->usage, src_resource->pool, src_resource->format, src_location,
-            dst_resource->usage, dst_resource->pool, dst_resource->format, dst_location))
+    if (!ffp_blit_supported(op, context, src_resource, src_location, dst_resource, dst_location))
     {
         if ((next = blitter->next))
             return next->ops->blitter_blit(next, op, context, src_surface, src_location,
@@ -3854,10 +3854,10 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
     {
         TRACE("Depth/stencil blit.\n");
 
-        if (dst_texture->resource.pool == WINED3D_POOL_SYSTEM_MEM)
-            dst_location = dst_texture->resource.map_binding;
-        else
+        if (dst_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU)
             dst_location = dst_texture->resource.draw_binding;
+        else
+            dst_location = dst_texture->resource.map_binding;
 
         context = context_acquire(device, dst_texture, dst_sub_resource_idx);
         valid_locations = device->blitter->ops->blitter_blit(device->blitter,
@@ -3959,10 +3959,10 @@ HRESULT wined3d_surface_blt(struct wined3d_surface *dst_surface, const RECT *dst
         blit_op = WINED3D_BLIT_OP_RAW_BLIT;
     }
 
-    if (dst_texture->resource.pool == WINED3D_POOL_SYSTEM_MEM)
-        dst_location = dst_texture->resource.map_binding;
-    else
+    if (dst_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU)
         dst_location = dst_texture->resource.draw_binding;
+    else
+        dst_location = dst_texture->resource.map_binding;
 
     context = context_acquire(device, dst_texture, dst_sub_resource_idx);
     valid_locations = device->blitter->ops->blitter_blit(device->blitter, blit_op, context,

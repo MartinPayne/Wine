@@ -229,6 +229,7 @@ static BOOL wined3d_swapchain_desc_from_present_parameters(struct wined3d_swapch
     swapchain_desc->backbuffer_height = present_parameters->BackBufferHeight;
     swapchain_desc->backbuffer_format = wined3dformat_from_d3dformat(present_parameters->BackBufferFormat);
     swapchain_desc->backbuffer_count = max(1, present_parameters->BackBufferCount);
+    swapchain_desc->backbuffer_usage = WINED3DUSAGE_RENDERTARGET;
     swapchain_desc->multisample_type = present_parameters->MultiSampleType;
     swapchain_desc->multisample_quality = present_parameters->MultiSampleQuality;
     swapchain_desc->swap_effect = present_parameters->SwapEffect;
@@ -765,7 +766,7 @@ static HRESULT CDECL reset_enum_callback(struct wined3d_resource *resource)
     IUnknown *parent;
 
     wined3d_resource_get_desc(resource, &desc);
-    if (desc.pool != WINED3D_POOL_DEFAULT)
+    if (desc.access & WINED3D_RESOURCE_ACCESS_CPU)
         return D3D_OK;
 
     if (desc.resource_type != WINED3D_RTYPE_TEXTURE_2D)
@@ -816,7 +817,6 @@ static HRESULT d3d9_device_reset(struct d3d9_device *device,
     struct wined3d_swapchain_desc swapchain_desc;
     struct wined3d_display_mode wined3d_mode;
     HRESULT hr;
-
 
     if (!extended && device->device_state == D3D9_DEVICE_STATE_LOST)
     {
@@ -1277,7 +1277,9 @@ static HRESULT d3d9_device_create_surface(struct d3d9_device *device, UINT width
     desc.multisample_type = multisample_type;
     desc.multisample_quality = multisample_quality;
     desc.usage = usage & WINED3DUSAGE_MASK;
-    desc.pool = pool;
+    if (pool == D3DPOOL_SCRATCH)
+        desc.usage |= WINED3DUSAGE_SCRATCH;
+    desc.access = wined3daccess_from_d3dpool(pool);
     desc.width = width;
     desc.height = height;
     desc.depth = 1;
@@ -1603,10 +1605,10 @@ static HRESULT WINAPI d3d9_device_ColorFill(IDirect3DDevice9Ex *iface,
         return D3DERR_INVALIDCALL;
     }
 
-    if (desc.pool != WINED3D_POOL_DEFAULT)
+    if (desc.access & WINED3D_RESOURCE_ACCESS_CPU)
     {
         wined3d_mutex_unlock();
-        WARN("Colorfill is not allowed on surfaces in pool %#x, returning D3DERR_INVALIDCALL.\n", desc.pool);
+        WARN("Colour fills are not allowed on surfaces with resource access %#x.\n", desc.access);
         return D3DERR_INVALIDCALL;
     }
     if ((desc.usage & (WINED3DUSAGE_RENDERTARGET | WINED3DUSAGE_TEXTURE)) == WINED3DUSAGE_TEXTURE)

@@ -289,8 +289,8 @@ static HRESULT WINAPI d3d9_texture_2d_GetLevelDesc(IDirect3DTexture9 *iface, UIN
     {
         desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
         desc->Type = D3DRTYPE_SURFACE;
-        desc->Usage = wined3d_desc.usage & WINED3DUSAGE_MASK;
-        desc->Pool = wined3d_desc.pool;
+        desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage);
+        desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
         desc->MultiSampleType = wined3d_desc.multisample_type;
         desc->MultiSampleQuality = wined3d_desc.multisample_quality;
         desc->Width = wined3d_desc.width;
@@ -676,8 +676,8 @@ static HRESULT WINAPI d3d9_texture_cube_GetLevelDesc(IDirect3DCubeTexture9 *ifac
     {
         desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
         desc->Type = D3DRTYPE_SURFACE;
-        desc->Usage = wined3d_desc.usage & WINED3DUSAGE_MASK;
-        desc->Pool = wined3d_desc.pool;
+        desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage);
+        desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
         desc->MultiSampleType = wined3d_desc.multisample_type;
         desc->MultiSampleQuality = wined3d_desc.multisample_quality;
         desc->Width = wined3d_desc.width;
@@ -1059,8 +1059,8 @@ static HRESULT WINAPI d3d9_texture_3d_GetLevelDesc(IDirect3DVolumeTexture9 *ifac
     {
         desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
         desc->Type = D3DRTYPE_VOLUME;
-        desc->Usage = wined3d_desc.usage & WINED3DUSAGE_MASK;
-        desc->Pool = wined3d_desc.pool;
+        desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage);
+        desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
         desc->Width = wined3d_desc.width;
         desc->Height = wined3d_desc.height;
         desc->Depth = wined3d_desc.depth;
@@ -1220,7 +1220,9 @@ HRESULT texture_init(struct d3d9_texture *texture, struct d3d9_device *device,
     desc.multisample_quality = 0;
     desc.usage = usage & WINED3DUSAGE_MASK;
     desc.usage |= WINED3DUSAGE_TEXTURE;
-    desc.pool = pool;
+    if (pool == D3DPOOL_SCRATCH)
+        desc.usage |= WINED3DUSAGE_SCRATCH;
+    desc.access = wined3daccess_from_d3dpool(pool);
     desc.width = width;
     desc.height = height;
     desc.depth = 1;
@@ -1273,7 +1275,9 @@ HRESULT cubetexture_init(struct d3d9_texture *texture, struct d3d9_device *devic
     desc.multisample_quality = 0;
     desc.usage = usage & WINED3DUSAGE_MASK;
     desc.usage |= WINED3DUSAGE_LEGACY_CUBEMAP | WINED3DUSAGE_TEXTURE;
-    desc.pool = pool;
+    if (pool == D3DPOOL_SCRATCH)
+        desc.usage |= WINED3DUSAGE_SCRATCH;
+    desc.access = wined3daccess_from_d3dpool(pool);
     desc.width = edge_length;
     desc.height = edge_length;
     desc.depth = 1;
@@ -1325,7 +1329,9 @@ HRESULT volumetexture_init(struct d3d9_texture *texture, struct d3d9_device *dev
     desc.multisample_quality = 0;
     desc.usage = usage & WINED3DUSAGE_MASK;
     desc.usage |= WINED3DUSAGE_TEXTURE;
-    desc.pool = pool;
+    if (pool == D3DPOOL_SCRATCH)
+        desc.usage |= WINED3DUSAGE_SCRATCH;
+    desc.access = wined3daccess_from_d3dpool(pool);
     desc.width = width;
     desc.height = height;
     desc.depth = depth;

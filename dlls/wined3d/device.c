@@ -570,7 +570,7 @@ static void device_load_logo(struct wined3d_device *device, const char *filename
     desc.multisample_type = WINED3D_MULTISAMPLE_NONE;
     desc.multisample_quality = 0;
     desc.usage = WINED3DUSAGE_DYNAMIC;
-    desc.pool = WINED3D_POOL_DEFAULT;
+    desc.access = WINED3D_RESOURCE_ACCESS_GPU;
     desc.width = bm.bmWidth;
     desc.height = bm.bmHeight;
     desc.depth = 1;
@@ -3427,7 +3427,7 @@ HRESULT CDECL wined3d_device_set_texture(struct wined3d_device *device,
         return WINED3D_OK;
     }
 
-    if (texture && texture->resource.pool == WINED3D_POOL_SCRATCH)
+    if (texture && texture->resource.usage & WINED3DUSAGE_SCRATCH)
     {
         WARN("Rejecting attempt to set scratch texture.\n");
         return WINED3DERR_INVALIDCALL;
@@ -3768,14 +3768,15 @@ HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (src_texture->resource.pool != WINED3D_POOL_SYSTEM_MEM)
+    if (src_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU
+            || src_texture->resource.usage & WINED3DUSAGE_SCRATCH)
     {
-        WARN("Source texture not in WINED3D_POOL_SYSTEM_MEM, returning WINED3DERR_INVALIDCALL.\n");
+        WARN("Source resource is GPU accessible or a scratch resource.\n");
         return WINED3DERR_INVALIDCALL;
     }
-    if (dst_texture->resource.pool != WINED3D_POOL_DEFAULT)
+    if (dst_texture->resource.access & WINED3D_RESOURCE_ACCESS_CPU)
     {
-        WARN("Destination texture not in WINED3D_POOL_DEFAULT, returning WINED3DERR_INVALIDCALL.\n");
+        WARN("Destination resource is CPU accessible.\n");
         return WINED3DERR_INVALIDCALL;
     }
 
@@ -4456,7 +4457,7 @@ static struct wined3d_texture *wined3d_device_create_cursor_texture(struct wined
     desc.multisample_type = WINED3D_MULTISAMPLE_NONE;
     desc.multisample_quality = 0;
     desc.usage = WINED3DUSAGE_DYNAMIC;
-    desc.pool = WINED3D_POOL_DEFAULT;
+    desc.access = WINED3D_RESOURCE_ACCESS_GPU;
     desc.width = wined3d_texture_get_level_width(cursor_image, texture_level);
     desc.height = wined3d_texture_get_level_height(cursor_image, texture_level);
     desc.depth = 1;
@@ -4650,7 +4651,7 @@ void CDECL wined3d_device_evict_managed_resources(struct wined3d_device *device)
     {
         TRACE("Checking resource %p for eviction.\n", resource);
 
-        if (resource->pool == WINED3D_POOL_MANAGED && !resource->map_count)
+        if (wined3d_resource_access_is_managed(resource->access) && !resource->map_count)
         {
             TRACE("Evicting %p.\n", resource);
             wined3d_cs_emit_unload_resource(device->cs, resource);
@@ -4732,6 +4733,9 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
     TRACE("swap_interval %u\n", swapchain_desc->swap_interval);
     TRACE("auto_restore_display_mode %#x\n", swapchain_desc->auto_restore_display_mode);
 
+    if (swapchain_desc->backbuffer_usage != WINED3DUSAGE_RENDERTARGET)
+        FIXME("Got unexpected backbuffer usage %#x.\n", swapchain_desc->backbuffer_usage);
+
     /* No special treatment of these parameters. Just store them */
     swapchain->desc.swap_effect = swapchain_desc->swap_effect;
     swapchain->desc.enable_auto_depth_stencil = swapchain_desc->enable_auto_depth_stencil;
@@ -4801,7 +4805,7 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         texture_desc.multisample_type = swapchain->desc.multisample_type;
         texture_desc.multisample_quality = swapchain->desc.multisample_quality;
         texture_desc.usage = WINED3DUSAGE_DEPTHSTENCIL;
-        texture_desc.pool = WINED3D_POOL_DEFAULT;
+        texture_desc.access = WINED3D_RESOURCE_ACCESS_GPU;
         texture_desc.width = swapchain->desc.backbuffer_width;
         texture_desc.height = swapchain->desc.backbuffer_height;
         texture_desc.depth = 1;

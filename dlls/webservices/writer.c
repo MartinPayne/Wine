@@ -648,10 +648,8 @@ static HRESULT write_string( struct writer *writer, const BYTE *bytes, ULONG len
 
 static HRESULT write_dict_string( struct writer *writer, ULONG id )
 {
-    HRESULT hr;
     if (id > 0x7fffffff) return E_INVALIDARG;
-    if ((hr = write_int31( writer, id )) != S_OK) return hr;
-    return S_OK;
+    return write_int31( writer, id );
 }
 
 static enum record_type get_attr_text_record_type( const WS_XML_TEXT *text, BOOL use_dict )
@@ -1034,8 +1032,8 @@ static ULONG encode_base64( const unsigned char *bin, ULONG len, unsigned char *
     return i;
 }
 
-static HRESULT text_to_utf8text( const WS_XML_TEXT *text, const WS_XML_UTF8_TEXT *old, ULONG *offset,
-                                 WS_XML_UTF8_TEXT **ret )
+HRESULT text_to_utf8text( const WS_XML_TEXT *text, const WS_XML_UTF8_TEXT *old, ULONG *offset,
+                          WS_XML_UTF8_TEXT **ret )
 {
     ULONG len_old = old ? old->value.length : 0;
     if (offset) *offset = len_old;
@@ -1482,11 +1480,11 @@ static HRESULT write_namespace_attribute_text( struct writer *writer, const WS_X
     /* ' xmlns:prefix="namespace"' */
 
     size = attr->ns->length + 9 /* ' xmlns=""' */;
-    if (attr->prefix) size += attr->prefix->length + 1 /* ':' */;
+    if (attr->prefix && attr->prefix->length) size += attr->prefix->length + 1 /* ':' */;
     if ((hr = write_grow_buffer( writer, size )) != S_OK) return hr;
 
     write_bytes( writer, (const BYTE *)" xmlns", 6 );
-    if (attr->prefix)
+    if (attr->prefix && attr->prefix->length)
     {
         write_char( writer, ':' );
         write_bytes( writer, attr->prefix->bytes, attr->prefix->length );
@@ -2254,7 +2252,7 @@ HRESULT WINAPI WsWriteStartElement( WS_XML_WRITER *handle, const WS_XML_STRING *
     return hr;
 }
 
-static HRESULT text_to_text( const WS_XML_TEXT *text, const WS_XML_TEXT *old, ULONG *offset, WS_XML_TEXT **ret )
+HRESULT text_to_text( const WS_XML_TEXT *text, const WS_XML_TEXT *old, ULONG *offset, WS_XML_TEXT **ret )
 {
     if (offset) *offset = 0;
     switch (text->textType)
@@ -4758,7 +4756,7 @@ HRESULT WINAPI WsCopyNode( WS_XML_WRITER *handle, WS_XML_READER *reader, WS_ERRO
         return WS_E_INVALID_FORMAT;
     }
 
-    if ((hr = copy_node( reader, &node )) != S_OK) goto done;
+    if ((hr = copy_node( reader, writer->output_enc, &node )) != S_OK) goto done;
     current = writer->current;
     write_insert_node( writer, parent, node );
 

@@ -2941,6 +2941,9 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_INFOSEC_mosaicUpdatedSig      "2.16.840.1.101.2.1.1.19"
 #define szOID_INFOSEC_mosaicKMandUpdSig     "2.16.840.1.101.2.1.1.20"
 #define szOID_INFOSEC_mosaicUpdateInteg     "2.16.840.1.101.2.1.1.21"
+#define szOID_NIST_sha256                   "2.16.840.1.101.3.4.2.1"
+#define szOID_NIST_sha384                   "2.16.840.1.101.3.4.2.2"
+#define szOID_NIST_sha512                   "2.16.840.1.101.3.4.2.3"
 #define szOID_COMMON_NAME                   "2.5.4.3"
 #define szOID_SUR_NAME                      "2.5.4.4"
 #define szOID_DEVICE_SERIAL_NUMBER          "2.5.4.5"
@@ -4084,11 +4087,19 @@ BOOL WINAPI CertEnumSystemStoreLocation(DWORD dwFlags, void *pvArg,
 BOOL WINAPI CertEnumSystemStore(DWORD dwFlags, void *pvSystemStoreLocationPara,
  void *pvArg, PFN_CERT_ENUM_SYSTEM_STORE pfnEnum);
 
+BOOL WINAPI CertRegisterSystemStore(const void *store, DWORD flags,
+ CERT_SYSTEM_STORE_INFO *info, void *reserved);
+
+BOOL WINAPI CertUnregisterSystemStore(const void *store, DWORD flags);
+
 BOOL WINAPI CertEnumPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
  void *pvArg, PFN_CERT_ENUM_PHYSICAL_STORE pfnEnum);
 
 BOOL WINAPI CertRegisterPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
  LPCWSTR pwszStoreName, PCERT_PHYSICAL_STORE_INFO pStoreInfo, void *pvReserved);
+
+BOOL WINAPI CertUnregisterPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
+ LPCWSTR pwszStoreName);
 
 BOOL WINAPI CertSaveStore(HCERTSTORE hCertStore, DWORD dwMsgAndCertEncodingType,
              DWORD dwSaveAs, DWORD dwSaveTo, void* pvSaveToPara, DWORD dwFlags);

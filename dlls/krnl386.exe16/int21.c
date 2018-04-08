@@ -369,40 +369,6 @@ static void INT21_SetCurrentDrive( BYTE drive )
 
 
 /***********************************************************************
- *           INT21_ReadChar
- *
- * Reads a character from the standard input.
- * Extended keycodes will be returned as two separate characters.
- */
-static BOOL INT21_ReadChar( BYTE *input, CONTEXT *waitctx )
-{
-    static BYTE pending_scan = 0;
-
-    if (pending_scan)
-    {
-        if (input)
-            *input = pending_scan;
-        if (waitctx)
-            pending_scan = 0;
-        return TRUE;
-    }
-    else
-    {
-        BYTE ascii;
-        BYTE scan;
-        if (!DOSVM_Int16ReadChar( &ascii, &scan, waitctx ))
-            return FALSE;
-
-        if (input)
-            *input = ascii;
-        if (waitctx && !ascii)
-            pending_scan = scan;
-        return TRUE;
-    }
-}
-
-
-/***********************************************************************
  *           INT21_GetSystemCountryCode
  *
  * Return DOS country code for default system locale.
@@ -583,7 +549,7 @@ static WORD INT21_GetHeapSelector( CONTEXT *context )
 {
     INT21_HEAP *heap = INT21_GetHeapPointer();
 
-    if (!ISV86(context) && DOSVM_IsWin16())
+    if (!ISV86(context))
         return heap->misc_selector;
     else
         return heap->misc_segment;
@@ -1139,67 +1105,6 @@ static BOOL INT21_CreateFile( CONTEXT *context,
            AX_reg(context), dosStatus );
 
     return TRUE;
-}
-
-
-/***********************************************************************
- *           INT21_BufferedInput
- *
- * Handler for function 0x0a and reading from console using
- * function 0x3f.
- *
- * Reads a string of characters from standard input until
- * enter key is pressed. Returns either number of characters 
- * read from console including terminating CR or 
- * zero if capacity was zero.
- */
-static WORD INT21_BufferedInput( CONTEXT *context, BYTE *ptr, WORD capacity )
-{
-    BYTE length = 0;
-
-    /*
-     * Return immediately if capacity is zero.
-     */
-    if (capacity == 0)
-        return 0;
-
-    while(TRUE)
-    {
-        BYTE ascii;
-        BYTE scan;
-
-        DOSVM_Int16ReadChar( &ascii, &scan, context );
-
-        if (ascii == '\r' || ascii == '\n')
-        {
-            ptr[length] = '\r';
-            return length + 1;
-        }
-
-        /*
-         * DOS handles only backspace and KEY_LEFT
-         *        perhaps we should do more
-         */
-        if (ascii == '\b' || scan == KEY_LEFT)
-        {
-            if (length==0) continue;
-            DOSVM_PutChar( '\b' );
-            length--;
-            continue;
-        }
-
-        /*
-         * If the buffer becomes filled to within one byte of
-         * capacity, DOS rejects all further characters up to,
-         * but not including, the terminating carriage return.
-         */
-        if (ascii != 0 && length < capacity-1)
-        {
-            DOSVM_PutChar( ascii );
-            ptr[length] = ascii;
-            length++;
-        }
-    }
 }
 
 
@@ -2377,7 +2282,7 @@ static void INT21_GetPSP( CONTEXT *context )
      * FIXME: should we return the original DOS PSP upon
      *        Windows startup ? 
      */
-    if (!ISV86(context) && DOSVM_IsWin16())
+    if (!ISV86(context))
         SET_BX( context, LOWORD(GetCurrentPDB16()) );
     else
         SET_BX( context, DOSVM_psp );
@@ -2882,7 +2787,6 @@ static void INT21_Ioctl( CONTEXT *context )
         }
         else
         {
-            DOSDEV_SetSharingRetry( CX_reg(context), DX_reg(context) );
             RESET_CFLAG( context );
         }
         break;
@@ -4170,30 +4074,15 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
     {
     case 0x00: /* TERMINATE PROGRAM */
         TRACE("TERMINATE PROGRAM\n");
-        if (DOSVM_IsWin16())
-            DOSVM_Exit( 0 );
-        else if(ISV86(context))
-            MZ_Exit( context, FALSE, 0 );
-        else
-            ERR( "Called from DOS protected mode\n" );
+        DOSVM_Exit( 0 );
         break;
 
     case 0x01: /* READ CHARACTER FROM STANDARD INPUT, WITH ECHO */
-        {
-            BYTE ascii;
-            TRACE("DIRECT CHARACTER INPUT WITH ECHO\n");
-            INT21_ReadChar( &ascii, context );
-            SET_AL( context, ascii );
-            /*
-             * FIXME: What to echo when extended keycodes are read?
-             */
-            DOSVM_PutChar(AL_reg(context));
-        }
+        TRACE("DIRECT CHARACTER INPUT WITH ECHO - not supported\n");
         break;
 
     case 0x02: /* WRITE CHARACTER TO STANDARD OUTPUT */
         TRACE("Write Character to Standard Output\n");
-        DOSVM_PutChar(DL_reg(context));
         break;
 
     case 0x03: /* READ CHARACTER FROM STDAUX  */
@@ -4207,24 +4096,13 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         {
             TRACE("Direct Console Input\n");
 
-            if (INT21_ReadChar( NULL, NULL ))
-            {
-                BYTE ascii;
-                INT21_ReadChar( &ascii, context );
-                SET_AL( context, ascii );
-                RESET_ZFLAG( context );
-            }
-            else
-            {
-                /* no character available */
-                SET_AL( context, 0 );
-                SET_ZFLAG( context );
-            }
+            /* no character available */
+            SET_AL( context, 0 );
+            SET_ZFLAG( context );
         } 
         else 
         {
             TRACE("Direct Console Output\n");
-            DOSVM_PutChar(DL_reg(context));
             /*
              * At least DOS versions 2.1-7.0 return character 
              * that was written in AL register.
@@ -4234,21 +4112,13 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         break;
 
     case 0x07: /* DIRECT CHARACTER INPUT WITHOUT ECHO */
-        {
-            BYTE ascii;
-            TRACE("DIRECT CHARACTER INPUT WITHOUT ECHO\n");
-            INT21_ReadChar( &ascii, context );
-            SET_AL( context, ascii );
-        }
+        TRACE("DIRECT CHARACTER INPUT WITHOUT ECHO - not supported\n");
+        SET_AL( context, 0 );
         break;
 
     case 0x08: /* CHARACTER INPUT WITHOUT ECHO */
-        {
-            BYTE ascii;
-            TRACE("CHARACTER INPUT WITHOUT ECHO\n");
-            INT21_ReadChar( &ascii, context );
-            SET_AL( context, ascii );
-        }
+        TRACE("CHARACTER INPUT WITHOUT ECHO - not supported\n");
+        SET_AL( context, 0 );
         break;
 
     case 0x09: /* WRITE STRING TO STANDARD OUTPUT */
@@ -4266,55 +4136,18 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
              */
             while (*p != '$') p++;
 
-            if (DOSVM_IsWin16())
-                WriteFile( DosFileHandleToWin32Handle(1), 
-                           data, p - data, &w, NULL );
-            else
-                for(; data != p; data++)
-                    DOSVM_PutChar( *data );
-
+            WriteFile( DosFileHandleToWin32Handle(1), data, p - data, &w, NULL );
             SET_AL( context, '$' ); /* yes, '$' (0x24) gets returned in AL */
         }
         break;
 
     case 0x0a: /* BUFFERED INPUT */
-        {
-            BYTE *ptr = CTX_SEG_OFF_TO_LIN(context,
-                                           context->SegDs,
-                                           context->Edx);
-            WORD result;
-
-            TRACE( "BUFFERED INPUT (size=%d)\n", ptr[0] );
-
-            /*
-             * FIXME: Some documents state that
-             *        ptr[1] holds number of chars from last input which 
-             *        may be recalled on entry, other documents do not mention
-             *        this at all.
-             */
-            if (ptr[1])
-                TRACE( "Handle old chars in buffer!\n" );
-
-            /*
-             * ptr[0] - capacity (includes terminating CR)
-             * ptr[1] - characters read (excludes terminating CR)
-             */
-            result = INT21_BufferedInput( context, ptr + 2, ptr[0] );
-            if (result > 0)
-                ptr[1] = (BYTE)result - 1;
-            else
-                ptr[1] = 0;
-        }
+        TRACE( "BUFFERED INPUT - not supported\n" );
         break;
 
     case 0x0b: /* GET STDIN STATUS */
-        TRACE( "GET STDIN STATUS\n" );
-        {
-            if (INT21_ReadChar( NULL, NULL ))
-                SET_AL( context, 0xff ); /* character available */
-            else
-                SET_AL( context, 0 ); /* no character available */
-        }
+        TRACE( "GET STDIN STATUS - not supported\n" );
+        SET_AL( context, 0 ); /* no character available */
         break;
 
     case 0x0c: /* FLUSH BUFFER AND READ STANDARD INPUT */
@@ -4458,7 +4291,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         TRACE("SET INTERRUPT VECTOR 0x%02x\n",AL_reg(context));
         {
             FARPROC16 ptr = (FARPROC16)MAKESEGPTR( context->SegDs, DX_reg(context) );
-            if (!ISV86(context) && DOSVM_IsWin16())
+            if (!ISV86(context))
                 DOSVM_SetPMHandler16(  AL_reg(context), ptr );
             else
                 DOSVM_SetRMHandler( AL_reg(context), ptr );
@@ -4655,7 +4488,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         TRACE("GET INTERRUPT VECTOR 0x%02x\n",AL_reg(context));
         {
             FARPROC16 addr;
-            if (!ISV86(context) && DOSVM_IsWin16())
+            if (!ISV86(context))
                 addr = DOSVM_GetPMHandler16( AL_reg(context) );
             else
                 addr = DOSVM_GetRMHandler( AL_reg(context) );
@@ -4784,13 +4617,8 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
                                                context->Edx );
 
             /* Some programs pass a count larger than the allocated buffer */
-            if (DOSVM_IsWin16())
-            {
-                DWORD maxcount = GetSelectorLimit16( context->SegDs )
-                    - DX_reg(context) + 1;
-                if (count > maxcount)
-                    count = maxcount;
-            }
+            DWORD maxcount = GetSelectorLimit16( context->SegDs ) - DX_reg(context) + 1;
+            if (count > maxcount) count = maxcount;
 
             /*
              * FIXME: Reading from console (BX=1) in DOS mode
@@ -4798,13 +4626,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
              */
 
             RESET_CFLAG(context); /* set if error */
-            if (!DOSVM_IsWin16() && BX_reg(context) == 0)
-            {
-                result = INT21_BufferedInput( context, buffer, count );
-                SET_AX( context, (WORD)result );
-            }
-            else if (ReadFile( DosFileHandleToWin32Handle(BX_reg(context)),
-                               buffer, count, &result, NULL ))
+            if (ReadFile( DosFileHandleToWin32Handle(BX_reg(context)), buffer, count, &result, NULL ))
                 SET_AX( context, (WORD)result );
             else
                 bSetDOSExtendedError = TRUE;
@@ -4817,27 +4639,14 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
                BX_reg(context), CX_reg(context) );
         {
             char *ptr = CTX_SEG_OFF_TO_LIN(context, context->SegDs, context->Edx);
-
-            if (!DOSVM_IsWin16() && 
-                (BX_reg(context) == 1 || BX_reg(context) == 2))
-            {
-                int i;
-                for(i=0; i<CX_reg(context); i++)
-                    DOSVM_PutChar(ptr[i]);
-                SET_AX(context, CX_reg(context));
-                RESET_CFLAG(context);
-            }
+            HFILE handle = (HFILE)DosFileHandleToWin32Handle(BX_reg(context));
+            LONG result = _hwrite( handle, ptr, CX_reg(context) );
+            if (result == HFILE_ERROR)
+                bSetDOSExtendedError = TRUE;
             else
             {
-                HFILE handle = (HFILE)DosFileHandleToWin32Handle(BX_reg(context));
-                LONG result = _hwrite( handle, ptr, CX_reg(context) );
-                if (result == HFILE_ERROR)
-                    bSetDOSExtendedError = TRUE;
-                else
-                {
-                    SET_AX( context, (WORD)result );
-                    RESET_CFLAG(context);
-                }
+                SET_AX( context, (WORD)result );
+                RESET_CFLAG(context);
             }
         }
         break;
@@ -4938,7 +4747,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
             WORD  selector = 0;
             DWORD bytes = (DWORD)BX_reg(context) << 4;
 
-            if (!ISV86(context) && DOSVM_IsWin16())
+            if (!ISV86(context))
             {
                 DWORD rv = GlobalDOSAlloc16( bytes );
                 selector = LOWORD( rv );
@@ -4965,7 +4774,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         {
             BOOL ok;
             
-            if (!ISV86(context) && DOSVM_IsWin16())
+            if (!ISV86(context))
             {
                 ok = !GlobalDOSFree16( context->SegEs );
 
@@ -4991,7 +4800,7 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         {
             DWORD newsize = (DWORD)BX_reg(context) << 4;
             
-            if (!ISV86(context) && DOSVM_IsWin16())
+            if (!ISV86(context))
             {
                 FIXME( "Resize memory block - unsupported under Win16\n" );
                 SET_CFLAG(context);
@@ -5020,42 +4829,23 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
     case 0x4b: /* "EXEC" - LOAD AND/OR EXECUTE PROGRAM */
         {
             char *program = CTX_SEG_OFF_TO_LIN(context, context->SegDs, context->Edx);
-            BYTE *paramblk = CTX_SEG_OFF_TO_LIN(context, context->SegEs, context->Ebx);
+            HINSTANCE16 instance;
 
             TRACE( "EXEC %s\n", program );
 
             RESET_CFLAG(context);
-            if (DOSVM_IsWin16())
+            instance = WinExec16( program, SW_NORMAL );
+            if (instance < 32)
             {
-                HINSTANCE16 instance = WinExec16( program, SW_NORMAL );
-                if (instance < 32)
-                {
-                    SET_CFLAG( context );
-                    SET_AX( context, instance );
-                }
-            }
-            else
-            {
-                if (!MZ_Exec( context, program, AL_reg(context), paramblk))
-                    bSetDOSExtendedError = TRUE;
+                SET_CFLAG( context );
+                SET_AX( context, instance );
             }
         }
         break;
 
     case 0x4c: /* "EXIT" - TERMINATE WITH RETURN CODE */
         TRACE( "EXIT with return code %d\n", AL_reg(context) );
-        if (DOSVM_IsWin16())
-            DOSVM_Exit( AL_reg(context) );
-        else if(ISV86(context))
-            MZ_Exit( context, FALSE, AL_reg(context) );
-        else
-        {
-            /*
-             * Exit from DPMI.
-             */            
-            ULONG_PTR rv = AL_reg(context);
-            RaiseException( EXCEPTION_VM86_INTx, 0, 1, &rv );
-        }
+        DOSVM_Exit( AL_reg(context) );
         break;
 
     case 0x4d: /* GET RETURN CODE */
@@ -5091,11 +4881,9 @@ void WINAPI DOSVM_Int21Handler( CONTEXT *context )
         break;
 
     case 0x52: /* "SYSVARS" - GET LIST OF LISTS */
-        {
-            SEGPTR ptr = DOSDEV_GetLOL( ISV86(context) || !DOSVM_IsWin16() );
-            context->SegEs = SELECTOROF(ptr);
-            SET_BX( context, OFFSETOF(ptr) );
-        }
+        TRACE("Get List of Lists - not supported\n");
+        context->SegEs = 0;
+        SET_BX( context, 0 );
         break;
 
     case 0x54: /* Get Verify Flag */

@@ -230,10 +230,10 @@ struct stub
 #elif defined(__arm__)
 struct stub
 {
-    BYTE ldr_r0[4];        /* ldr r0, $dll */
-    BYTE ldr_r1[4];        /* ldr r1, $name */
-    BYTE mov_r2_lr[4];     /* mov r2, lr */
-    BYTE ldr_pc_pc[4];     /* ldr pc, [pc, #4] */
+    DWORD ldr_r0;        /* ldr r0, $dll */
+    DWORD ldr_r1;        /* ldr r1, $name */
+    DWORD mov_r2_lr;     /* mov r2, lr */
+    DWORD ldr_pc_pc;     /* ldr pc, [pc, #4] */
     const char *dll;
     const char *name;
     const void* entry;
@@ -241,11 +241,11 @@ struct stub
 #elif defined(__aarch64__)
 struct stub
 {
-    BYTE ldr_x0[4];        /* ldr x0, $dll */
-    BYTE ldr_x1[4];        /* ldr x1, $name */
-    BYTE mov_x2_lr[4];     /* mov x2, lr */
-    BYTE ldr_x16[4];       /* ldr x16, $entry */
-    BYTE br_x16[4];        /* br x16 */
+    DWORD ldr_x0;        /* ldr x0, $dll */
+    DWORD ldr_x1;        /* ldr x1, $name */
+    DWORD mov_x2_lr;     /* mov x2, lr */
+    DWORD ldr_x16;       /* ldr x16, $entry */
+    DWORD br_x16;        /* br x16 */
     const char *dll;
     const char *name;
     const void *entry;
@@ -295,49 +295,22 @@ static ULONG_PTR allocate_stub( const char *dll, const char *name )
     stub->call      = 0xe8;  /* call stub_entry_point */
     stub->entry     = (BYTE *)stub_entry_point - (BYTE *)(&stub->entry + 1);
 #elif defined(__arm__)
-    stub->ldr_r0[0]     = 0x08;   /* ldr r0, [pc, #8] ($dll) */
-    stub->ldr_r0[1]     = 0x00;
-    stub->ldr_r0[2]     = 0x9f;
-    stub->ldr_r0[3]     = 0xe5;
-    stub->ldr_r1[0]     = 0x08;   /* ldr r1, [pc, #8] ($name) */
-    stub->ldr_r1[1]     = 0x10;
-    stub->ldr_r1[2]     = 0x9f;
-    stub->ldr_r1[3]     = 0xe5;
-    stub->mov_r2_lr[0]  = 0x0e;   /* mov r2, lr */
-    stub->mov_r2_lr[1]  = 0x20;
-    stub->mov_r2_lr[2]  = 0xa0;
-    stub->mov_r2_lr[3]  = 0xe1;
-    stub->ldr_pc_pc[0]  = 0x04;   /* ldr pc, [pc, #4] */
-    stub->ldr_pc_pc[1]  = 0xf0;
-    stub->ldr_pc_pc[2]  = 0x9f;
-    stub->ldr_pc_pc[3]  = 0xe5;
-    stub->dll           = dll;
-    stub->name          = name;
-    stub->entry         = stub_entry_point;
+    stub->ldr_r0    = 0xe59f0008;   /* ldr r0, [pc, #8] ($dll) */
+    stub->ldr_r1    = 0xe59f1008;   /* ldr r1, [pc, #8] ($name) */
+    stub->mov_r2_lr = 0xe1a0200e;   /* mov r2, lr */
+    stub->ldr_pc_pc = 0xe59ff004;   /* ldr pc, [pc, #4] */
+    stub->dll       = dll;
+    stub->name      = name;
+    stub->entry     = stub_entry_point;
 #elif defined(__aarch64__)
-    stub->ldr_x0[0]     = 0xa0; /* ldr x0, #20 ($dll) */
-    stub->ldr_x0[1]     = 0x00;
-    stub->ldr_x0[2]     = 0x00;
-    stub->ldr_x0[3]     = 0x58;
-    stub->ldr_x1[0]     = 0xc1; /* ldr x1, #24 ($name) */
-    stub->ldr_x1[1]     = 0x00;
-    stub->ldr_x1[2]     = 0x00;
-    stub->ldr_x1[3]     = 0x58;
-    stub->mov_x2_lr[0]  = 0xe2; /* mov x2, lr */
-    stub->mov_x2_lr[1]  = 0x03;
-    stub->mov_x2_lr[2]  = 0x1e;
-    stub->mov_x2_lr[3]  = 0xaa;
-    stub->ldr_x16[0]    = 0xd0; /* ldr x16, #24 ($entry) */
-    stub->ldr_x16[1]    = 0x00;
-    stub->ldr_x16[2]    = 0x00;
-    stub->ldr_x16[3]    = 0x58;
-    stub->br_x16[0]     = 0x00; /* br x16 */
-    stub->br_x16[1]     = 0x02;
-    stub->br_x16[2]     = 0x1f;
-    stub->br_x16[3]     = 0xd6;
-    stub->dll           = dll;
-    stub->name          = name;
-    stub->entry         = stub_entry_point;
+    stub->ldr_x0    = 0x580000a0; /* ldr x0, #20 ($dll) */
+    stub->ldr_x1    = 0x580000c1; /* ldr x1, #24 ($name) */
+    stub->mov_x2_lr = 0xaa1e03e2; /* mov x2, lr */
+    stub->ldr_x16   = 0x580000d0; /* ldr x16, #24 ($entry) */
+    stub->br_x16    = 0xd61f0200; /* br x16 */
+    stub->dll       = dll;
+    stub->name      = name;
+    stub->entry     = stub_entry_point;
 #else
     stub->movq_rdi[0]     = 0x48;  /* movq $dll,%rdi */
     stub->movq_rdi[1]     = 0xbf;
@@ -1788,6 +1761,27 @@ static NTSTATUS perform_relocations( void *module, SIZE_T len )
     return STATUS_SUCCESS;
 }
 
+
+/* On WoW64 setups, an image mapping can also be created for the other 32/64 CPU */
+/* but it cannot necessarily be loaded as a dll, so we need some additional checks */
+static BOOL is_valid_binary( const pe_image_info_t *info )
+{
+#ifdef __i386__
+    return info->machine == IMAGE_FILE_MACHINE_I386;
+#elif defined(__x86_64__)
+    return info->machine == IMAGE_FILE_MACHINE_AMD64 || !info->contains_code;
+#elif defined(__arm__)
+    return info->machine == IMAGE_FILE_MACHINE_ARM ||
+           info->machine == IMAGE_FILE_MACHINE_THUMB ||
+           info->machine == IMAGE_FILE_MACHINE_ARMNT;
+#elif defined(__aarch64__)
+    return info->machine == IMAGE_FILE_MACHINE_ARM64 || !info->contains_code;
+#else
+    return FALSE;  /* no wow64 support on other platforms */
+#endif
+}
+
+
 /******************************************************************************
  *	load_native_dll  (internal)
  */
@@ -1801,6 +1795,7 @@ static NTSTATUS load_native_dll( LPCWSTR load_path, LPCWSTR name, HANDLE file,
     SIZE_T len = 0;
     WINE_MODREF *wm;
     NTSTATUS status;
+    pe_image_info_t image_info;
 
     TRACE("Trying native dll %s\n", debugstr_w(name));
 
@@ -1811,8 +1806,15 @@ static NTSTATUS load_native_dll( LPCWSTR load_path, LPCWSTR name, HANDLE file,
     if (status != STATUS_SUCCESS) return status;
 
     module = NULL;
-    status = NtMapViewOfSection( mapping, NtCurrentProcess(),
-                                 &module, 0, 0, &size, &len, ViewShare, 0, PAGE_EXECUTE_READ );
+    status = virtual_map_section( mapping, &module, 0, 0, NULL, &len, PAGE_EXECUTE_READ, &image_info );
+    NtClose( mapping );
+
+    if ((status == STATUS_SUCCESS || status == STATUS_IMAGE_NOT_AT_BASE) &&
+        !is_valid_binary( &image_info ))
+    {
+        NtUnmapViewOfSection( NtCurrentProcess(), module );
+        return STATUS_INVALID_IMAGE_FORMAT;
+    }
 
     /* perform base relocation, if necessary */
 
@@ -1822,15 +1824,15 @@ static NTSTATUS load_native_dll( LPCWSTR load_path, LPCWSTR name, HANDLE file,
     if (status != STATUS_SUCCESS)
     {
         if (module) NtUnmapViewOfSection( NtCurrentProcess(), module );
-        goto done;
+        return status;
     }
 
     /* create the MODREF */
 
     if (!(wm = alloc_module( module, name )))
     {
-        status = STATUS_NO_MEMORY;
-        goto done;
+        if (module) NtUnmapViewOfSection( NtCurrentProcess(), module );
+        return STATUS_NO_MEMORY;
     }
 
     set_security_cookie( module, len );
@@ -1856,7 +1858,7 @@ static NTSTATUS load_native_dll( LPCWSTR load_path, LPCWSTR name, HANDLE file,
              * around with no problems, so we don't care.
              * As these might reference our wm, we don't free it.
              */
-            goto done;
+            return status;
         }
     }
 
@@ -1879,10 +1881,7 @@ static NTSTATUS load_native_dll( LPCWSTR load_path, LPCWSTR name, HANDLE file,
 
     wm->ldr.LoadCount = 1;
     *pwm = wm;
-    status = STATUS_SUCCESS;
-done:
-    NtClose( mapping );
-    return status;
+    return STATUS_SUCCESS;
 }
 
 
@@ -2990,13 +2989,11 @@ PIMAGE_NT_HEADERS WINAPI RtlImageNtHeader(HMODULE hModule)
  * Attach to all the loaded dlls.
  * If this is the first time, perform the full process initialization.
  */
-NTSTATUS attach_dlls( CONTEXT *context, BOOL suspend )
+NTSTATUS attach_dlls( CONTEXT *context )
 {
     NTSTATUS status;
     WINE_MODREF *wm;
     LPCWSTR load_path = NtCurrentTeb()->Peb->ProcessParameters->DllPath.Buffer;
-
-    if (suspend) wait_suspend( context );
 
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
 

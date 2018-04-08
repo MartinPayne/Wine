@@ -27,6 +27,7 @@
 #include "winbase.h"
 #include "winternl.h"
 #include "wine/debug.h"
+#include "wine/exception.h"
 WINE_DEFAULT_DEBUG_CHANNEL(msvcp);
 
 struct __Container_proxy;
@@ -1201,6 +1202,365 @@ void __thiscall _Pad__Release(_Pad *this)
 }
 #endif
 
+#if _MSVCP_VER >= 100
+typedef struct _Page
+{
+    struct _Page *_Next;
+    MSVCP_size_t _Mask;
+    char data[1];
+} _Page;
+
+typedef struct
+{
+    LONG lock;
+    _Page *head;
+    _Page *tail;
+    MSVCP_size_t head_pos;
+    MSVCP_size_t tail_pos;
+} threadsafe_queue;
+
+#define QUEUES_NO 8
+typedef struct
+{
+    MSVCP_size_t tail_pos;
+    MSVCP_size_t head_pos;
+    threadsafe_queue queues[QUEUES_NO];
+} queue_data;
+
+typedef struct
+{
+    const vtable_ptr *vtable;
+    queue_data *data; /* queue_data structure is not binary compatible */
+    MSVCP_size_t alloc_count;
+    MSVCP_size_t item_size;
+} _Concurrent_queue_base_v4;
+
+extern const vtable_ptr MSVCP__Concurrent_queue_base_v4_vtable;
+#if _MSVCP_VER == 100
+#define call__Concurrent_queue_base_v4__Move_item call__Concurrent_queue_base_v4__Copy_item
+#define call__Concurrent_queue_base_v4__Copy_item(this,dst,idx,src) CALL_VTBL_FUNC(this, \
+        0, void, (_Concurrent_queue_base_v4*,_Page*,MSVCP_size_t,const void*), (this,dst,idx,src))
+#define  call__Concurrent_queue_base_v4__Assign_and_destroy_item(this,dst,src,idx) CALL_VTBL_FUNC(this, \
+        4, void, (_Concurrent_queue_base_v4*,void*,_Page*,MSVCP_size_t), (this,dst,src,idx))
+#define call__Concurrent_queue_base_v4__Allocate_page(this) CALL_VTBL_FUNC(this, \
+        12, _Page*, (_Concurrent_queue_base_v4*), (this))
+#define call__Concurrent_queue_base_v4__Deallocate_page(this, page) CALL_VTBL_FUNC(this, \
+        16, void, (_Concurrent_queue_base_v4*,_Page*), (this,page))
+#else
+#define call__Concurrent_queue_base_v4__Move_item(this,dst,idx,src) CALL_VTBL_FUNC(this, \
+        0, void, (_Concurrent_queue_base_v4*,_Page*,MSVCP_size_t,void*), (this,dst,idx,src))
+#define call__Concurrent_queue_base_v4__Copy_item(this,dst,idx,src) CALL_VTBL_FUNC(this, \
+        4, void, (_Concurrent_queue_base_v4*,_Page*,MSVCP_size_t,const void*), (this,dst,idx,src))
+#define  call__Concurrent_queue_base_v4__Assign_and_destroy_item(this,dst,src,idx) CALL_VTBL_FUNC(this, \
+        8, void, (_Concurrent_queue_base_v4*,void*,_Page*,MSVCP_size_t), (this,dst,src,idx))
+#define call__Concurrent_queue_base_v4__Allocate_page(this) CALL_VTBL_FUNC(this, \
+        16, _Page*, (_Concurrent_queue_base_v4*), (this))
+#define call__Concurrent_queue_base_v4__Deallocate_page(this, page) CALL_VTBL_FUNC(this, \
+        20, void, (_Concurrent_queue_base_v4*,_Page*), (this,page))
+#endif
+
+/* ?_Internal_throw_exception@_Concurrent_queue_base_v4@details@Concurrency@@IBEXXZ */
+/* ?_Internal_throw_exception@_Concurrent_queue_base_v4@details@Concurrency@@IEBAXXZ */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_throw_exception, 4)
+void __thiscall _Concurrent_queue_base_v4__Internal_throw_exception(
+        const _Concurrent_queue_base_v4 *this)
+{
+    TRACE("(%p)\n", this);
+    throw_exception(EXCEPTION_BAD_ALLOC, NULL);
+}
+
+/* ??0_Concurrent_queue_base_v4@details@Concurrency@@IAE@I@Z */
+/* ??0_Concurrent_queue_base_v4@details@Concurrency@@IEAA@_K@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4_ctor, 8)
+_Concurrent_queue_base_v4* __thiscall _Concurrent_queue_base_v4_ctor(
+        _Concurrent_queue_base_v4 *this, MSVCP_size_t size)
+{
+    TRACE("(%p %ld)\n", this, size);
+
+    this->data = MSVCRT_operator_new(sizeof(*this->data));
+    memset(this->data, 0, sizeof(*this->data));
+
+    this->vtable = &MSVCP__Concurrent_queue_base_v4_vtable;
+    this->item_size = size;
+
+    /* alloc_count needs to be power of 2 */
+    this->alloc_count =
+        size <= 8 ? 32 :
+        size <= 16 ? 16 :
+        size <= 32 ? 8 :
+        size <= 64 ? 4 :
+        size <= 128 ? 2 : 1;
+    return this;
+}
+
+/* ??1_Concurrent_queue_base_v4@details@Concurrency@@MAE@XZ */
+/* ??1_Concurrent_queue_base_v4@details@Concurrency@@MEAA@XZ */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4_dtor, 4)
+void __thiscall _Concurrent_queue_base_v4_dtor(_Concurrent_queue_base_v4 *this)
+{
+    TRACE("(%p)\n", this);
+    MSVCRT_operator_delete(this->data);
+}
+
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4_vector_dtor, 8)
+_Concurrent_queue_base_v4* __thiscall _Concurrent_queue_base_v4_vector_dtor(
+        _Concurrent_queue_base_v4 *this, unsigned int flags)
+{
+    TRACE("(%p %x)\n", this, flags);
+    if(flags & 2) {
+        /* we have an array, with the number of elements stored before the first object */
+        INT_PTR i, *ptr = (INT_PTR *)this-1;
+
+        for(i=*ptr-1; i>=0; i--)
+            _Concurrent_queue_base_v4_dtor(this+i);
+        MSVCRT_operator_delete(ptr);
+    } else {
+        if(flags & 1)
+            _Concurrent_queue_base_v4_dtor(this);
+        MSVCRT_operator_delete(this);
+    }
+
+    return this;
+}
+
+/* ?_Internal_finish_clear@_Concurrent_queue_base_v4@details@Concurrency@@IAEXXZ */
+/* ?_Internal_finish_clear@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXXZ */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_finish_clear, 4)
+void __thiscall _Concurrent_queue_base_v4__Internal_finish_clear(
+        _Concurrent_queue_base_v4 *this)
+{
+    int i;
+
+    TRACE("(%p)\n", this);
+
+    for(i=0; i<QUEUES_NO; i++)
+    {
+        if(this->data->queues[i].tail)
+            call__Concurrent_queue_base_v4__Deallocate_page(this, this->data->queues[i].tail);
+    }
+}
+
+/* ?_Internal_empty@_Concurrent_queue_base_v4@details@Concurrency@@IBE_NXZ */
+/* ?_Internal_empty@_Concurrent_queue_base_v4@details@Concurrency@@IEBA_NXZ */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_empty, 4)
+MSVCP_bool __thiscall _Concurrent_queue_base_v4__Internal_empty(
+        const _Concurrent_queue_base_v4 *this)
+{
+    TRACE("(%p)\n", this);
+    return this->data->head_pos == this->data->tail_pos;
+}
+
+/* ?_Internal_size@_Concurrent_queue_base_v4@details@Concurrency@@IBEIXZ */
+/* ?_Internal_size@_Concurrent_queue_base_v4@details@Concurrency@@IEBA_KXZ */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_size, 4)
+MSVCP_size_t __thiscall _Concurrent_queue_base_v4__Internal_size(
+        const _Concurrent_queue_base_v4 *this)
+{
+    TRACE("(%p)\n", this);
+    return this->data->tail_pos - this->data->head_pos;
+}
+
+static void spin_wait(int *counter)
+{
+    static int spin_limit = -1;
+
+    if(spin_limit == -1)
+    {
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        spin_limit = si.dwNumberOfProcessors>1 ? 4000 : 0;
+    }
+
+    if(*counter >= spin_limit)
+    {
+        *counter = 0;
+        Sleep(0);
+    }
+    else
+    {
+        (*counter)++;
+    }
+}
+
+#ifdef _WIN64
+static MSVCP_size_t InterlockedIncrementSizeT(MSVCP_size_t volatile *dest)
+{
+    MSVCP_size_t v;
+
+    do
+    {
+        v = *dest;
+    } while(InterlockedCompareExchange64((LONGLONG*)dest, v+1, v) != v);
+
+    return v+1;
+}
+#else
+#define InterlockedIncrementSizeT(dest) InterlockedIncrement((LONG*)dest)
+#endif
+
+static void CALLBACK queue_push_finally(BOOL normal, void *ctx)
+{
+    threadsafe_queue *queue = ctx;
+    InterlockedIncrementSizeT(&queue->tail_pos);
+}
+
+static void threadsafe_queue_push(threadsafe_queue *queue, MSVCP_size_t id,
+        void *e, _Concurrent_queue_base_v4 *parent, BOOL copy)
+{
+    MSVCP_size_t page_id = id & ~(parent->alloc_count-1);
+    int spin;
+    _Page *p;
+
+    spin = 0;
+    while(queue->tail_pos != id)
+        spin_wait(&spin);
+
+    if(page_id == id)
+    {
+        /* TODO: Add exception handling */
+        p = call__Concurrent_queue_base_v4__Allocate_page(parent);
+        p->_Next = NULL;
+        p->_Mask = 0;
+
+        spin = 0;
+        while(InterlockedCompareExchange(&queue->lock, 1, 0))
+            spin_wait(&spin);
+        if(queue->tail)
+            queue->tail->_Next = p;
+        queue->tail = p;
+        if(!queue->head)
+            queue->head = p;
+        queue->lock = 0;
+    }
+    else
+    {
+        p = queue->tail;
+    }
+
+    __TRY
+    {
+        if(copy)
+            call__Concurrent_queue_base_v4__Copy_item(parent, p, id-page_id, e);
+        else
+            call__Concurrent_queue_base_v4__Move_item(parent, p, id-page_id, e);
+        p->_Mask |= 1 << (id - page_id);
+    }
+    __FINALLY_CTX(queue_push_finally, queue);
+}
+
+static BOOL threadsafe_queue_pop(threadsafe_queue *queue, MSVCP_size_t id,
+        void *e, _Concurrent_queue_base_v4 *parent)
+{
+    MSVCP_size_t page_id = id & ~(parent->alloc_count-1);
+    int spin;
+    _Page *p;
+    BOOL ret = FALSE;
+
+    spin = 0;
+    while(queue->tail_pos <= id)
+        spin_wait(&spin);
+
+    spin = 0;
+    while(queue->head_pos != id)
+        spin_wait(&spin);
+
+    p = queue->head;
+    if(p->_Mask & (1 << (id-page_id)))
+    {
+        /* TODO: Add exception handling */
+        call__Concurrent_queue_base_v4__Assign_and_destroy_item(parent, e, p, id-page_id);
+        ret = TRUE;
+    }
+
+    if(id == page_id+parent->alloc_count-1)
+    {
+        spin = 0;
+        while(InterlockedCompareExchange(&queue->lock, 1, 0))
+            spin_wait(&spin);
+        queue->head = p->_Next;
+        if(!queue->head)
+            queue->tail = NULL;
+        queue->lock = 0;
+
+        /* TODO: Add exception handling */
+        call__Concurrent_queue_base_v4__Deallocate_page(parent, p);
+    }
+
+    InterlockedIncrementSizeT(&queue->head_pos);
+    return ret;
+}
+
+/* ?_Internal_push@_Concurrent_queue_base_v4@details@Concurrency@@IAEXPBX@Z */
+/* ?_Internal_push@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXPEBX@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_push, 8)
+void __thiscall _Concurrent_queue_base_v4__Internal_push(
+        _Concurrent_queue_base_v4 *this, void *e)
+{
+    MSVCP_size_t id;
+
+    TRACE("(%p %p)\n", this, e);
+
+    id = InterlockedIncrementSizeT(&this->data->tail_pos)-1;
+    threadsafe_queue_push(this->data->queues + id % QUEUES_NO,
+            id / QUEUES_NO, e, this, TRUE);
+}
+
+/* ?_Internal_move_push@_Concurrent_queue_base_v4@details@Concurrency@@IAEXPAX@Z */
+/* ?_Internal_move_push@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXPEAX@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_move_push, 8)
+void __thiscall _Concurrent_queue_base_v4__Internal_move_push(
+        _Concurrent_queue_base_v4 *this, void *e)
+{
+    MSVCP_size_t id;
+
+    TRACE("(%p %p)\n", this, e);
+
+    id = InterlockedIncrementSizeT(&this->data->tail_pos)-1;
+    threadsafe_queue_push(this->data->queues + id % QUEUES_NO,
+            id / QUEUES_NO, e, this, FALSE);
+}
+
+/* ?_Internal_pop_if_present@_Concurrent_queue_base_v4@details@Concurrency@@IAE_NPAX@Z */
+/* ?_Internal_pop_if_present@_Concurrent_queue_base_v4@details@Concurrency@@IEAA_NPEAX@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_pop_if_present, 8)
+MSVCP_bool __thiscall _Concurrent_queue_base_v4__Internal_pop_if_present(
+        _Concurrent_queue_base_v4 *this, void *e)
+{
+    MSVCP_size_t id;
+
+    TRACE("(%p %p)\n", this, e);
+
+    do
+    {
+        do
+        {
+            id = this->data->head_pos;
+            if(id == this->data->tail_pos) return FALSE;
+        } while(InterlockedCompareExchangePointer((void**)&this->data->head_pos,
+                    (void*)(id+1), (void*)id) != (void*)id);
+    } while(!threadsafe_queue_pop(this->data->queues + id % QUEUES_NO,
+                id / QUEUES_NO, e, this));
+    return TRUE;
+}
+
+/* ?_Internal_swap@_Concurrent_queue_base_v4@details@Concurrency@@IAEXAAV123@@Z */
+/* ?_Internal_swap@_Concurrent_queue_base_v4@details@Concurrency@@IEAAXAEAV123@@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4__Internal_swap, 8)
+void __thiscall _Concurrent_queue_base_v4__Internal_swap(
+        _Concurrent_queue_base_v4 *this, _Concurrent_queue_base_v4 *r)
+{
+    FIXME("(%p %p) stub\n", this, r);
+}
+
+DEFINE_THISCALL_WRAPPER(_Concurrent_queue_base_v4_dummy, 4)
+void __thiscall _Concurrent_queue_base_v4_dummy(_Concurrent_queue_base_v4 *this)
+{
+    ERR("unexpected call\n");
+}
+
+DEFINE_RTTI_DATA0(_Concurrent_queue_base_v4, 0, ".?AV_Concurrent_queue_base_v4@details@Concurrency@@")
+#endif
+
 #ifndef __GNUC__
 void __asm_dummy_vtables(void) {
 #endif
@@ -1226,6 +1586,17 @@ void __asm_dummy_vtables(void) {
             VTABLE_ADD_FUNC(custom_category_default_error_condition)
             VTABLE_ADD_FUNC(custom_category_equivalent)
             VTABLE_ADD_FUNC(custom_category_equivalent_code));
+#endif
+#if _MSVCP_VER >= 100
+    __ASM_VTABLE(_Concurrent_queue_base_v4,
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_dummy)
+#endif
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_dummy)
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_dummy)
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_vector_dtor)
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_dummy)
+            VTABLE_ADD_FUNC(_Concurrent_queue_base_v4_dummy));
 #endif
 #if _MSVCP_VER >= 110
     __ASM_VTABLE(_Pad,
@@ -1382,6 +1753,9 @@ void init_misc(void *base)
     init_iostream_category_rtti(base);
     init_system_category_rtti(base);
     init_generic_category_rtti(base);
+#endif
+#if _MSVCP_VER >= 100
+    init__Concurrent_queue_base_v4_rtti(base);
 #endif
 #if _MSVCP_VER >= 110
     init__Pad_rtti(base);

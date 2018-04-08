@@ -379,6 +379,12 @@ extern BSTR EnsureCorrectEOL(BSTR) DECLSPEC_HIDDEN;
 
 extern xmlChar* tagName_to_XPath(const BSTR tagName) DECLSPEC_HIDDEN;
 
+#ifdef SONAME_LIBXSLT
+#  include <libxslt/documents.h>
+extern xmlDocPtr xslt_doc_default_loader(const xmlChar *uri, xmlDictPtr dict, int options,
+    void *_ctxt, xsltLoadType type) DECLSPEC_HIDDEN;
+#endif /* SONAME_LIBXSLT */
+
 static inline BSTR bstr_from_xmlChar(const xmlChar *str)
 {
     BSTR ret = NULL;
@@ -395,12 +401,12 @@ static inline BSTR bstr_from_xmlChar(const xmlChar *str)
     return ret;
 }
 
-static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
+static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars, BOOL use_xml_alloc)
 {
     xmlChar *xmlstr;
     DWORD len = WideCharToMultiByte( CP_UTF8, 0, str, nchars, NULL, 0, NULL, NULL );
 
-    xmlstr = heap_alloc( len+1 );
+    xmlstr = use_xml_alloc ? xmlMalloc( len + 1 ) : heap_alloc( len + 1 );
     if ( xmlstr )
     {
         WideCharToMultiByte( CP_UTF8, 0, str, nchars, (LPSTR) xmlstr, len+1, NULL, NULL );
@@ -411,7 +417,7 @@ static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
 
 static inline xmlChar *xmlchar_from_wchar( const WCHAR *str )
 {
-    return xmlchar_from_wcharn(str, -1);
+    return xmlchar_from_wcharn(str, -1, FALSE);
 }
 
 static inline xmlChar *heap_strdupxmlChar(const xmlChar *str)
@@ -544,6 +550,7 @@ static inline const CLSID* SchemaCache_version(MSXML_VERSION v)
 typedef struct bsc_t bsc_t;
 
 HRESULT create_moniker_from_url(LPCWSTR, IMoniker**) DECLSPEC_HIDDEN;
+HRESULT create_uri(const WCHAR *, IUri **) DECLSPEC_HIDDEN;
 HRESULT bind_url(IMoniker*, HRESULT (*onDataAvailable)(void*,char*,DWORD), void*, bsc_t**) DECLSPEC_HIDDEN;
 HRESULT detach_bsc(bsc_t*) DECLSPEC_HIDDEN;
 

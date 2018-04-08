@@ -28,26 +28,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
 
-static DWORD resource_access_from_pool(enum wined3d_pool pool)
-{
-    switch (pool)
-    {
-        case WINED3D_POOL_DEFAULT:
-            return WINED3D_RESOURCE_ACCESS_GPU;
-
-        case WINED3D_POOL_MANAGED:
-            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU;
-
-        case WINED3D_POOL_SCRATCH:
-        case WINED3D_POOL_SYSTEM_MEM:
-            return WINED3D_RESOURCE_ACCESS_CPU;
-
-        default:
-            FIXME("Unhandled pool %#x.\n", pool);
-            return 0;
-    }
-}
-
 static void resource_check_usage(DWORD usage)
 {
     static const DWORD handled = WINED3DUSAGE_RENDERTARGET
@@ -57,6 +37,7 @@ static void resource_check_usage(DWORD usage)
             | WINED3DUSAGE_AUTOGENMIPMAP
             | WINED3DUSAGE_STATICDECL
             | WINED3DUSAGE_OVERLAY
+            | WINED3DUSAGE_SCRATCH
             | WINED3DUSAGE_PRIVATE
             | WINED3DUSAGE_LEGACY_CUBEMAP
             | WINED3DUSAGE_TEXTURE;
@@ -75,9 +56,9 @@ static void resource_check_usage(DWORD usage)
 
 HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *device,
         enum wined3d_resource_type type, const struct wined3d_format *format,
-        enum wined3d_multisample_type multisample_type, UINT multisample_quality,
-        DWORD usage, enum wined3d_pool pool, UINT width, UINT height, UINT depth, UINT size,
-        void *parent, const struct wined3d_parent_ops *parent_ops,
+        enum wined3d_multisample_type multisample_type, unsigned int multisample_quality,
+        unsigned int usage, unsigned int access, unsigned int width, unsigned int height, unsigned int depth,
+        unsigned int size, void *parent, const struct wined3d_parent_ops *parent_ops,
         const struct wined3d_resource_ops *resource_ops)
 {
     enum wined3d_gl_resource_type base_type = WINED3D_GL_RES_TYPE_COUNT;
@@ -103,6 +84,13 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     };
 
     resource_check_usage(usage);
+
+    if (usage & WINED3DUSAGE_SCRATCH && access & WINED3D_RESOURCE_ACCESS_GPU)
+    {
+        ERR("Trying to create a scratch resource with access flags %s.\n",
+                wined3d_debug_resource_access(access));
+        return WINED3DERR_INVALIDCALL;
+    }
 
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
@@ -157,7 +145,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
              * Use 2D textures, the texture code will pad to a power of 2 size. */
             gl_type = WINED3D_GL_RES_TYPE_TEX_2D;
         }
-        else if (pool == WINED3D_POOL_SCRATCH)
+        else if (usage & WINED3DUSAGE_SCRATCH)
         {
             /* Needed for proper format information. */
             gl_type = base_type;
@@ -190,10 +178,9 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource->multisample_type = multisample_type;
     resource->multisample_quality = multisample_quality;
     resource->usage = usage;
-    resource->pool = pool;
-    resource->access_flags = resource_access_from_pool(pool);
     if (usage & WINED3DUSAGE_DYNAMIC)
-        resource->access_flags |= WINED3D_RESOURCE_ACCESS_CPU;
+        access |= WINED3D_RESOURCE_ACCESS_MAP;
+    resource->access = access;
     resource->width = width;
     resource->height = height;
     resource->depth = depth;
@@ -220,7 +207,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     if (!(usage & WINED3DUSAGE_PRIVATE))
     {
         /* Check that we have enough video ram left */
-        if (pool == WINED3D_POOL_DEFAULT && device->wined3d->flags & WINED3D_VIDMEM_ACCOUNTING)
+        if (!(access & WINED3D_RESOURCE_ACCESS_CPU) && device->wined3d->flags & WINED3D_VIDMEM_ACCOUNTING)
         {
             if (size > wined3d_device_get_available_texture_mem(device))
             {
@@ -254,7 +241,7 @@ void resource_cleanup(struct wined3d_resource *resource)
 
     if (!(resource->usage & WINED3DUSAGE_PRIVATE))
     {
-        if (resource->pool == WINED3D_POOL_DEFAULT && d3d->flags & WINED3D_VIDMEM_ACCOUNTING)
+        if (!(resource->access & WINED3D_RESOURCE_ACCESS_CPU) && d3d->flags & WINED3D_VIDMEM_ACCOUNTING)
         {
             TRACE("Decrementing device memory pool by %u.\n", resource->size);
             adapter_adjust_memory(resource->device->adapter, (INT64)0 - resource->size);
@@ -276,7 +263,7 @@ DWORD CDECL wined3d_resource_set_priority(struct wined3d_resource *resource, DWO
 {
     DWORD prev;
 
-    if (resource->pool != WINED3D_POOL_MANAGED)
+    if (!wined3d_resource_access_is_managed(resource->access))
     {
         WARN("Called on non-managed resource %p, ignoring.\n", resource);
         return 0;
@@ -311,7 +298,7 @@ void CDECL wined3d_resource_get_desc(const struct wined3d_resource *resource, st
     desc->multisample_type = resource->multisample_type;
     desc->multisample_quality = resource->multisample_quality;
     desc->usage = resource->usage;
-    desc->pool = resource->pool;
+    desc->access = resource->access;
     desc->width = resource->width;
     desc->height = resource->height;
     desc->depth = resource->depth;

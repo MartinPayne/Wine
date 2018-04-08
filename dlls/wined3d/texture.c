@@ -32,8 +32,8 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static BOOL wined3d_texture_use_pbo(const struct wined3d_texture *texture, const struct wined3d_gl_info *gl_info)
 {
-    return texture->resource.pool == WINED3D_POOL_DEFAULT
-            && texture->resource.access_flags & WINED3D_RESOURCE_ACCESS_CPU
+    return (texture->resource.access & (WINED3D_RESOURCE_ACCESS_CPU
+            | WINED3D_RESOURCE_ACCESS_MAP)) == WINED3D_RESOURCE_ACCESS_MAP
             && gl_info->supported[ARB_PIXEL_BUFFER_OBJECT]
             && !texture->resource.format->conv_byte_count
             && !(texture->flags & (WINED3D_TEXTURE_PIN_SYSMEM | WINED3D_TEXTURE_COND_NP2_EMULATED));
@@ -243,9 +243,9 @@ BOOL wined3d_texture_load_location(struct wined3d_texture *texture,
     if (WARN_ON(d3d))
     {
         DWORD required_access = wined3d_resource_access_from_location(location);
-        if ((texture->resource.access_flags & required_access) != required_access)
+        if ((texture->resource.access & required_access) != required_access)
             WARN("Operation requires %#x access, but texture only has %#x.\n",
-                    required_access, texture->resource.access_flags);
+                    required_access, texture->resource.access);
     }
 
     if (current & WINED3D_LOCATION_DISCARDED)
@@ -321,12 +321,12 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
     HRESULT hr;
 
     TRACE("texture %p, texture_ops %p, layer_count %u, level_count %u, resource_type %s, format %s, "
-            "multisample_type %#x, multisample_quality %#x, usage %s, pool %s, width %u, height %u, depth %u, "
+            "multisample_type %#x, multisample_quality %#x, usage %s, access %s, width %u, height %u, depth %u, "
             "flags %#x, device %p, parent %p, parent_ops %p, resource_ops %p.\n",
             texture, texture_ops, layer_count, level_count, debug_d3dresourcetype(desc->resource_type),
             debug_d3dformat(desc->format), desc->multisample_type, desc->multisample_quality,
-            debug_d3dusage(desc->usage), debug_d3dpool(desc->pool), desc->width, desc->height, desc->depth,
-            flags, device, parent, parent_ops, resource_ops);
+            debug_d3dusage(desc->usage), wined3d_debug_resource_access(desc->access),
+            desc->width, desc->height, desc->depth, flags, device, parent, parent_ops, resource_ops);
 
     if (!desc->width || !desc->height || !desc->depth)
         return WINED3DERR_INVALIDCALL;
@@ -352,7 +352,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         return WINED3DERR_INVALIDCALL;
 
     if (FAILED(hr = resource_init(&texture->resource, device, desc->resource_type, format,
-            desc->multisample_type, desc->multisample_quality, desc->usage, desc->pool,
+            desc->multisample_type, desc->multisample_quality, desc->usage, desc->access,
             desc->width, desc->height, desc->depth, offset, parent, parent_ops, resource_ops)))
     {
         static unsigned int once;
@@ -369,7 +369,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
     }
     wined3d_resource_update_draw_binding(&texture->resource);
     if ((flags & WINED3D_TEXTURE_CREATE_MAPPABLE) || desc->format == WINED3DFMT_D16_LOCKABLE)
-        texture->resource.access_flags |= WINED3D_RESOURCE_ACCESS_CPU;
+        texture->resource.access |= WINED3D_RESOURCE_ACCESS_MAP;
 
     texture->texture_ops = texture_ops;
 
@@ -1095,9 +1095,10 @@ DWORD CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, DWORD lod)
 
     /* The d3d9:texture test shows that SetLOD is ignored on non-managed
      * textures. The call always returns 0, and GetLOD always returns 0. */
-    if (texture->resource.pool != WINED3D_POOL_MANAGED)
+    if (!wined3d_resource_access_is_managed(texture->resource.access))
     {
-        TRACE("Ignoring SetLOD on %s texture, returning 0.\n", debug_d3dpool(texture->resource.pool));
+        TRACE("Ignoring LOD on texture with resource access %s.\n",
+                wined3d_debug_resource_access(texture->resource.access));
         return 0;
     }
 
@@ -1802,7 +1803,7 @@ static void wined3d_texture_unload(struct wined3d_resource *resource)
     {
         struct wined3d_texture_sub_resource *sub_resource = &texture->sub_resources[i];
 
-        if (resource->pool != WINED3D_POOL_DEFAULT
+        if (resource->access & WINED3D_RESOURCE_ACCESS_CPU
                 && wined3d_texture_load_location(texture, i, context, resource->map_binding))
         {
             wined3d_texture_invalidate_location(texture, i, ~resource->map_binding);
@@ -1811,9 +1812,11 @@ static void wined3d_texture_unload(struct wined3d_resource *resource)
         {
             /* We should only get here on device reset/teardown for implicit
              * resources. */
-            if (resource->pool != WINED3D_POOL_DEFAULT || resource->type != WINED3D_RTYPE_TEXTURE_2D)
-                ERR("Discarding %s %p sub-resource %u in the %s pool.\n", debug_d3dresourcetype(resource->type),
-                        resource, i, debug_d3dpool(resource->pool));
+            if (resource->access & WINED3D_RESOURCE_ACCESS_CPU
+                    || resource->type != WINED3D_RTYPE_TEXTURE_2D)
+                ERR("Discarding %s %p sub-resource %u with resource access %s.\n",
+                        debug_d3dresourcetype(resource->type), resource, i,
+                        wined3d_debug_resource_access(resource->access));
             wined3d_texture_validate_location(texture, i, WINED3D_LOCATION_DISCARDED);
             wined3d_texture_invalidate_location(texture, i, ~WINED3D_LOCATION_DISCARDED);
         }
@@ -1869,12 +1872,12 @@ static HRESULT texture_resource_sub_resource_map(struct wined3d_resource *resour
     if (box && FAILED(wined3d_texture_check_box_dimensions(texture, texture_level, box)))
     {
         WARN("Map box is invalid.\n");
-        if (((fmt_flags & WINED3DFMT_FLAG_BLOCKS) && resource->pool == WINED3D_POOL_DEFAULT)
+        if (((fmt_flags & WINED3DFMT_FLAG_BLOCKS) && !(resource->access & WINED3D_RESOURCE_ACCESS_CPU))
                 || resource->type != WINED3D_RTYPE_TEXTURE_2D)
             return WINED3DERR_INVALIDCALL;
     }
 
-    if (!(resource->access_flags & WINED3D_RESOURCE_ACCESS_CPU))
+    if (!(resource->access & WINED3D_RESOURCE_ACCESS_MAP))
     {
         WARN("Trying to map unmappable texture.\n");
         if (resource->type != WINED3D_RTYPE_TEXTURE_2D)
@@ -2062,13 +2065,13 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (desc->usage & WINED3DUSAGE_DYNAMIC && desc->pool == WINED3D_POOL_MANAGED)
+    if (desc->usage & WINED3DUSAGE_DYNAMIC && wined3d_resource_access_is_managed(desc->access))
         FIXME("Trying to create a managed texture with dynamic usage.\n");
     if (!(desc->usage & (WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_RENDERTARGET | WINED3DUSAGE_DEPTHSTENCIL))
             && (flags & WINED3D_TEXTURE_CREATE_MAPPABLE))
-        WARN("Creating a mappable texture in the default pool that doesn't specify dynamic usage.\n");
-    if (desc->usage & WINED3DUSAGE_RENDERTARGET && desc->pool != WINED3D_POOL_DEFAULT)
-        FIXME("Trying to create a render target that isn't in the default pool.\n");
+        WARN("Creating a mappable texture that doesn't specify dynamic usage.\n");
+    if (desc->usage & WINED3DUSAGE_RENDERTARGET && desc->access & WINED3D_RESOURCE_ACCESS_CPU)
+        FIXME("Trying to create a CPU accessible render target.\n");
 
     pow2_width = desc->width;
     pow2_height = desc->height;
@@ -2078,7 +2081,7 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
         /* level_count == 0 returns an error as well. */
         if (level_count != 1 || layer_count != 1)
         {
-            if (desc->pool != WINED3D_POOL_SCRATCH)
+            if (!(desc->usage & WINED3DUSAGE_SCRATCH))
             {
                 WARN("Attempted to create a mipmapped/cube/array NPOT texture without unconditional NPOT support.\n");
                 return WINED3DERR_INVALIDCALL;
@@ -2126,7 +2129,7 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
          *    Blts. Some apps (e.g. Swat 3) create textures with a height of
          *    16 and a width > 3000 and blt 16x16 letter areas from them to
          *    the render target. */
-        if (desc->pool == WINED3D_POOL_DEFAULT || desc->pool == WINED3D_POOL_MANAGED)
+        if (desc->access & WINED3D_RESOURCE_ACCESS_GPU)
         {
             WARN("Dimensions (%ux%u) exceed the maximum texture size.\n", pow2_width, pow2_height);
             return WINED3DERR_NOTAVAILABLE;
@@ -2594,10 +2597,11 @@ static HRESULT volumetexture_init(struct wined3d_texture *texture, const struct 
         }
     }
 
-    if (desc->usage & WINED3DUSAGE_DYNAMIC && (desc->pool == WINED3D_POOL_MANAGED
-            || desc->pool == WINED3D_POOL_SCRATCH))
+    if (desc->usage & WINED3DUSAGE_DYNAMIC && (wined3d_resource_access_is_managed(desc->access)
+            || desc->usage & WINED3DUSAGE_SCRATCH))
     {
-        WARN("Attempted to create a DYNAMIC texture in pool %s.\n", debug_d3dpool(desc->pool));
+        WARN("Attempted to create a DYNAMIC texture with access %s.\n",
+                wined3d_debug_resource_access(desc->access));
         return WINED3DERR_INVALIDCALL;
     }
 
@@ -2616,7 +2620,7 @@ static HRESULT volumetexture_init(struct wined3d_texture *texture, const struct 
 
         if (pow2_w != desc->width || pow2_h != desc->height || pow2_d != desc->depth)
         {
-            if (desc->pool == WINED3D_POOL_SCRATCH)
+            if (desc->usage & WINED3DUSAGE_SCRATCH)
             {
                 WARN("Creating a scratch NPOT volume texture despite lack of HW support.\n");
             }
@@ -2898,7 +2902,7 @@ HRESULT CDECL wined3d_texture_get_sub_resource_desc(const struct wined3d_texture
     desc->multisample_type = resource->multisample_type;
     desc->multisample_quality = resource->multisample_quality;
     desc->usage = resource->usage;
-    desc->pool = resource->pool;
+    desc->access = resource->access;
 
     level_idx = sub_resource_idx % texture->level_count;
     desc->width = wined3d_texture_get_level_width(texture, level_idx);

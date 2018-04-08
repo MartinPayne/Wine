@@ -1206,7 +1206,7 @@
 @ stdcall QueryPerformanceCounter(ptr) kernel32.QueryPerformanceCounter
 @ stdcall QueryPerformanceFrequency(ptr) kernel32.QueryPerformanceFrequency
 @ stub QueryProcessAffinityUpdateMode
-# @ stub QueryProcessCycleTime
+@ stdcall QueryProcessCycleTime(long ptr) kernel32.QueryProcessCycleTime
 # @ stub QueryProtectedPolicy
 @ stub QuerySecurityAccessMask
 # @ stub QueryStateAtomValueInfo
@@ -1233,7 +1233,7 @@
 # @ stub QuirkIsEnabledForProcess
 @ stdcall RaiseException(long long long ptr) kernel32.RaiseException
 # @ stub RaiseFailFastException
-# @ stub ReOpenFile
+@ stdcall ReOpenFile(ptr long long long) kernel32.ReOpenFile
 @ stdcall ReadConsoleA(long ptr long ptr ptr) kernel32.ReadConsoleA
 @ stdcall ReadConsoleInputA(long ptr long ptr) kernel32.ReadConsoleInputA
 @ stub ReadConsoleInputExA

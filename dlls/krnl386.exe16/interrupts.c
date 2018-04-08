@@ -40,7 +40,6 @@ static void WINAPI DOSVM_Int17Handler(CONTEXT*);
 static void WINAPI DOSVM_Int19Handler(CONTEXT*);
 static void WINAPI DOSVM_Int1aHandler(CONTEXT*);
 static void WINAPI DOSVM_Int20Handler(CONTEXT*);
-static void WINAPI DOSVM_Int29Handler(CONTEXT*);
 static void WINAPI DOSVM_Int2aHandler(CONTEXT*);
 static void WINAPI DOSVM_Int41Handler(CONTEXT*);
 static void WINAPI DOSVM_Int4bHandler(CONTEXT*);
@@ -53,17 +52,17 @@ static const INTPROC DOSVM_VectorsBuiltin[] =
 {
   /* 00 */ 0,                  0,                  0,                  0,
   /* 04 */ 0,                  0,                  0,                  0,
-  /* 08 */ DOSVM_Int08Handler, DOSVM_Int09Handler, 0,                  0,
+  /* 08 */ 0,                  0,                  0,                  0,
   /* 0C */ 0,                  0,                  0,                  0,
-  /* 10 */ DOSVM_Int10Handler, DOSVM_Int11Handler, DOSVM_Int12Handler, DOSVM_Int13Handler,
-  /* 14 */ 0,                  DOSVM_Int15Handler, DOSVM_Int16Handler, DOSVM_Int17Handler,
+  /* 10 */ 0,                  DOSVM_Int11Handler, DOSVM_Int12Handler, DOSVM_Int13Handler,
+  /* 14 */ 0,                  DOSVM_Int15Handler, 0,                  DOSVM_Int17Handler,
   /* 18 */ 0,                  DOSVM_Int19Handler, DOSVM_Int1aHandler, 0,
   /* 1C */ 0,                  0,                  0,                  0,
   /* 20 */ DOSVM_Int20Handler, DOSVM_Int21Handler, 0,                  0,
   /* 24 */ 0,                  DOSVM_Int25Handler, DOSVM_Int26Handler, 0,
-  /* 28 */ 0,                  DOSVM_Int29Handler, DOSVM_Int2aHandler, 0,
+  /* 28 */ 0,                  0,                  DOSVM_Int2aHandler, 0,
   /* 2C */ 0,                  0,                  0,                  DOSVM_Int2fHandler,
-  /* 30 */ 0,                  DOSVM_Int31Handler, 0,                  DOSVM_Int33Handler,
+  /* 30 */ 0,                  DOSVM_Int31Handler, 0,                  0,
   /* 34 */ DOSVM_Int34Handler, DOSVM_Int35Handler, DOSVM_Int36Handler, DOSVM_Int37Handler,
   /* 38 */ DOSVM_Int38Handler, DOSVM_Int39Handler, DOSVM_Int3aHandler, DOSVM_Int3bHandler,
   /* 3C */ DOSVM_Int3cHandler, DOSVM_Int3dHandler, DOSVM_Int3eHandler, 0,
@@ -111,23 +110,6 @@ static FARPROC16* DOSVM_GetRMVector( BYTE intnum )
 
 
 /**********************************************************************
- *         DOSVM_IsIRQ
- *
- * Return TRUE if interrupt is an IRQ.
- */
-static BOOL DOSVM_IsIRQ( BYTE intnum )
-{
-    if (intnum >= 0x08 && intnum <= 0x0f)
-        return TRUE;
-
-    if (intnum >= 0x70 && intnum <= 0x77)
-        return TRUE;
-
-    return FALSE;
-}
-
-
-/**********************************************************************
  *         DOSVM_DefaultHandler
  *
  * Default interrupt handler. This will be used to emulate all
@@ -152,10 +134,6 @@ static INTPROC DOSVM_GetBuiltinHandler( BYTE intnum )
     }
 
     WARN("int%x not implemented, returning dummy handler\n", intnum );
-
-    if (DOSVM_IsIRQ(intnum))
-        return DOSVM_AcknowledgeIRQ;
-
     return DOSVM_DefaultHandler;
 }
 
@@ -169,33 +147,6 @@ static void DOSVM_IntProcRelay( CONTEXT *context, LPVOID data )
 {
     INTPROC proc = (INTPROC)data;
     proc(context);
-}
-
-
-/**********************************************************************
- *          DOSVM_PrepareIRQ
- *
- */
-static void DOSVM_PrepareIRQ( CONTEXT *context, BOOL isbuiltin )
-{
-    /* Disable virtual interrupts. */
-    get_vm86_teb_info()->dpmi_vif = 0;
-
-    if (!isbuiltin)
-    {
-        DWORD *stack = CTX_SEG_OFF_TO_LIN(context, 
-                                          context->SegSs,
-                                          context->Esp);
-
-        /* Push return address to stack. */
-        *(--stack) = context->SegCs;
-        *(--stack) = context->Eip;
-        context->Esp += -8;
-
-        /* Jump to enable interrupts stub. */
-        context->SegCs = DOSVM_dpmi_segments->relay_code_sel;
-        context->Eip   = 5;
-    }
 }
 
 
@@ -365,8 +316,6 @@ void DOSVM_HardwareInterruptPM( CONTEXT *context, BYTE intnum )
 
             if (intnum == 0x25 || intnum == 0x26)
                 DOSVM_PushFlags( context, TRUE, FALSE );
-            else if (DOSVM_IsIRQ(intnum))
-                DOSVM_PrepareIRQ( context, TRUE );
 
             DOSVM_BuildCallFrame( context,
                                   DOSVM_IntProcRelay,
@@ -379,9 +328,6 @@ void DOSVM_HardwareInterruptPM( CONTEXT *context, BYTE intnum )
             
             TRACE( "invoking hooked interrupt %02x at %04x:%08x\n",
                    intnum, addr.selector, addr.offset );
-            
-            if (DOSVM_IsIRQ(intnum))
-                DOSVM_PrepareIRQ( context, FALSE );
 
             /* Push the flags and return address on the stack */
             stack = CTX_SEG_OFF_TO_LIN(context, context->SegSs, context->Esp);
@@ -407,8 +353,6 @@ void DOSVM_HardwareInterruptPM( CONTEXT *context, BYTE intnum )
 
             if (intnum == 0x25 || intnum == 0x26)
                 DOSVM_PushFlags( context, FALSE, FALSE );
-            else if (DOSVM_IsIRQ(intnum))
-                DOSVM_PrepareIRQ( context, TRUE );
 
             DOSVM_BuildCallFrame( context, 
                                   DOSVM_IntProcRelay,
@@ -420,9 +364,6 @@ void DOSVM_HardwareInterruptPM( CONTEXT *context, BYTE intnum )
             TRACE( "invoking hooked interrupt %02x at %04x:%04x\n", 
                    intnum, SELECTOROF(addr), OFFSETOF(addr) );
 
-            if (DOSVM_IsIRQ(intnum))
-                DOSVM_PrepareIRQ( context, FALSE );
-
             /* Push the flags and return address on the stack */
             PUSH_WORD16( context, LOWORD(context->EFlags) );
             PUSH_WORD16( context, context->SegCs );
@@ -433,118 +374,6 @@ void DOSVM_HardwareInterruptPM( CONTEXT *context, BYTE intnum )
             context->Eip = LOWORD(addr);
         }
     }
-}
-
-
-/**********************************************************************
- *         DOSVM_EmulateInterruptRM
- *
- * Emulate software interrupt in real mode.
- * Called from VM86 emulation when intXX opcode is executed. 
- *
- * Either calls directly builtin handler or pushes interrupt frame to 
- * stack and changes instruction pointer to interrupt handler.
- *
- * Returns FALSE if this interrupt was caused by return 
- * from real mode wrapper.
- */
-BOOL DOSVM_EmulateInterruptRM( CONTEXT *context, BYTE intnum )
-{
-    TRACE_(relay)("\1Call DOS int 0x%02x ret=%04x:%08x\n"
-                  "  eax=%08x ebx=%08x ecx=%08x edx=%08x\n"
-                  "  esi=%08x edi=%08x ebp=%08x esp=%08x\n"
-                  "  ds=%04x es=%04x fs=%04x gs=%04x ss=%04x flags=%08x\n",
-                  intnum, context->SegCs, context->Eip,
-                  context->Eax, context->Ebx, context->Ecx, context->Edx,
-                  context->Esi, context->Edi, context->Ebp, context->Esp,
-                  context->SegDs, context->SegEs, context->SegFs, context->SegGs,
-                  context->SegSs, context->EFlags );
-
-    /* check for our real-mode hooks */
-    if (intnum == 0x31)
-    {
-        /* is this exit from real-mode wrapper */
-        if (context->SegCs == DOSVM_dpmi_segments->wrap_seg)
-            return FALSE;
-
-        if (DOSVM_CheckWrappers( context ))
-            return TRUE;
-    }
-
-    /* check if the call is from our fake BIOS interrupt stubs */
-    if (context->SegCs==0xf000)
-    {
-        /* Restore original flags stored into the stack by the caller. */
-        WORD *stack = CTX_SEG_OFF_TO_LIN(context, 
-                                         context->SegSs, context->Esp);
-        context->EFlags = (DWORD)MAKELONG( stack[2], HIWORD(context->EFlags) );
-
-        if (intnum != context->Eip / DOSVM_STUB_RM)
-            WARN( "interrupt stub has been modified "
-                  "(interrupt is %02x, interrupt stub is %02x)\n",
-                  intnum, context->Eip/DOSVM_STUB_RM );
-
-        TRACE( "builtin interrupt %02x has been branched to\n", intnum );
-        
-        DOSVM_CallBuiltinHandler( context, intnum );
-
-        /* Real mode stubs use IRET so we must put flags back into stack. */
-        stack[2] = LOWORD(context->EFlags);
-    }
-    else
-    {
-        DOSVM_HardwareInterruptRM( context, intnum );
-    }
-
-    return TRUE;
-}
-
-
-/**********************************************************************
- *         DOSVM_HardwareInterruptRM
- *
- * Emulate call to interrupt handler in real mode.
- *
- * Either calls directly builtin handler or pushes interrupt frame to 
- * stack and changes instruction pointer to interrupt handler.
- */
-void DOSVM_HardwareInterruptRM( CONTEXT *context, BYTE intnum )
-{
-     FARPROC16 handler = DOSVM_GetRMHandler( intnum );
-
-     /* check if the call goes to an unhooked interrupt */
-     if (SELECTOROF(handler) == 0xf000) 
-     {
-         /* if so, call it directly */
-         TRACE( "builtin interrupt %02x has been invoked "
-                "(through vector %02x)\n", 
-                OFFSETOF(handler)/DOSVM_STUB_RM, intnum );
-         DOSVM_CallBuiltinHandler( context, OFFSETOF(handler)/DOSVM_STUB_RM );
-     }
-     else 
-     {
-         /* the interrupt is hooked, simulate interrupt in DOS space */ 
-         WORD  flag  = LOWORD( context->EFlags );
-
-         TRACE( "invoking hooked interrupt %02x at %04x:%04x\n", 
-                intnum, SELECTOROF(handler), OFFSETOF(handler) );
-
-         /* Copy virtual interrupt flag to pushed interrupt flag. */
-         if (context->EFlags & VIF_MASK)
-             flag |= IF_MASK;
-         else 
-             flag &= ~IF_MASK;
-
-         PUSH_WORD16( context, flag );
-         PUSH_WORD16( context, context->SegCs );
-         PUSH_WORD16( context, LOWORD( context->Eip ));
-         
-         context->SegCs = SELECTOROF( handler );
-         context->Eip   = OFFSETOF( handler );
-
-         /* Clear virtual interrupt flag and trap flag. */
-         context->EFlags &= ~(VIF_MASK | TF_MASK);
-     }
 }
 
 
@@ -963,24 +792,7 @@ static void WINAPI DOSVM_Int1aHandler( CONTEXT *context )
  */
 static void WINAPI DOSVM_Int20Handler( CONTEXT *context )
 {
-    if (DOSVM_IsWin16())
-        DOSVM_Exit( 0 );
-    else if(ISV86(context))
-        MZ_Exit( context, TRUE, 0 );
-    else
-        ERR( "Called from DOS protected mode\n" );
-}
-
-
-/**********************************************************************
- *	    DOSVM_Int29Handler
- *
- * Handler for int 29h (fast console output)
- */
-static void WINAPI DOSVM_Int29Handler( CONTEXT *context )
-{
-   /* Yes, it seems that this is really all this interrupt does. */
-   DOSVM_PutChar(AL_reg(context));
+    DOSVM_Exit( 0 );
 }
 
 
