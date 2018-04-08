@@ -22,6 +22,8 @@
 #include <windef.h>
 #include <winuser.h>
 
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
 #ifndef MAX_AVISTREAMS
 #define MAX_AVISTREAMS 8
 #endif
@@ -66,5 +68,6 @@ extern PGETFRAME AVIFILE_CreateGetFrame(PAVISTREAM pstream) DECLSPEC_HIDDEN;
 extern PAVIFILE  AVIFILE_CreateAVITempFile(int nStreams, const PAVISTREAM *ppStreams) DECLSPEC_HIDDEN;
 
 extern LPCWSTR  AVIFILE_BasenameW(LPCWSTR szFileName) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI avifil32_DllGetClassObject(REFCLSID pclsid, REFIID piid, LPVOID *ppv) DECLSPEC_HIDDEN;
 
 #endif

@@ -91,6 +91,9 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         return WINED3DERR_INVALIDCALL;
     }
 
+    if (!size)
+        ERR("Attempting to create a zero-sized resource.\n");
+
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
         if (resource_types[i].type != type
@@ -188,17 +191,10 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource->resource_ops = resource_ops;
     resource->map_binding = WINED3D_LOCATION_SYSMEM;
 
-    if (size)
+    if (!wined3d_resource_allocate_sysmem(resource))
     {
-        if (!wined3d_resource_allocate_sysmem(resource))
-        {
-            ERR("Failed to allocate system memory.\n");
-            return E_OUTOFMEMORY;
-        }
-    }
-    else
-    {
-        resource->heap_memory = NULL;
+        ERR("Failed to allocate system memory.\n");
+        return E_OUTOFMEMORY;
     }
 
     if (!(usage & WINED3DUSAGE_PRIVATE))
@@ -226,7 +222,7 @@ static void wined3d_resource_destroy_object(void *object)
     struct wined3d_resource *resource = object;
 
     wined3d_resource_free_sysmem(resource);
-    context_resource_released(resource->device, resource, resource->type);
+    context_resource_released(resource->device, resource);
     wined3d_resource_release(resource);
 }
 

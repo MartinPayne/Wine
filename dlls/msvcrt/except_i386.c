@@ -400,7 +400,8 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
 
 /* find and call the appropriate catch block for an exception */
 /* returns the address to continue execution to after the catch block was called */
-static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame *frame,
+static inline void call_catch_block( PEXCEPTION_RECORD rec, CONTEXT *context,
+                                     cxx_exception_frame *frame,
                                      const cxx_function_descr *descr, int nested_trylevel,
                                      EXCEPTION_REGISTRATION_RECORD *catch_frame,
                                      cxx_exception_type *info )
@@ -411,8 +412,9 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
     struct catch_func_nested_frame nested_frame;
     int trylevel = frame->trylevel;
     DWORD save_esp = ((DWORD*)frame)[-1];
-    thread_data_t *data;
+    thread_data_t *data = msvcrt_get_thread_data();
 
+    data->processing_throw++;
     for (i = 0; i < descr->tryblock_count; i++)
     {
         const tryblock_info *tryblock = &descr->tryblock[i];
@@ -455,9 +457,11 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
             cxx_local_unwind( frame, descr, tryblock->start_level );
             frame->trylevel = tryblock->end_level + 1;
 
-            data = msvcrt_get_thread_data();
             nested_frame.frame_info.rec = data->exc_record;
+            nested_frame.frame_info.context = data->ctx_record;
             data->exc_record = rec;
+            data->ctx_record = context;
+            data->processing_throw--;
 
             /* call the catch block */
             TRACE( "calling catch block %p addr %p ebp %p\n",
@@ -480,6 +484,7 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
             continue_after_catch( frame, addr );
         }
     }
+    data->processing_throw--;
 }
 
 /*********************************************************************
@@ -552,7 +557,7 @@ static LONG CALLBACK se_translation_filter( EXCEPTION_POINTERS *ep, void *c )
     }
 
     exc_type = (cxx_exception_type *)rec->ExceptionInformation[2];
-    call_catch_block( rec, ctx->frame, ctx->descr,
+    call_catch_block( rec, ep->ContextRecord, ctx->frame, ctx->descr,
             ctx->frame->trylevel, ctx->nested_frame, exc_type );
 
     __DestructExceptionObject( rec );
@@ -649,7 +654,8 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
         }
     }
 
-    call_catch_block( rec, frame, descr, frame->trylevel, nested_frame, exc_type );
+    call_catch_block( rec, context, frame, descr,
+            frame->trylevel, nested_frame, exc_type );
     return ExceptionContinueSearch;
 }
 

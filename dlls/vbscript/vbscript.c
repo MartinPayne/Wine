@@ -96,6 +96,38 @@ static void exec_queued_code(script_ctx_t *ctx)
     }
 }
 
+IDispatch *lookup_named_item(script_ctx_t *ctx, const WCHAR *name, unsigned flags)
+{
+    named_item_t *item;
+    HRESULT hres;
+
+    LIST_FOR_EACH_ENTRY(item, &ctx->named_items, named_item_t, entry) {
+        if((item->flags & flags) == flags && !strcmpiW(item->name, name)) {
+            if(!item->disp) {
+                IUnknown *unk;
+
+                hres = IActiveScriptSite_GetItemInfo(ctx->site, item->name,
+                                                     SCRIPTINFO_IUNKNOWN, &unk, NULL);
+                if(FAILED(hres)) {
+                    WARN("GetItemInfo failed: %08x\n", hres);
+                    continue;
+                }
+
+                hres = IUnknown_QueryInterface(unk, &IID_IDispatch, (void**)&item->disp);
+                IUnknown_Release(unk);
+                if(FAILED(hres)) {
+                    WARN("object does not implement IDispatch\n");
+                    continue;
+                }
+            }
+
+            return item->disp;
+        }
+    }
+
+    return NULL;
+}
+
 static HRESULT set_ctx_site(VBScript *This)
 {
     HRESULT hres;
@@ -604,6 +636,7 @@ static HRESULT WINAPI VBScriptParse_ParseScriptText(IActiveScriptParse *iface,
         DWORD dwFlags, VARIANT *pvarResult, EXCEPINFO *pexcepinfo)
 {
     VBScript *This = impl_from_IActiveScriptParse(iface);
+    IDispatch *context = NULL;
     vbscode_t *code;
     HRESULT hres;
 
@@ -614,9 +647,20 @@ static HRESULT WINAPI VBScriptParse_ParseScriptText(IActiveScriptParse *iface,
     if(This->thread_id != GetCurrentThreadId() || This->state == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
 
+    if(pstrItemName) {
+        context = lookup_named_item(This->ctx, pstrItemName, 0);
+        if(!context) {
+            WARN("Inknown context %s\n", debugstr_w(pstrItemName));
+            return E_INVALIDARG;
+        }
+    }
+
     hres = compile_script(This->ctx, pstrCode, pstrDelimiter, &code);
     if(FAILED(hres))
         return hres;
+
+    if(context)
+        IDispatch_AddRef(code->context = context);
 
     if(!is_started(This)) {
         code->pending_exec = TRUE;

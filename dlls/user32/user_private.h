@@ -32,6 +32,8 @@
 #define GET_WORD(ptr)  (*(const WORD *)(ptr))
 #define GET_DWORD(ptr) (*(const DWORD *)(ptr))
 
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
 #define WM_SYSTIMER	    0x0118
 #define WM_POPUPSYSTEMMENU  0x0313
 
@@ -269,7 +271,8 @@ extern INT_PTR WINPROC_CallDlgProcW( DLGPROC func, HWND hwnd, UINT msg, WPARAM w
 extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                  LRESULT *result, BOOL unicode, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
 
-extern const WCHAR *CLASS_GetVersionedName(const WCHAR *classname, UINT *basename_offset) DECLSPEC_HIDDEN;
+extern const WCHAR *CLASS_GetVersionedName(const WCHAR *classname, UINT *basename_offset,
+        BOOL register_class) DECLSPEC_HIDDEN;
 
 /* message spy definitions */
 

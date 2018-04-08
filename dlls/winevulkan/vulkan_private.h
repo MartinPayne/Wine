@@ -20,6 +20,11 @@
 #ifndef __WINE_VULKAN_PRIVATE_H
 #define __WINE_VULKAN_PRIVATE_H
 
+/* Perform vulkan struct conversion on 32-bit x86 platforms. */
+#if defined(__i386__)
+#define USE_STRUCT_CONVERSION
+#endif
+
 #include "vulkan_thunks.h"
 
 /* Magic value defined by Vulkan ICD / Loader spec */
@@ -28,6 +33,8 @@
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #endif
+
+#define WINEVULKAN_QUIRK_GET_DEVICE_PROC_ADDR 0x00000001
 
 struct vulkan_func
 {
@@ -65,6 +72,8 @@ struct VkDevice_T
     struct VkQueue_T **queues;
 
     VkDevice device; /* native device */
+
+    unsigned int quirks;
 };
 
 struct VkInstance_T
@@ -79,6 +88,8 @@ struct VkInstance_T
     struct VkPhysicalDevice_T **phys_devs;
 
     VkInstance instance; /* native instance */
+
+    unsigned int quirks;
 };
 
 struct VkPhysicalDevice_T
@@ -86,8 +97,8 @@ struct VkPhysicalDevice_T
     struct wine_vk_base base;
     struct VkInstance_T *instance; /* parent */
 
-    uint32_t num_properties;
-    VkExtensionProperties *properties;
+    uint32_t extension_count;
+    VkExtensionProperties *extensions;
 
     VkPhysicalDevice phys_dev; /* native physical device */
 };
@@ -98,5 +109,11 @@ struct VkQueue_T
     VkDevice device; /* parent */
     VkQueue queue; /* native queue */
 };
+
+void *wine_vk_get_device_proc_addr(const char *name) DECLSPEC_HIDDEN;
+void *wine_vk_get_instance_proc_addr(const char *name) DECLSPEC_HIDDEN;
+
+BOOL wine_vk_device_extension_supported(const char *name) DECLSPEC_HIDDEN;
+BOOL wine_vk_instance_extension_supported(const char *name) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_VULKAN_PRIVATE_H */

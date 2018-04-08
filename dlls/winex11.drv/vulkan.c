@@ -37,9 +37,9 @@
 #include "wine/vulkan.h"
 #include "wine/vulkan_driver.h"
 
-#ifdef SONAME_LIBVULKAN
-
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
+
+#ifdef SONAME_LIBVULKAN
 
 typedef VkFlags VkXlibSurfaceCreateFlagsKHR;
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
@@ -77,50 +77,12 @@ static VkBool32 (*pvkGetPhysicalDeviceXlibPresentationSupportKHR)(VkPhysicalDevi
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 
-static struct VkExtensionProperties *winex11_vk_instance_extensions = NULL;
-static unsigned int winex11_vk_instance_extensions_count = 0;
+static void *X11DRV_get_vk_device_proc_addr(const char *name);
+static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name);
 
-static void wine_vk_load_instance_extensions(void)
+static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
-    uint32_t num_properties;
-    VkExtensionProperties *properties;
-    unsigned int i;
-
-    pvkEnumerateInstanceExtensionProperties(NULL, &num_properties, NULL);
-
-    properties = heap_calloc(num_properties, sizeof(*properties));
-    if (!properties)
-        return;
-
-    /* We will return the same number of instance extensions reported by the host back to
-     * winevulkan. Along the way we may replace xlib extensions with their win32 equivalents.
-     * Winevulkan will perform more detailed filtering as it knows whether it has thunks
-     * for a particular extension.
-     */
-    pvkEnumerateInstanceExtensionProperties(NULL, &num_properties, properties);
-    for (i = 0; i < num_properties; i++)
-    {
-        /* For now the only x11 extension we need to fixup. Long-term we may need an array. */
-        if (!strcmp(properties[i].extensionName, "VK_KHR_xlib_surface"))
-        {
-            TRACE("Substituting VK_KHR_xlib_surface for VK_KHR_win32_surface\n");
-
-            memset(properties[i].extensionName, 0, sizeof(properties[i].extensionName));
-            snprintf(properties[i].extensionName, sizeof(properties[i].extensionName), "VK_KHR_win32_surface");
-            properties[i].specVersion = 6; /* Revision as of 4/24/2017 */
-        }
-
-        TRACE("Loaded extension: %s\n", properties[i].extensionName);
-    }
-
-    winex11_vk_instance_extensions = properties;
-    winex11_vk_instance_extensions_count = num_properties;
-}
-
-/* Helper function to convert VkSurfaceKHR (uint64_t) to a surface pointer. */
-static inline struct wine_vk_surface * surface_from_handle(VkSurfaceKHR handle)
-{
-    return ((struct wine_vk_surface *)(uintptr_t)handle);
+    return (struct wine_vk_surface *)(uintptr_t)handle;
 }
 
 static BOOL wine_vk_init(void)
@@ -131,29 +93,31 @@ static BOOL wine_vk_init(void)
     if (init_done) return (vulkan_handle != NULL);
     init_done = TRUE;
 
-    if (!(vulkan_handle = wine_dlopen(SONAME_LIBVULKAN, RTLD_NOW, NULL, 0))) return FALSE;
+    if (!(vulkan_handle = wine_dlopen(SONAME_LIBVULKAN, RTLD_NOW, NULL, 0)))
+    {
+        ERR("Failed to load %s\n", SONAME_LIBVULKAN);
+        return FALSE;
+    }
 
-#define LOAD_FUNCPTR(f) if((p##f = wine_dlsym(vulkan_handle, #f, NULL, 0)) == NULL) return FALSE;
-LOAD_FUNCPTR(vkAcquireNextImageKHR)
-LOAD_FUNCPTR(vkCreateInstance)
-LOAD_FUNCPTR(vkCreateSwapchainKHR)
-LOAD_FUNCPTR(vkCreateXlibSurfaceKHR)
-LOAD_FUNCPTR(vkDestroyInstance)
-LOAD_FUNCPTR(vkDestroySurfaceKHR)
-LOAD_FUNCPTR(vkDestroySwapchainKHR)
-LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties)
-LOAD_FUNCPTR(vkGetDeviceProcAddr)
-LOAD_FUNCPTR(vkGetInstanceProcAddr)
-LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
-LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceFormatsKHR)
-LOAD_FUNCPTR(vkGetPhysicalDeviceSurfacePresentModesKHR)
-LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceSupportKHR)
-LOAD_FUNCPTR(vkGetPhysicalDeviceXlibPresentationSupportKHR)
-LOAD_FUNCPTR(vkGetSwapchainImagesKHR)
-LOAD_FUNCPTR(vkQueuePresentKHR)
+#define LOAD_FUNCPTR(f) if ((p##f = wine_dlsym(vulkan_handle, #f, NULL, 0)) == NULL) return FALSE;
+    LOAD_FUNCPTR(vkAcquireNextImageKHR)
+    LOAD_FUNCPTR(vkCreateInstance)
+    LOAD_FUNCPTR(vkCreateSwapchainKHR)
+    LOAD_FUNCPTR(vkCreateXlibSurfaceKHR)
+    LOAD_FUNCPTR(vkDestroyInstance)
+    LOAD_FUNCPTR(vkDestroySurfaceKHR)
+    LOAD_FUNCPTR(vkDestroySwapchainKHR)
+    LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties)
+    LOAD_FUNCPTR(vkGetDeviceProcAddr)
+    LOAD_FUNCPTR(vkGetInstanceProcAddr)
+    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceFormatsKHR)
+    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfacePresentModesKHR)
+    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceSupportKHR)
+    LOAD_FUNCPTR(vkGetPhysicalDeviceXlibPresentationSupportKHR)
+    LOAD_FUNCPTR(vkGetSwapchainImagesKHR)
+    LOAD_FUNCPTR(vkQueuePresentKHR)
 #undef LOAD_FUNCPTR
-
-    wine_vk_load_instance_extensions();
 
     return TRUE;
 }
@@ -368,8 +332,8 @@ static void X11DRV_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapcha
 static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_name,
         uint32_t *count, VkExtensionProperties* properties)
 {
+    unsigned int i;
     VkResult res;
-    unsigned int i, num_copies;
 
     TRACE("layer_name %p, count %p, properties %p\n", debugstr_a(layer_name), count, properties);
 
@@ -380,50 +344,52 @@ static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
 
-    if (!properties)
+    /* We will return the same number of instance extensions reported by the host back to
+     * winevulkan. Along the way we may replace xlib extensions with their win32 equivalents.
+     * Winevulkan will perform more detailed filtering as it knows whether it has thunks
+     * for a particular extension.
+     */
+    res = pvkEnumerateInstanceExtensionProperties(layer_name, count, properties);
+    if (!properties || res < 0)
+        return res;
+
+    for (i = 0; i < *count; i++)
     {
-        /* When properties is NULL, we need to return the number of extensions
-         * supported. For now report 0 until we add some e.g.
-         * VK_KHR_win32_surface. Long-term this needs to be an intersection
-         * between what the native library supports and what thunks we have.
-         */
-        *count = winex11_vk_instance_extensions_count;
-        return VK_SUCCESS;
+        /* For now the only x11 extension we need to fixup. Long-term we may need an array. */
+        if (!strcmp(properties[i].extensionName, "VK_KHR_xlib_surface"))
+        {
+            TRACE("Substituting VK_KHR_xlib_surface for VK_KHR_win32_surface\n");
+
+            snprintf(properties[i].extensionName, sizeof(properties[i].extensionName), "VK_KHR_win32_surface");
+            properties[i].specVersion = 6; /* Revision as of 4/24/2017 */
+        }
     }
 
-    if (*count < winex11_vk_instance_extensions_count)
-    {
-        /* Incomplete is a type of success used to signal the application
-         * that not all devices got copied.
-         */
-        num_copies = *count;
-        res = VK_INCOMPLETE;
-    }
-    else
-    {
-        num_copies = winex11_vk_instance_extensions_count;
-        res = VK_SUCCESS;
-    }
-
-    for (i = 0; i < num_copies; i++)
-    {
-        memcpy(&properties[i], &winex11_vk_instance_extensions[i], sizeof(*properties));
-    }
-    *count = num_copies;
-
-    TRACE("Result %d, extensions copied %u\n", res, num_copies);
+    TRACE("Returning %u extensions.\n", *count);
     return res;
 }
 
-static void * X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
+static void *X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
 {
+    void *proc_addr;
+
     TRACE("%p, %s\n", device, debugstr_a(name));
+
+    if ((proc_addr = X11DRV_get_vk_device_proc_addr(name)))
+        return proc_addr;
+
     return pvkGetDeviceProcAddr(device, name);
 }
 
-static void * X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
+static void *X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 {
+    void *proc_addr;
+
     TRACE("%p, %s\n", instance, debugstr_a(name));
+
+    if ((proc_addr = X11DRV_get_vk_instance_proc_addr(instance, name)))
+        return proc_addr;
+
     return pvkGetInstanceProcAddr(instance, name);
 }
 
@@ -493,7 +459,6 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
     return pvkQueuePresentKHR(queue, present_info);
 }
 
-
 static const struct vulkan_funcs vulkan_funcs =
 {
     X11DRV_vkAcquireNextImageKHR,
@@ -512,8 +477,82 @@ static const struct vulkan_funcs vulkan_funcs =
     X11DRV_vkGetPhysicalDeviceSurfaceSupportKHR,
     X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     X11DRV_vkGetSwapchainImagesKHR,
-    X11DRV_vkQueuePresentKHR
+    X11DRV_vkQueuePresentKHR,
 };
+
+static void *get_vulkan_driver_device_proc_addr(const struct vulkan_funcs *vulkan_funcs,
+        const char *name)
+{
+    if (!name || name[0] != 'v' || name[1] != 'k')
+        return NULL;
+
+    name += 2;
+
+    if (!strcmp(name, "AcquireNextImageKHR"))
+        return vulkan_funcs->p_vkAcquireNextImageKHR;
+    if (!strcmp(name, "CreateSwapchainKHR"))
+        return vulkan_funcs->p_vkCreateSwapchainKHR;
+    if (!strcmp(name, "DestroySwapchainKHR"))
+        return vulkan_funcs->p_vkDestroySwapchainKHR;
+    if (!strcmp(name, "GetDeviceProcAddr"))
+        return vulkan_funcs->p_vkGetDeviceProcAddr;
+    if (!strcmp(name, "GetSwapchainImagesKHR"))
+        return vulkan_funcs->p_vkGetSwapchainImagesKHR;
+    if (!strcmp(name, "QueuePresentKHR"))
+        return vulkan_funcs->p_vkQueuePresentKHR;
+
+    return NULL;
+}
+
+static void *X11DRV_get_vk_device_proc_addr(const char *name)
+{
+    return get_vulkan_driver_device_proc_addr(&vulkan_funcs, name);
+}
+
+static void *get_vulkan_driver_instance_proc_addr(const struct vulkan_funcs *vulkan_funcs,
+        VkInstance instance, const char *name)
+{
+    if (!name || name[0] != 'v' || name[1] != 'k')
+        return NULL;
+
+    name += 2;
+
+    if (!strcmp(name, "CreateInstance"))
+        return vulkan_funcs->p_vkCreateInstance;
+    if (!strcmp(name, "EnumerateInstanceExtensionProperties"))
+        return vulkan_funcs->p_vkEnumerateInstanceExtensionProperties;
+
+    if (!instance)
+        return NULL;
+
+    if (!strcmp(name, "CreateWin32SurfaceKHR"))
+        return vulkan_funcs->p_vkCreateWin32SurfaceKHR;
+    if (!strcmp(name, "DestroyInstance"))
+        return vulkan_funcs->p_vkDestroyInstance;
+    if (!strcmp(name, "DestroySurfaceKHR"))
+        return vulkan_funcs->p_vkDestroySurfaceKHR;
+    if (!strcmp(name, "GetInstanceProcAddr"))
+        return vulkan_funcs->p_vkGetInstanceProcAddr;
+    if (!strcmp(name, "GetPhysicalDeviceSurfaceCapabilitiesKHR"))
+        return vulkan_funcs->p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
+    if (!strcmp(name, "GetPhysicalDeviceSurfaceFormatsKHR"))
+        return vulkan_funcs->p_vkGetPhysicalDeviceSurfaceFormatsKHR;
+    if (!strcmp(name, "GetPhysicalDeviceSurfacePresentModesKHR"))
+        return vulkan_funcs->p_vkGetPhysicalDeviceSurfacePresentModesKHR;
+    if (!strcmp(name, "GetPhysicalDeviceSurfaceSupportKHR"))
+        return vulkan_funcs->p_vkGetPhysicalDeviceSurfaceSupportKHR;
+    if (!strcmp(name, "GetPhysicalDeviceWin32PresentationSupportKHR"))
+        return vulkan_funcs->p_vkGetPhysicalDeviceWin32PresentationSupportKHR;
+
+    name -= 2;
+
+    return get_vulkan_driver_device_proc_addr(vulkan_funcs, name);
+}
+
+static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name)
+{
+    return get_vulkan_driver_instance_proc_addr(&vulkan_funcs, instance, name);
+}
 
 const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {
@@ -533,6 +572,7 @@ const struct vulkan_funcs *get_vulkan_driver(UINT version)
 
 const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {
+    ERR("Wine was built without Vulkan support.\n");
     return NULL;
 }
 

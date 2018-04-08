@@ -2306,6 +2306,36 @@ void WINAPI ObfDereferenceObject( void *obj )
     ObDereferenceObject( obj );
 }
 
+/***********************************************************************
+ *           ObRegisterCallbacks (NTOSKRNL.EXE.@)
+ */
+NTSTATUS WINAPI ObRegisterCallbacks(POB_CALLBACK_REGISTRATION *callBack, void **handle)
+{
+    FIXME( "stub: %p %p\n", callBack, handle );
+
+    if(handle)
+        *handle = UlongToHandle(0xdeadbeaf);
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *           ObUnRegisterCallbacks (NTOSKRNL.EXE.@)
+ */
+void WINAPI ObUnRegisterCallbacks(void *handle)
+{
+    FIXME( "stub: %p\n", handle );
+}
+
+/***********************************************************************
+ *           ObGetFilterVersion (NTOSKRNL.EXE.@)
+ */
+USHORT WINAPI ObGetFilterVersion(void)
+{
+    FIXME( "stub:\n" );
+
+    return OB_FLT_REGISTRATION_VERSION;
+}
 
 /***********************************************************************
  *           IoGetAttachedDeviceReference   (NTOSKRNL.EXE.@)
@@ -3291,3 +3321,85 @@ PKEVENT WINAPI IoCreateNotificationEvent(UNICODE_STRING *name, HANDLE *handle)
     FIXME( "stub: %s %p\n", debugstr_us(name), handle );
     return NULL;
 }
+
+
+/*********************************************************************
+ *                  memcpy   (NTOSKRNL.@)
+ *
+ * NOTES
+ *  Behaves like memmove.
+ */
+void * __cdecl NTOSKRNL_memcpy( void *dst, const void *src, size_t n )
+{
+    return memmove( dst, src, n );
+}
+
+/*********************************************************************
+ *                  memset   (NTOSKRNL.@)
+ */
+void * __cdecl NTOSKRNL_memset( void *dst, int c, size_t n )
+{
+    return memset( dst, c, n );
+}
+
+/*********************************************************************
+ *                  _stricmp   (NTOSKRNL.@)
+ */
+int __cdecl NTOSKRNL__stricmp( LPCSTR str1, LPCSTR str2 )
+{
+    return strcasecmp( str1, str2 );
+}
+
+/*********************************************************************
+ *                  _strnicmp   (NTOSKRNL.@)
+ */
+int __cdecl NTOSKRNL__strnicmp( LPCSTR str1, LPCSTR str2, size_t n )
+{
+    return strncasecmp( str1, str2, n );
+}
+
+/*********************************************************************
+ *           _wcsnicmp    (NTOSKRNL.@)
+ */
+INT __cdecl NTOSKRNL__wcsnicmp( LPCWSTR str1, LPCWSTR str2, INT n )
+{
+    return strncmpiW( str1, str2, n );
+}
+
+/*********************************************************************
+ *           wcsncmp    (NTOSKRNL.@)
+ */
+INT __cdecl NTOSKRNL_wcsncmp( LPCWSTR str1, LPCWSTR str2, INT n )
+{
+    return strncmpW( str1, str2, n );
+}
+
+
+#ifdef __x86_64__
+/**************************************************************************
+ *		__chkstk (NTOSKRNL.@)
+ *
+ * Supposed to touch all the stack pages, but we shouldn't need that.
+ */
+__ASM_GLOBAL_FUNC( __chkstk, "ret" );
+
+#elif defined(__i386__)
+/**************************************************************************
+ *           _chkstk   (NTOSKRNL.@)
+ */
+__ASM_STDCALL_FUNC( _chkstk, 0,
+                   "negl %eax\n\t"
+                   "addl %esp,%eax\n\t"
+                   "xchgl %esp,%eax\n\t"
+                   "movl 0(%eax),%eax\n\t"  /* copy return address from old location */
+                   "movl %eax,0(%esp)\n\t"
+                   "ret" )
+#elif defined(__arm__)
+/**************************************************************************
+ *		__chkstk (NTDLL.@)
+ *
+ * Incoming r4 contains words to allocate, converting to bytes then return
+ */
+__ASM_GLOBAL_FUNC( __chkstk, "lsl r4, r4, #2\n\t"
+                             "bx lr" )
+#endif

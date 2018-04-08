@@ -457,9 +457,8 @@ void device_clear_render_targets(struct wined3d_device *device, UINT rt_count, c
         }
     }
 
-    if (wined3d_settings.strict_draw_ordering || (flags & WINED3DCLEAR_TARGET
-            && target->swapchain && target->swapchain->front_buffer == target))
-        gl_info->gl_ops.gl.p_glFlush(); /* Flush to ensure ordering across contexts. */
+    if (flags & WINED3DCLEAR_TARGET && target->swapchain && target->swapchain->front_buffer == target)
+        gl_info->gl_ops.gl.p_glFlush();
 
     context_release(context);
 }
@@ -1078,7 +1077,7 @@ HRESULT CDECL wined3d_device_init_3d(struct wined3d_device *device,
         goto err_out;
     }
 
-    if (swapchain_desc->backbuffer_count)
+    if (swapchain_desc->backbuffer_count && swapchain_desc->backbuffer_usage & WINED3DUSAGE_RENDERTARGET)
     {
         struct wined3d_resource *back_buffer = &swapchain->back_buffers[0]->resource;
         struct wined3d_view_desc view_desc;
@@ -1114,7 +1113,7 @@ HRESULT CDECL wined3d_device_init_3d(struct wined3d_device *device,
     TRACE("All defaults now set up.\n");
 
     /* Clear the screen */
-    if (swapchain->back_buffers && swapchain->back_buffers[0])
+    if (device->back_buffer_view)
         clear_flags |= WINED3DCLEAR_TARGET;
     if (swapchain_desc->enable_auto_depth_stencil)
         clear_flags |= WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL;
@@ -3821,12 +3820,9 @@ HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
     level_count = min(src_level_count, dst_level_count);
 
     src_size = max(src_texture->resource.width, src_texture->resource.height);
+    src_size = max(src_size, src_texture->resource.depth);
     dst_size = max(dst_texture->resource.width, dst_texture->resource.height);
-    if (type == WINED3D_RTYPE_TEXTURE_3D)
-    {
-        src_size = max(src_size, src_texture->resource.depth);
-        dst_size = max(dst_size, dst_texture->resource.depth);
-    }
+    dst_size = max(dst_size, dst_texture->resource.depth);
     while (src_size > dst_size)
     {
         src_size >>= 1;
@@ -4162,7 +4158,7 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
 
         wined3d_box_set(&dst_box, dst_x, 0, dst_x + (src_box->right - src_box->left), 1, 0, 1);
     }
-    else if (dst_resource->type == WINED3D_RTYPE_TEXTURE_2D)
+    else
     {
         struct wined3d_texture *dst_texture = texture_from_resource(dst_resource);
         struct wined3d_texture *src_texture = texture_from_resource(src_resource);
@@ -4194,16 +4190,18 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
 
         if (!src_box)
         {
-            unsigned int src_w, src_h, dst_w, dst_h, dst_level;
+            unsigned int src_w, src_h, src_d, dst_w, dst_h, dst_d, dst_level;
 
             src_w = wined3d_texture_get_level_width(src_texture, src_level);
             src_h = wined3d_texture_get_level_height(src_texture, src_level);
+            src_d = wined3d_texture_get_level_depth(src_texture, src_level);
 
             dst_level = dst_sub_resource_idx % dst_texture->level_count;
             dst_w = wined3d_texture_get_level_width(dst_texture, dst_level) - dst_x;
             dst_h = wined3d_texture_get_level_height(dst_texture, dst_level) - dst_y;
+            dst_d = wined3d_texture_get_level_depth(dst_texture, dst_level) - dst_z;
 
-            wined3d_box_set(&b, 0, 0, min(src_w, dst_w), min(src_h, dst_h), 0, 1);
+            wined3d_box_set(&b, 0, 0, min(src_w, dst_w), min(src_h, dst_h), 0, min(src_d, dst_d));
             src_box = &b;
         }
         else if (FAILED(wined3d_texture_check_box_dimensions(src_texture, src_level, src_box)))
@@ -4213,18 +4211,13 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
         }
 
         wined3d_box_set(&dst_box, dst_x, dst_y, dst_x + (src_box->right - src_box->left),
-                dst_y + (src_box->bottom - src_box->top), 0, 1);
+                dst_y + (src_box->bottom - src_box->top), dst_z, dst_z + (src_box->back - src_box->front));
         if (FAILED(wined3d_texture_check_box_dimensions(dst_texture,
                 dst_sub_resource_idx % dst_texture->level_count, &dst_box)))
         {
             WARN("Invalid destination box %s.\n", debug_box(&dst_box));
             return WINED3DERR_INVALIDCALL;
         }
-    }
-    else
-    {
-        FIXME("Not implemented for %s resources.\n", debug_d3dresourcetype(dst_resource->type));
-        return WINED3DERR_INVALIDCALL;
     }
 
     wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, dst_sub_resource_idx, &dst_box,
@@ -4255,7 +4248,7 @@ void CDECL wined3d_device_update_sub_resource(struct wined3d_device *device, str
         height = 1;
         depth = 1;
     }
-    else if (resource->type == WINED3D_RTYPE_TEXTURE_2D || resource->type == WINED3D_RTYPE_TEXTURE_3D)
+    else
     {
         struct wined3d_texture *texture = texture_from_resource(resource);
         unsigned int level;
@@ -4270,11 +4263,6 @@ void CDECL wined3d_device_update_sub_resource(struct wined3d_device *device, str
         width = wined3d_texture_get_level_width(texture, level);
         height = wined3d_texture_get_level_height(texture, level);
         depth = wined3d_texture_get_level_depth(texture, level);
-    }
-    else
-    {
-        FIXME("Not implemented for %s resources.\n", debug_d3dresourcetype(resource->type));
-        return;
     }
 
     if (!box)
@@ -4788,10 +4776,9 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         TRACE("auto_depth_stencil_format %s\n", debug_d3dformat(swapchain_desc->auto_depth_stencil_format));
     TRACE("flags %#x\n", swapchain_desc->flags);
     TRACE("refresh_rate %u\n", swapchain_desc->refresh_rate);
-    TRACE("swap_interval %u\n", swapchain_desc->swap_interval);
     TRACE("auto_restore_display_mode %#x\n", swapchain_desc->auto_restore_display_mode);
 
-    if (swapchain_desc->backbuffer_usage != WINED3DUSAGE_RENDERTARGET)
+    if (swapchain_desc->backbuffer_usage && swapchain_desc->backbuffer_usage != WINED3DUSAGE_RENDERTARGET)
         FIXME("Got unexpected backbuffer usage %#x.\n", swapchain_desc->backbuffer_usage);
 
     if (swapchain_desc->swap_effect != WINED3D_SWAP_EFFECT_DISCARD
@@ -4805,7 +4792,6 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
     swapchain->desc.auto_depth_stencil_format = swapchain_desc->auto_depth_stencil_format;
     swapchain->desc.flags = swapchain_desc->flags;
     swapchain->desc.refresh_rate = swapchain_desc->refresh_rate;
-    swapchain->desc.swap_interval = swapchain_desc->swap_interval;
     swapchain->desc.auto_restore_display_mode = swapchain_desc->auto_restore_display_mode;
 
     if (swapchain_desc->device_window
@@ -4907,7 +4893,7 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         wined3d_rendertarget_view_decref(device->back_buffer_view);
         device->back_buffer_view = NULL;
     }
-    if (swapchain->desc.backbuffer_count)
+    if (swapchain->desc.backbuffer_count && swapchain->desc.backbuffer_usage & WINED3DUSAGE_RENDERTARGET)
     {
         struct wined3d_resource *back_buffer = &swapchain->back_buffers[0]->resource;
 
@@ -4972,7 +4958,6 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
     {
         if (reset_state)
             hr = wined3d_device_create_primary_opengl_context(device);
-        swapchain_update_swap_interval(swapchain);
     }
 
     /* All done. There is no need to reload resources or shaders, this will happen automatically on the
@@ -5074,55 +5059,49 @@ void device_resource_released(struct wined3d_device *device, struct wined3d_reso
         case WINED3D_RTYPE_TEXTURE_3D:
             for (i = 0; i < MAX_COMBINED_SAMPLERS; ++i)
             {
-                struct wined3d_texture *texture = texture_from_resource(resource);
-
-                if (device->state.textures[i] == texture)
+                if (&device->state.textures[i]->resource == resource)
                 {
-                    ERR("Texture %p is still in use, stage %u.\n", texture, i);
+                    ERR("Texture resource %p is still in use, stage %u.\n", resource, i);
                     device->state.textures[i] = NULL;
                 }
 
-                if (device->recording && device->update_state->textures[i] == texture)
+                if (device->recording && &device->update_state->textures[i]->resource == resource)
                 {
-                    ERR("Texture %p is still in use by recording stateblock %p, stage %u.\n",
-                            texture, device->recording, i);
+                    ERR("Texture resource %p is still in use by recording stateblock %p, stage %u.\n",
+                            resource, device->recording, i);
                     device->update_state->textures[i] = NULL;
                 }
             }
             break;
 
         case WINED3D_RTYPE_BUFFER:
+            for (i = 0; i < MAX_STREAMS; ++i)
             {
-                struct wined3d_buffer *buffer = buffer_from_resource(resource);
-
-                for (i = 0; i < MAX_STREAMS; ++i)
+                if (&device->state.streams[i].buffer->resource == resource)
                 {
-                    if (device->state.streams[i].buffer == buffer)
-                    {
-                        ERR("Buffer %p is still in use, stream %u.\n", buffer, i);
-                        device->state.streams[i].buffer = NULL;
-                    }
-
-                    if (device->recording && device->update_state->streams[i].buffer == buffer)
-                    {
-                        ERR("Buffer %p is still in use by stateblock %p, stream %u.\n",
-                                buffer, device->recording, i);
-                        device->update_state->streams[i].buffer = NULL;
-                    }
+                    ERR("Buffer resource %p is still in use, stream %u.\n", resource, i);
+                    device->state.streams[i].buffer = NULL;
                 }
 
-                if (device->state.index_buffer == buffer)
+                if (device->recording && &device->update_state->streams[i].buffer->resource == resource)
                 {
-                    ERR("Buffer %p is still in use as index buffer.\n", buffer);
-                    device->state.index_buffer =  NULL;
+                    ERR("Buffer resource %p is still in use by stateblock %p, stream %u.\n",
+                            resource, device->recording, i);
+                    device->update_state->streams[i].buffer = NULL;
                 }
+            }
 
-                if (device->recording && device->update_state->index_buffer == buffer)
-                {
-                    ERR("Buffer %p is still in use by stateblock %p as index buffer.\n",
-                            buffer, device->recording);
-                    device->update_state->index_buffer =  NULL;
-                }
+            if (&device->state.index_buffer->resource == resource)
+            {
+                ERR("Buffer resource %p is still in use as index buffer.\n", resource);
+                device->state.index_buffer =  NULL;
+            }
+
+            if (device->recording && &device->update_state->index_buffer->resource == resource)
+            {
+                ERR("Buffer resource %p is still in use by stateblock %p as index buffer.\n",
+                        resource, device->recording);
+                device->update_state->index_buffer =  NULL;
             }
             break;
 

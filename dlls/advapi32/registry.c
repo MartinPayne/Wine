@@ -84,9 +84,7 @@ static const WCHAR * const root_key_names[] =
     name_DYN_DATA
 };
 
-#define NB_SPECIAL_ROOT_KEYS   (sizeof(root_key_names)/sizeof(root_key_names[0]))
-
-static HKEY special_root_keys[NB_SPECIAL_ROOT_KEYS];
+static HKEY special_root_keys[ARRAY_SIZE(root_key_names)];
 static BOOL hkcu_cache_disabled;
 
 static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
@@ -2375,7 +2373,7 @@ LSTATUS WINAPI RegSaveKeyW( HKEY hkey, LPCWSTR file, LPSECURITY_ATTRIBUTES sa )
     if (!(hkey = get_special_root_hkey( hkey, 0 ))) return ERROR_INVALID_HANDLE;
 
     err = GetLastError();
-    GetFullPathNameW( file, sizeof(buffer)/sizeof(WCHAR), buffer, &nameW );
+    GetFullPathNameW( file, ARRAY_SIZE( buffer ), buffer, &nameW );
 
     for (;;)
     {
@@ -2710,7 +2708,7 @@ LSTATUS WINAPI RegConnectRegistryW( LPCWSTR lpMachineName, HKEY hKey,
     }
     else {
         WCHAR compName[MAX_COMPUTERNAME_LENGTH + 1];
-        DWORD len = sizeof(compName) / sizeof(WCHAR);
+        DWORD len = ARRAY_SIZE( compName );
 
         /* MSDN says lpMachineName must start with \\ : not so */
         if( lpMachineName[0] == '\\' &&  lpMachineName[1] == '\\')

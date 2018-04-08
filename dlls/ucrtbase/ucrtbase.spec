@@ -82,8 +82,8 @@
 @ stub __conio_common_vcwprintf_s
 @ stub __conio_common_vcwscanf
 @ cdecl -arch=i386 __control87_2(long long ptr ptr)
-@ stub __current_exception
-@ stub __current_exception_context
+@ cdecl __current_exception()
+@ cdecl __current_exception_context()
 @ cdecl __daylight() MSVCRT___p__daylight
 @ stub __dcrt_get_wide_environment_from_os
 @ stub __dcrt_initial_narrow_environment
@@ -135,7 +135,7 @@
 @ cdecl __p__wenviron() MSVCRT___p__wenviron
 @ cdecl __p__wpgmptr() MSVCRT___p__wpgmptr
 @ cdecl __pctype_func() MSVCRT___pctype_func
-@ stub __processing_throw
+@ cdecl __processing_throw()
 @ stub __pwctype_func
 @ cdecl __pxcptinfoptrs() MSVCRT___pxcptinfoptrs
 @ stub __report_gsfailure
@@ -196,9 +196,9 @@
 @ cdecl _atoflt(ptr str) MSVCRT__atoflt
 @ cdecl _atoflt_l(ptr str ptr) MSVCRT__atoflt_l
 @ cdecl -ret64 _atoi64(str) ntdll._atoi64
-@ stub _atoi64_l
+@ cdecl _atoi64_l(str ptr) MSVCRT__atoi64_l
 @ cdecl _atoi_l(str ptr) MSVCRT__atoi_l
-@ stub _atol_l
+@ cdecl _atol_l(str ptr) MSVCRT__atol_l
 @ cdecl _atoldbl(ptr str) MSVCRT__atoldbl
 @ stub _atoldbl_l
 @ cdecl -ret64 _atoll_l(str ptr) MSVCRT__atoll_l

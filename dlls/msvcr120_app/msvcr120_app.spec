@@ -882,7 +882,7 @@
 @ extern __badioinfo msvcr120.__badioinfo
 @ cdecl __clean_type_info_names_internal(ptr) msvcr120.__clean_type_info_names_internal
 @ cdecl -arch=i386 __control87_2(long long ptr ptr) msvcr120.__control87_2
-@ stub __create_locale
+@ cdecl __create_locale(long str) msvcr120.__create_locale
 @ stub -arch=win64 __crtCaptureCurrentContext
 @ stub -arch=win64 __crtCapturePreviousContext
 @ stub __crtCloseWinRTThreadHandle
@@ -903,7 +903,7 @@
 @ cdecl __dstbias() msvcr120.__dstbias
 @ cdecl __fpecode() msvcr120.__fpecode
 @ cdecl __free_locale(ptr) msvcr120.__free_locale
-@ stub __get_current_locale
+@ cdecl __get_current_locale() msvcr120.__get_current_locale
 @ stub __get_flsindex
 @ stub __get_tlsindex
 @ cdecl __getmainargs(ptr ptr ptr long ptr) msvcr120.__getmainargs
@@ -1006,9 +1006,9 @@
 @ cdecl _atoflt(ptr str) msvcr120._atoflt
 @ cdecl _atoflt_l(ptr str ptr) msvcr120._atoflt_l
 @ cdecl -ret64 _atoi64(str) msvcr120._atoi64
-@ stub _atoi64_l
+@ cdecl _atoi64_l(str ptr) msvcr120._atoi64_l
 @ cdecl _atoi_l(str ptr) msvcr120._atoi_l
-@ stub _atol_l
+@ cdecl _atol_l(str ptr) msvcr120._atol_l
 @ cdecl _atoldbl(ptr str) msvcr120._atoldbl
 @ stub _atoldbl_l
 @ cdecl -ret64 _atoll_l(str ptr) msvcr120._atoll_l

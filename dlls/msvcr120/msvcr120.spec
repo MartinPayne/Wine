@@ -888,7 +888,7 @@
 @ extern __badioinfo MSVCRT___badioinfo
 @ cdecl __clean_type_info_names_internal(ptr)
 @ cdecl -arch=i386 __control87_2(long long ptr ptr)
-@ stub __create_locale
+@ cdecl __create_locale(long str) MSVCRT__create_locale
 @ stub -arch=win64 __crtCaptureCurrentContext
 @ stub -arch=win64 __crtCapturePreviousContext
 @ cdecl __crtCompareStringA(long long str long str long)
@@ -927,7 +927,7 @@
 @ cdecl __dstbias() MSVCRT___p__dstbias
 @ cdecl __fpecode()
 @ cdecl __free_locale(ptr) MSVCRT__free_locale
-@ stub __get_current_locale
+@ cdecl __get_current_locale() MSVCRT__get_current_locale
 @ stub __get_flsindex
 @ stub __get_tlsindex
 @ cdecl __getmainargs(ptr ptr ptr long ptr)
@@ -1035,9 +1035,9 @@
 @ cdecl _atoflt(ptr str) MSVCRT__atoflt
 @ cdecl _atoflt_l(ptr str ptr) MSVCRT__atoflt_l
 @ cdecl -ret64 _atoi64(str) ntdll._atoi64
-@ stub _atoi64_l
+@ cdecl _atoi64_l(str ptr) MSVCRT__atoi64_l
 @ cdecl _atoi_l(str ptr) MSVCRT__atoi_l
-@ stub _atol_l
+@ cdecl _atol_l(str ptr) MSVCRT__atol_l
 @ cdecl _atoldbl(ptr str) MSVCRT__atoldbl
 @ stub _atoldbl_l
 @ cdecl -ret64 _atoll_l(str ptr) MSVCRT__atoll_l

@@ -575,7 +575,7 @@
 @ stdcall GetNativeSystemInfo(ptr) kernel32.GetNativeSystemInfo
 # @ stub GetNextFgPolicyRefreshInfoInternal
 @ stdcall GetNumaHighestNodeNumber(ptr) kernel32.GetNumaHighestNodeNumber
-# @ stub GetNumaNodeProcessorMaskEx
+@ stdcall GetNumaNodeProcessorMaskEx(long ptr) kernel32.GetNumaNodeProcessorMaskEx
 # @ stub GetNumaProximityNodeEx
 @ stdcall GetNumberFormatEx(wstr long wstr ptr ptr long) kernel32.GetNumberFormatEx
 @ stdcall GetNumberFormatW(long long wstr ptr ptr long) kernel32.GetNumberFormatW
@@ -1191,7 +1191,7 @@
 @ stdcall PulseEvent(long) kernel32.PulseEvent
 @ stdcall PurgeComm(long long) kernel32.PurgeComm
 @ stdcall QISearch(long long long long) shlwapi.QISearch
-# @ stub QueryActCtxSettingsW
+@ stdcall QueryActCtxSettingsW(long ptr wstr wstr ptr long ptr) kernel32.QueryActCtxSettingsW
 @ stdcall QueryActCtxW(long ptr ptr long ptr long ptr) kernel32.QueryActCtxW
 @ stdcall QueryDepthSList(ptr) kernel32.QueryDepthSList
 @ stdcall QueryDosDeviceW(wstr ptr long) kernel32.QueryDosDeviceW

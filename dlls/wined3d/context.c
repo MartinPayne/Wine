@@ -1055,34 +1055,22 @@ static void context_queue_fbo_entry_destruction(struct wined3d_context *context,
     list_add_head(&context->fbo_destroy_list, &entry->entry);
 }
 
-void context_resource_released(const struct wined3d_device *device,
-        struct wined3d_resource *resource, enum wined3d_resource_type type)
+void context_resource_released(const struct wined3d_device *device, struct wined3d_resource *resource)
 {
-    struct wined3d_texture *texture;
-    UINT i;
+    unsigned int i;
 
     if (!device->d3d_initialized)
         return;
 
-    switch (type)
+    for (i = 0; i < device->context_count; ++i)
     {
-        case WINED3D_RTYPE_TEXTURE_2D:
-        case WINED3D_RTYPE_TEXTURE_3D:
-            texture = texture_from_resource(resource);
+        struct wined3d_context *context = device->contexts[i];
 
-            for (i = 0; i < device->context_count; ++i)
-            {
-                struct wined3d_context *context = device->contexts[i];
-                if (context->current_rt.texture == texture)
-                {
-                    context->current_rt.texture = NULL;
-                    context->current_rt.sub_resource_idx = 0;
-                }
-            }
-            break;
-
-        default:
-            break;
+        if (&context->current_rt.texture->resource == resource)
+        {
+            context->current_rt.texture = NULL;
+            context->current_rt.sub_resource_idx = 0;
+        }
     }
 }
 
@@ -2156,15 +2144,6 @@ struct wined3d_context *context_create(struct wined3d_swapchain *swapchain,
     gl_info->gl_ops.gl.p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     checkGLcall("glPixelStorei(GL_UNPACK_ALIGNMENT, 1);");
 
-    if (gl_info->supported[ARB_VERTEX_BLEND])
-    {
-        /* Direct3D always uses n-1 weights for n world matrices and uses
-         * 1 - sum for the last one this is equal to GL_WEIGHT_SUM_UNITY_ARB.
-         * Enabling it doesn't do anything unless GL_VERTEX_BLEND_ARB isn't
-         * enabled as well. */
-        gl_info->gl_ops.gl.p_glEnable(GL_WEIGHT_SUM_UNITY_ARB);
-        checkGLcall("glEnable(GL_WEIGHT_SUM_UNITY_ARB)");
-    }
     if (gl_info->supported[NV_TEXTURE_SHADER2])
     {
         /* Set up the previous texture input for all shader units. This applies to bump mapping, and in d3d
@@ -4322,9 +4301,6 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
     GL_EXTCALL(glMemoryBarrier(GL_ALL_BARRIER_BITS));
     checkGLcall("glMemoryBarrier");
 
-    if (wined3d_settings.strict_draw_ordering)
-        gl_info->gl_ops.gl.p_glFlush(); /* Flush to ensure ordering across contexts. */
-
     context_release(context);
 }
 
@@ -4984,9 +4960,6 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
         wined3d_fence_issue(ib_fence, device);
     for (i = 0; i < context->buffer_fence_count; ++i)
         wined3d_fence_issue(context->buffer_fences[i], device);
-
-    if (wined3d_settings.strict_draw_ordering)
-        gl_info->gl_ops.gl.p_glFlush(); /* Flush to ensure ordering across contexts. */
 
     context_release(context);
 }

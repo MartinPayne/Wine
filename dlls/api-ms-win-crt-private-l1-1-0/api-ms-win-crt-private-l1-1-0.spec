@@ -33,14 +33,14 @@
 @ cdecl __RTDynamicCast(ptr long ptr ptr long) ucrtbase.__RTDynamicCast
 @ cdecl __RTtypeid(ptr) ucrtbase.__RTtypeid
 @ stub __TypeMatch
-@ stub __current_exception
-@ stub __current_exception_context
+@ cdecl __current_exception() ucrtbase.__current_exception
+@ cdecl __current_exception_context() ucrtbase.__current_exception_context
 @ stub __dcrt_get_wide_environment_from_os
 @ stub __dcrt_initial_narrow_environment
 @ stub __intrinsic_abnormal_termination
 @ cdecl -arch=i386,x86_64,arm,arm64 -norelay __intrinsic_setjmp(ptr) ucrtbase.__intrinsic_setjmp
 @ cdecl -arch=x86_64,arm64 -norelay __intrinsic_setjmpex(ptr ptr) ucrtbase.__intrinsic_setjmpex
-@ stub __processing_throw
+@ cdecl __processing_throw() ucrtbase.__processing_throw
 @ stub __report_gsfailure
 @ cdecl __std_exception_copy(ptr ptr) ucrtbase.__std_exception_copy
 @ cdecl __std_exception_destroy(ptr) ucrtbase.__std_exception_destroy

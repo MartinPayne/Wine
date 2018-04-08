@@ -288,12 +288,13 @@ static BOOL SHELL_ConfirmDialogW(HWND hWnd, int nKindOfDialog, LPCWSTR szDir, FI
 
         if (!SHELL_ConfirmIDs(nKindOfDialog, &ids)) return FALSE;
 
-	LoadStringW(shell32_hInstance, ids.caption_resource_id, szCaption, sizeof(szCaption)/sizeof(WCHAR));
-	LoadStringW(shell32_hInstance, ids.text_resource_id, szText, sizeof(szText)/sizeof(WCHAR));
+        LoadStringW(shell32_hInstance, ids.caption_resource_id, szCaption, ARRAY_SIZE(szCaption));
+        LoadStringW(shell32_hInstance, ids.text_resource_id, szText, ARRAY_SIZE(szText));
 
-	args[0] = (DWORD_PTR)szDir;
-	FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
-	               szText, 0, 0, szBuffer, sizeof(szBuffer)/sizeof(szBuffer[0]), (__ms_va_list*)args);
+        args[0] = (DWORD_PTR)szDir;
+        FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+            szText, 0, 0, szBuffer, ARRAY_SIZE(szBuffer), (__ms_va_list*)args);
+
         hIcon = LoadIconW(ids.hIconInstance, (LPWSTR)MAKEINTRESOURCE(ids.icon_resource_id));
 
         ret = SHELL_ConfirmMsgBox(hWnd, szBuffer, szCaption, hIcon, op && op->bManyItems);
@@ -1306,7 +1307,7 @@ static BOOL confirm_delete_list(HWND hWnd, DWORD fFlags, BOOL fTrash, const FILE
         static const WCHAR format[] = {'%','d',0};
         WCHAR tmp[8];
 
-        wnsprintfW(tmp, sizeof(tmp)/sizeof(tmp[0]), format, flFrom->dwNumFiles);
+        wnsprintfW(tmp, ARRAY_SIZE(tmp), format, flFrom->dwNumFiles);
         return SHELL_ConfirmDialogW(hWnd, (fTrash?ASK_TRASH_MULTIPLE_ITEM:ASK_DELETE_MULTIPLE_ITEM), tmp, NULL);
     }
     else

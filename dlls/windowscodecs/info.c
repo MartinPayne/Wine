@@ -33,6 +33,7 @@
 #include "wine/debug.h"
 #include "wine/unicode.h"
 #include "wine/list.h"
+#include "wine/rbtree.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
 
@@ -55,6 +56,13 @@ static const WCHAR requiresfullstream_valuename[] = {'R','e','q','u','i','r','e'
 static const WCHAR supportspadding_valuename[] = {'S','u','p','p','o','r','t','s','P','a','d','d','i','n','g',0};
 static const WCHAR fileextensions_valuename[] = {'F','i','l','e','E','x','t','e','n','s','i','o','n','s',0};
 static const WCHAR containers_keyname[] = {'C','o','n','t','a','i','n','e','r','s',0};
+
+typedef struct {
+    IWICComponentInfo IWICComponentInfo_iface;
+    LONG ref;
+    CLSID clsid;
+    struct wine_rb_entry entry;
+} ComponentInfo;
 
 static HRESULT ComponentInfo_GetStringValue(HKEY classkey, LPCWSTR value,
     UINT buffer_size, WCHAR *buffer, UINT *actual_size)
@@ -204,15 +212,13 @@ static HRESULT ComponentInfo_GetGuidList(HKEY classkey, LPCWSTR subkeyname,
 }
 
 typedef struct {
-    IWICBitmapDecoderInfo IWICBitmapDecoderInfo_iface;
-    LONG ref;
+    ComponentInfo base;
     HKEY classkey;
-    CLSID clsid;
 } BitmapDecoderInfo;
 
 static inline BitmapDecoderInfo *impl_from_IWICBitmapDecoderInfo(IWICBitmapDecoderInfo *iface)
 {
-    return CONTAINING_RECORD(iface, BitmapDecoderInfo, IWICBitmapDecoderInfo_iface);
+    return CONTAINING_RECORD(iface, BitmapDecoderInfo, base.IWICComponentInfo_iface);
 }
 
 static HRESULT WINAPI BitmapDecoderInfo_QueryInterface(IWICBitmapDecoderInfo *iface, REFIID iid,
@@ -228,7 +234,7 @@ static HRESULT WINAPI BitmapDecoderInfo_QueryInterface(IWICBitmapDecoderInfo *if
         IsEqualIID(&IID_IWICBitmapCodecInfo, iid) ||
         IsEqualIID(&IID_IWICBitmapDecoderInfo ,iid))
     {
-        *ppv = &This->IWICBitmapDecoderInfo_iface;
+        *ppv = &This->base.IWICComponentInfo_iface;
     }
     else
     {
@@ -243,7 +249,7 @@ static HRESULT WINAPI BitmapDecoderInfo_QueryInterface(IWICBitmapDecoderInfo *if
 static ULONG WINAPI BitmapDecoderInfo_AddRef(IWICBitmapDecoderInfo *iface)
 {
     BitmapDecoderInfo *This = impl_from_IWICBitmapDecoderInfo(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -253,7 +259,7 @@ static ULONG WINAPI BitmapDecoderInfo_AddRef(IWICBitmapDecoderInfo *iface)
 static ULONG WINAPI BitmapDecoderInfo_Release(IWICBitmapDecoderInfo *iface)
 {
     BitmapDecoderInfo *This = impl_from_IWICBitmapDecoderInfo(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -283,8 +289,7 @@ static HRESULT WINAPI BitmapDecoderInfo_GetCLSID(IWICBitmapDecoderInfo *iface, C
     if (!pclsid)
         return E_INVALIDARG;
 
-    memcpy(pclsid, &This->clsid, sizeof(CLSID));
-
+    *pclsid = This->base.clsid;
     return S_OK;
 }
 
@@ -621,7 +626,7 @@ static HRESULT WINAPI BitmapDecoderInfo_CreateInstance(IWICBitmapDecoderInfo *if
 
     TRACE("(%p,%p)\n", iface, ppIBitmapDecoder);
 
-    return create_instance(&This->clsid, &IID_IWICBitmapDecoder, (void**)ppIBitmapDecoder);
+    return create_instance(&This->base.clsid, &IID_IWICBitmapDecoder, (void**)ppIBitmapDecoder);
 }
 
 static const IWICBitmapDecoderInfoVtbl BitmapDecoderInfo_Vtbl = {
@@ -653,7 +658,7 @@ static const IWICBitmapDecoderInfoVtbl BitmapDecoderInfo_Vtbl = {
     BitmapDecoderInfo_CreateInstance
 };
 
-static HRESULT BitmapDecoderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICComponentInfo **ppIInfo)
+static HRESULT BitmapDecoderInfo_Constructor(HKEY classkey, REFCLSID clsid, ComponentInfo **ret)
 {
     BitmapDecoderInfo *This;
 
@@ -664,25 +669,23 @@ static HRESULT BitmapDecoderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWIC
         return E_OUTOFMEMORY;
     }
 
-    This->IWICBitmapDecoderInfo_iface.lpVtbl = &BitmapDecoderInfo_Vtbl;
-    This->ref = 1;
+    This->base.IWICComponentInfo_iface.lpVtbl = (const IWICComponentInfoVtbl*)&BitmapDecoderInfo_Vtbl;
+    This->base.ref = 1;
     This->classkey = classkey;
-    memcpy(&This->clsid, clsid, sizeof(CLSID));
+    This->base.clsid = *clsid;
 
-    *ppIInfo = (IWICComponentInfo *)&This->IWICBitmapDecoderInfo_iface;
+    *ret = &This->base;
     return S_OK;
 }
 
 typedef struct {
-    IWICBitmapEncoderInfo IWICBitmapEncoderInfo_iface;
-    LONG ref;
+    ComponentInfo base;
     HKEY classkey;
-    CLSID clsid;
 } BitmapEncoderInfo;
 
 static inline BitmapEncoderInfo *impl_from_IWICBitmapEncoderInfo(IWICBitmapEncoderInfo *iface)
 {
-    return CONTAINING_RECORD(iface, BitmapEncoderInfo, IWICBitmapEncoderInfo_iface);
+    return CONTAINING_RECORD(iface, BitmapEncoderInfo, base.IWICComponentInfo_iface);
 }
 
 static HRESULT WINAPI BitmapEncoderInfo_QueryInterface(IWICBitmapEncoderInfo *iface, REFIID iid,
@@ -698,7 +701,7 @@ static HRESULT WINAPI BitmapEncoderInfo_QueryInterface(IWICBitmapEncoderInfo *if
         IsEqualIID(&IID_IWICBitmapCodecInfo, iid) ||
         IsEqualIID(&IID_IWICBitmapEncoderInfo ,iid))
     {
-        *ppv = &This->IWICBitmapEncoderInfo_iface;
+        *ppv = &This->base.IWICComponentInfo_iface;
     }
     else
     {
@@ -713,7 +716,7 @@ static HRESULT WINAPI BitmapEncoderInfo_QueryInterface(IWICBitmapEncoderInfo *if
 static ULONG WINAPI BitmapEncoderInfo_AddRef(IWICBitmapEncoderInfo *iface)
 {
     BitmapEncoderInfo *This = impl_from_IWICBitmapEncoderInfo(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -723,7 +726,7 @@ static ULONG WINAPI BitmapEncoderInfo_AddRef(IWICBitmapEncoderInfo *iface)
 static ULONG WINAPI BitmapEncoderInfo_Release(IWICBitmapEncoderInfo *iface)
 {
     BitmapEncoderInfo *This = impl_from_IWICBitmapEncoderInfo(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -753,8 +756,7 @@ static HRESULT WINAPI BitmapEncoderInfo_GetCLSID(IWICBitmapEncoderInfo *iface, C
     if (!pclsid)
         return E_INVALIDARG;
 
-    memcpy(pclsid, &This->clsid, sizeof(CLSID));
-
+    *pclsid = This->base.clsid;
     return S_OK;
 }
 
@@ -914,7 +916,7 @@ static HRESULT WINAPI BitmapEncoderInfo_CreateInstance(IWICBitmapEncoderInfo *if
 
     TRACE("(%p,%p)\n", iface, ppIBitmapEncoder);
 
-    return create_instance(&This->clsid, &IID_IWICBitmapEncoder, (void**)ppIBitmapEncoder);
+    return create_instance(&This->base.clsid, &IID_IWICBitmapEncoder, (void**)ppIBitmapEncoder);
 }
 
 static const IWICBitmapEncoderInfoVtbl BitmapEncoderInfo_Vtbl = {
@@ -944,7 +946,7 @@ static const IWICBitmapEncoderInfoVtbl BitmapEncoderInfo_Vtbl = {
     BitmapEncoderInfo_CreateInstance
 };
 
-static HRESULT BitmapEncoderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICComponentInfo **ppIInfo)
+static HRESULT BitmapEncoderInfo_Constructor(HKEY classkey, REFCLSID clsid, ComponentInfo **ret)
 {
     BitmapEncoderInfo *This;
 
@@ -955,25 +957,23 @@ static HRESULT BitmapEncoderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWIC
         return E_OUTOFMEMORY;
     }
 
-    This->IWICBitmapEncoderInfo_iface.lpVtbl = &BitmapEncoderInfo_Vtbl;
-    This->ref = 1;
+    This->base.IWICComponentInfo_iface.lpVtbl = (const IWICComponentInfoVtbl*)&BitmapEncoderInfo_Vtbl;
+    This->base.ref = 1;
     This->classkey = classkey;
-    memcpy(&This->clsid, clsid, sizeof(CLSID));
+    This->base.clsid = *clsid;
 
-    *ppIInfo = (IWICComponentInfo *)&This->IWICBitmapEncoderInfo_iface;
+    *ret = &This->base;
     return S_OK;
 }
 
 typedef struct {
-    IWICFormatConverterInfo IWICFormatConverterInfo_iface;
-    LONG ref;
+    ComponentInfo base;
     HKEY classkey;
-    CLSID clsid;
 } FormatConverterInfo;
 
 static inline FormatConverterInfo *impl_from_IWICFormatConverterInfo(IWICFormatConverterInfo *iface)
 {
-    return CONTAINING_RECORD(iface, FormatConverterInfo, IWICFormatConverterInfo_iface);
+    return CONTAINING_RECORD(iface, FormatConverterInfo, base.IWICComponentInfo_iface);
 }
 
 static HRESULT WINAPI FormatConverterInfo_QueryInterface(IWICFormatConverterInfo *iface, REFIID iid,
@@ -988,7 +988,7 @@ static HRESULT WINAPI FormatConverterInfo_QueryInterface(IWICFormatConverterInfo
         IsEqualIID(&IID_IWICComponentInfo, iid) ||
         IsEqualIID(&IID_IWICFormatConverterInfo ,iid))
     {
-        *ppv = &This->IWICFormatConverterInfo_iface;
+        *ppv = &This->base.IWICComponentInfo_iface;
     }
     else
     {
@@ -1003,7 +1003,7 @@ static HRESULT WINAPI FormatConverterInfo_QueryInterface(IWICFormatConverterInfo
 static ULONG WINAPI FormatConverterInfo_AddRef(IWICFormatConverterInfo *iface)
 {
     FormatConverterInfo *This = impl_from_IWICFormatConverterInfo(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -1013,7 +1013,7 @@ static ULONG WINAPI FormatConverterInfo_AddRef(IWICFormatConverterInfo *iface)
 static ULONG WINAPI FormatConverterInfo_Release(IWICFormatConverterInfo *iface)
 {
     FormatConverterInfo *This = impl_from_IWICFormatConverterInfo(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -1043,8 +1043,7 @@ static HRESULT WINAPI FormatConverterInfo_GetCLSID(IWICFormatConverterInfo *ifac
     if (!pclsid)
         return E_INVALIDARG;
 
-    memcpy(pclsid, &This->clsid, sizeof(CLSID));
-
+    *pclsid = This->base.clsid;
     return S_OK;
 }
 
@@ -1121,7 +1120,7 @@ static HRESULT WINAPI FormatConverterInfo_CreateInstance(IWICFormatConverterInfo
 
     TRACE("(%p,%p)\n", iface, ppIFormatConverter);
 
-    return create_instance(&This->clsid, &IID_IWICFormatConverter,
+    return create_instance(&This->base.clsid, &IID_IWICFormatConverter,
             (void**)ppIFormatConverter);
 }
 
@@ -1161,7 +1160,7 @@ static const IWICFormatConverterInfoVtbl FormatConverterInfo_Vtbl = {
     FormatConverterInfo_CreateInstance
 };
 
-static HRESULT FormatConverterInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICComponentInfo **ppIInfo)
+static HRESULT FormatConverterInfo_Constructor(HKEY classkey, REFCLSID clsid, ComponentInfo **ret)
 {
     FormatConverterInfo *This;
 
@@ -1172,25 +1171,23 @@ static HRESULT FormatConverterInfo_Constructor(HKEY classkey, REFCLSID clsid, IW
         return E_OUTOFMEMORY;
     }
 
-    This->IWICFormatConverterInfo_iface.lpVtbl = &FormatConverterInfo_Vtbl;
-    This->ref = 1;
+    This->base.IWICComponentInfo_iface.lpVtbl = (const IWICComponentInfoVtbl*)&FormatConverterInfo_Vtbl;
+    This->base.ref = 1;
     This->classkey = classkey;
-    memcpy(&This->clsid, clsid, sizeof(CLSID));
+    This->base.clsid = *clsid;
 
-    *ppIInfo = (IWICComponentInfo *)&This->IWICFormatConverterInfo_iface;
+    *ret = &This->base;
     return S_OK;
 }
 
 typedef struct {
-    IWICPixelFormatInfo2 IWICPixelFormatInfo2_iface;
-    LONG ref;
+    ComponentInfo base;
     HKEY classkey;
-    CLSID clsid;
 } PixelFormatInfo;
 
 static inline PixelFormatInfo *impl_from_IWICPixelFormatInfo2(IWICPixelFormatInfo2 *iface)
 {
-    return CONTAINING_RECORD(iface, PixelFormatInfo, IWICPixelFormatInfo2_iface);
+    return CONTAINING_RECORD(iface, PixelFormatInfo, base.IWICComponentInfo_iface);
 }
 
 static HRESULT WINAPI PixelFormatInfo_QueryInterface(IWICPixelFormatInfo2 *iface, REFIID iid,
@@ -1206,7 +1203,7 @@ static HRESULT WINAPI PixelFormatInfo_QueryInterface(IWICPixelFormatInfo2 *iface
         IsEqualIID(&IID_IWICPixelFormatInfo, iid) ||
         IsEqualIID(&IID_IWICPixelFormatInfo2 ,iid))
     {
-        *ppv = &This->IWICPixelFormatInfo2_iface;
+        *ppv = &This->base.IWICComponentInfo_iface;
     }
     else
     {
@@ -1221,7 +1218,7 @@ static HRESULT WINAPI PixelFormatInfo_QueryInterface(IWICPixelFormatInfo2 *iface
 static ULONG WINAPI PixelFormatInfo_AddRef(IWICPixelFormatInfo2 *iface)
 {
     PixelFormatInfo *This = impl_from_IWICPixelFormatInfo2(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -1231,7 +1228,7 @@ static ULONG WINAPI PixelFormatInfo_AddRef(IWICPixelFormatInfo2 *iface)
 static ULONG WINAPI PixelFormatInfo_Release(IWICPixelFormatInfo2 *iface)
 {
     PixelFormatInfo *This = impl_from_IWICPixelFormatInfo2(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -1261,8 +1258,7 @@ static HRESULT WINAPI PixelFormatInfo_GetCLSID(IWICPixelFormatInfo2 *iface, CLSI
     if (!pclsid)
         return E_INVALIDARG;
 
-    memcpy(pclsid, &This->clsid, sizeof(CLSID));
-
+    *pclsid = This->base.clsid;
     return S_OK;
 }
 
@@ -1341,8 +1337,7 @@ static HRESULT WINAPI PixelFormatInfo_GetFormatGUID(IWICPixelFormatInfo2 *iface,
     if (!pFormat)
         return E_INVALIDARG;
 
-    *pFormat = This->clsid;
-
+    *pFormat = This->base.clsid;
     return S_OK;
 }
 
@@ -1455,7 +1450,7 @@ static const IWICPixelFormatInfo2Vtbl PixelFormatInfo_Vtbl = {
     PixelFormatInfo_GetNumericRepresentation
 };
 
-static HRESULT PixelFormatInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICComponentInfo **ppIInfo)
+static HRESULT PixelFormatInfo_Constructor(HKEY classkey, REFCLSID clsid, ComponentInfo **ret)
 {
     PixelFormatInfo *This;
 
@@ -1466,26 +1461,24 @@ static HRESULT PixelFormatInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICCo
         return E_OUTOFMEMORY;
     }
 
-    This->IWICPixelFormatInfo2_iface.lpVtbl = &PixelFormatInfo_Vtbl;
-    This->ref = 1;
+    This->base.IWICComponentInfo_iface.lpVtbl = (const IWICComponentInfoVtbl*)&PixelFormatInfo_Vtbl;
+    This->base.ref = 1;
     This->classkey = classkey;
-    memcpy(&This->clsid, clsid, sizeof(CLSID));
+    This->base.clsid = *clsid;
 
-    *ppIInfo = (IWICComponentInfo *)&This->IWICPixelFormatInfo2_iface;
+    *ret = &This->base;
     return S_OK;
 }
 
 typedef struct
 {
-    IWICMetadataReaderInfo IWICMetadataReaderInfo_iface;
-    LONG ref;
+    ComponentInfo base;
     HKEY classkey;
-    CLSID clsid;
 } MetadataReaderInfo;
 
 static inline MetadataReaderInfo *impl_from_IWICMetadataReaderInfo(IWICMetadataReaderInfo *iface)
 {
-    return CONTAINING_RECORD(iface, MetadataReaderInfo, IWICMetadataReaderInfo_iface);
+    return CONTAINING_RECORD(iface, MetadataReaderInfo, base.IWICComponentInfo_iface);
 }
 
 static HRESULT WINAPI MetadataReaderInfo_QueryInterface(IWICMetadataReaderInfo *iface,
@@ -1502,7 +1495,7 @@ static HRESULT WINAPI MetadataReaderInfo_QueryInterface(IWICMetadataReaderInfo *
         IsEqualIID(&IID_IWICMetadataHandlerInfo, riid) ||
         IsEqualIID(&IID_IWICMetadataReaderInfo, riid))
     {
-        *ppv = &This->IWICMetadataReaderInfo_iface;
+        *ppv = &This->base.IWICComponentInfo_iface;
     }
     else
     {
@@ -1517,7 +1510,7 @@ static HRESULT WINAPI MetadataReaderInfo_QueryInterface(IWICMetadataReaderInfo *
 static ULONG WINAPI MetadataReaderInfo_AddRef(IWICMetadataReaderInfo *iface)
 {
     MetadataReaderInfo *This = impl_from_IWICMetadataReaderInfo(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
     return ref;
@@ -1526,7 +1519,7 @@ static ULONG WINAPI MetadataReaderInfo_AddRef(IWICMetadataReaderInfo *iface)
 static ULONG WINAPI MetadataReaderInfo_Release(IWICMetadataReaderInfo *iface)
 {
     MetadataReaderInfo *This = impl_from_IWICMetadataReaderInfo(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->base.ref);
 
     TRACE("(%p) refcount=%u\n", iface, ref);
 
@@ -1556,7 +1549,7 @@ static HRESULT WINAPI MetadataReaderInfo_GetCLSID(IWICMetadataReaderInfo *iface,
     TRACE("(%p,%p)\n", iface, clsid);
 
     if (!clsid) return E_INVALIDARG;
-    *clsid = This->clsid;
+    *clsid = This->base.clsid;
     return S_OK;
 }
 
@@ -1867,7 +1860,7 @@ static HRESULT WINAPI MetadataReaderInfo_CreateInstance(IWICMetadataReaderInfo *
 
     TRACE("(%p,%p)\n", iface, reader);
 
-    return create_instance(&This->clsid, &IID_IWICMetadataReader, (void **)reader);
+    return create_instance(&This->base.clsid, &IID_IWICMetadataReader, (void **)reader);
 }
 
 static const IWICMetadataReaderInfoVtbl MetadataReaderInfo_Vtbl = {
@@ -1894,7 +1887,7 @@ static const IWICMetadataReaderInfoVtbl MetadataReaderInfo_Vtbl = {
     MetadataReaderInfo_CreateInstance
 };
 
-static HRESULT MetadataReaderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWICComponentInfo **info)
+static HRESULT MetadataReaderInfo_Constructor(HKEY classkey, REFCLSID clsid, ComponentInfo **info)
 {
     MetadataReaderInfo *This;
 
@@ -1905,12 +1898,12 @@ static HRESULT MetadataReaderInfo_Constructor(HKEY classkey, REFCLSID clsid, IWI
         return E_OUTOFMEMORY;
     }
 
-    This->IWICMetadataReaderInfo_iface.lpVtbl = &MetadataReaderInfo_Vtbl;
-    This->ref = 1;
+    This->base.IWICComponentInfo_iface.lpVtbl = (const IWICComponentInfoVtbl*)&MetadataReaderInfo_Vtbl;
+    This->base.ref = 1;
     This->classkey = classkey;
-    This->clsid = *clsid;
+    This->base.clsid = *clsid;
 
-    *info = (IWICComponentInfo *)&This->IWICMetadataReaderInfo_iface;
+    *info = &This->base;
     return S_OK;
 }
 
@@ -1920,7 +1913,7 @@ static const WCHAR instance_keyname[] = {'I','n','s','t','a','n','c','e',0};
 struct category {
     WICComponentType type;
     const GUID *catid;
-    HRESULT (*constructor)(HKEY,REFCLSID,IWICComponentInfo**);
+    HRESULT (*constructor)(HKEY,REFCLSID,ComponentInfo**);
 };
 
 static const struct category categories[] = {
@@ -1932,8 +1925,27 @@ static const struct category categories[] = {
     {0}
 };
 
+static int ComponentInfo_Compare(const void *key, const struct wine_rb_entry *entry)
+{
+    ComponentInfo *info = WINE_RB_ENTRY_VALUE(entry, ComponentInfo, entry);
+    return memcmp(key, &info->clsid, sizeof(info->clsid));
+}
+
+static struct wine_rb_tree component_info_cache = { ComponentInfo_Compare };
+
+static CRITICAL_SECTION component_info_cache_cs;
+static CRITICAL_SECTION_DEBUG component_info_cache_cs_dbg =
+{
+    0, 0, &component_info_cache_cs,
+    { &component_info_cache_cs_dbg.ProcessLocksList, &component_info_cache_cs_dbg.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": component_info_cache") }
+};
+static CRITICAL_SECTION component_info_cache_cs = { &component_info_cache_cs_dbg, -1, 0, 0, 0, 0 };
+
 HRESULT CreateComponentInfo(REFCLSID clsid, IWICComponentInfo **ppIInfo)
 {
+    struct wine_rb_entry *cache_entry;
+    ComponentInfo *info;
     HKEY clsidkey;
     HKEY classkey;
     HKEY catidkey;
@@ -1944,9 +1956,23 @@ HRESULT CreateComponentInfo(REFCLSID clsid, IWICComponentInfo **ppIInfo)
     BOOL found = FALSE;
     HRESULT hr;
 
+    EnterCriticalSection(&component_info_cache_cs);
+
+    cache_entry = wine_rb_get(&component_info_cache, clsid);
+    if(cache_entry)
+    {
+        info = WINE_RB_ENTRY_VALUE(cache_entry, ComponentInfo, entry);
+        IWICComponentInfo_AddRef(*ppIInfo = &info->IWICComponentInfo_iface);
+        LeaveCriticalSection(&component_info_cache_cs);
+        return S_OK;
+    }
+
     res = RegOpenKeyExW(HKEY_CLASSES_ROOT, clsid_keyname, 0, KEY_READ, &clsidkey);
     if (res != ERROR_SUCCESS)
+    {
+        LeaveCriticalSection(&component_info_cache_cs);
         return HRESULT_FROM_WIN32(res);
+    }
 
     for (category=categories; category->type; category++)
     {
@@ -1975,7 +2001,7 @@ HRESULT CreateComponentInfo(REFCLSID clsid, IWICComponentInfo **ppIInfo)
     {
         res = RegOpenKeyExW(clsidkey, guidstring, 0, KEY_READ, &classkey);
         if (res == ERROR_SUCCESS)
-            hr = category->constructor(classkey, clsid, ppIInfo);
+            hr = category->constructor(classkey, clsid, &info);
         else
             hr = HRESULT_FROM_WIN32(res);
     }
@@ -1987,7 +2013,20 @@ HRESULT CreateComponentInfo(REFCLSID clsid, IWICComponentInfo **ppIInfo)
 
     RegCloseKey(clsidkey);
 
+    if (SUCCEEDED(hr))
+    {
+        wine_rb_put(&component_info_cache, clsid, &info->entry);
+        IWICComponentInfo_AddRef(*ppIInfo = &info->IWICComponentInfo_iface);
+    }
+    LeaveCriticalSection(&component_info_cache_cs);
     return hr;
+}
+
+void ReleaseComponentInfos(void)
+{
+    ComponentInfo *info, *next_info;
+    WINE_RB_FOR_EACH_ENTRY_DESTRUCTOR(info, next_info, &component_info_cache, ComponentInfo, entry)
+        IWICComponentInfo_Release(&info->IWICComponentInfo_iface);
 }
 
 typedef struct {

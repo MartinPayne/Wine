@@ -1850,12 +1850,12 @@ typedef struct _CONTEXT
             DWORD64 X26;                /* 0d8 */
             DWORD64 X27;                /* 0e0 */
             DWORD64 X28;                /* 0e8 */
+            DWORD64 Fp;                 /* 0f0 */
+            DWORD64 Lr;                 /* 0f8 */
         } DUMMYSTRUCTNAME;
-        DWORD64 X[29];                  /* 008 */
+        DWORD64 X[31];                  /* 008 */
     } DUMMYUNIONNAME;
     /* CONTEXT_CONTROL */
-    DWORD64 Fp;                         /* 0f0 */
-    DWORD64 Lr;                         /* 0f8 */
     DWORD64 Sp;                         /* 100 */
     DWORD64 Pc;                         /* 108 */
     /* CONTEXT_FLOATING_POINT */
@@ -5807,6 +5807,8 @@ typedef enum _ACTIVATION_CONTEXT_INFO_CLASS {
 #define ACTIVATION_CONTEXT_SECTION_COM_PROGID_REDIRECTION        7
 #define ACTIVATION_CONTEXT_SECTION_GLOBAL_OBJECT_RENAME_TABLE    8
 #define ACTIVATION_CONTEXT_SECTION_CLR_SURROGATES                9
+#define ACTIVATION_CONTEXT_SECTION_APPLICATION_SETTINGS          10
+#define ACTIVATION_CONTEXT_SECTION_COMPATIBILITY_INFO            11
 
 typedef enum _JOBOBJECTINFOCLASS
 {

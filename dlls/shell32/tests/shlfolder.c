@@ -1959,7 +1959,7 @@ static void test_LocalizedNames(void)
     hr = IShellFolder_GetDisplayNameOf(testIShellFolder, newPIDL, SHGDN_INFOLDER, &strret);
     ok(hr == S_OK, "GetDisplayNameOf failed %08x\n", hr);
 
-    hr = StrRetToBufW(&strret, newPIDL, tempbufW, sizeof(tempbufW)/sizeof(WCHAR));
+    hr = StrRetToBufW(&strret, newPIDL, tempbufW, ARRAY_SIZE(tempbufW));
     ok (hr == S_OK, "StrRetToBufW failed! hr = %08x\n", hr);
     todo_wine
     ok (!lstrcmpiW(tempbufW, folderdisplayW), "GetDisplayNameOf returned %s\n", wine_dbgstr_w(tempbufW));
@@ -1968,7 +1968,7 @@ static void test_LocalizedNames(void)
     hr = IShellFolder_GetDisplayNameOf(testIShellFolder, newPIDL, SHGDN_INFOLDER|SHGDN_FOREDITING, &strret);
     ok(hr == S_OK, "GetDisplayNameOf failed %08x\n", hr);
 
-    hr = StrRetToBufW(&strret, newPIDL, tempbufW, sizeof(tempbufW)/sizeof(WCHAR));
+    hr = StrRetToBufW(&strret, newPIDL, tempbufW, ARRAY_SIZE(tempbufW));
     ok (hr == S_OK, "StrRetToBufW failed! hr = %08x\n", hr);
     todo_wine
     ok (!lstrcmpiW(tempbufW, folderdisplayW), "GetDisplayNameOf returned %s\n", wine_dbgstr_w(tempbufW));
@@ -1977,7 +1977,7 @@ static void test_LocalizedNames(void)
     hr = IShellFolder_GetDisplayNameOf(testIShellFolder, newPIDL, SHGDN_INFOLDER|SHGDN_FORPARSING, &strret);
     ok(hr == S_OK, "GetDisplayNameOf failed %08x\n", hr);
 
-    hr = StrRetToBufW(&strret, newPIDL, tempbufW, sizeof(tempbufW)/sizeof(WCHAR));
+    hr = StrRetToBufW(&strret, newPIDL, tempbufW, ARRAY_SIZE(tempbufW));
     ok (hr == S_OK, "StrRetToBufW failed! hr = %08x\n", hr);
     ok (!lstrcmpiW(tempbufW, foldernameW), "GetDisplayNameOf returned %s\n", wine_dbgstr_w(tempbufW));
 
@@ -4943,7 +4943,8 @@ static void test_SHChangeNotify(BOOL test_new_delivery)
             SHCNE_ALLEVENTS, WM_USER_NOTIFY, 1, entries);
     ok(notifyID != 0, "Failed to register a window for change notifications\n");
 
-    for(i = 0; i < sizeof(chnotify_tests) / sizeof(*chnotify_tests); ++i){
+    for (i = 0; i < ARRAY_SIZE(chnotify_tests); ++i)
+    {
         exp_data = chnotify_tests + i;
 
         exp_data->missing_events = exp_data->notify_count;
@@ -5135,7 +5136,7 @@ static void test_GetDefaultColumn(void)
 
     CoInitialize(NULL);
 
-    for (i = 0; i < sizeof(folders)/sizeof(folders[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(folders); i++)
     {
         IShellFolder2 *folder;
         ULONG sort, display;
@@ -5186,7 +5187,7 @@ static void test_GetDefaultSearchGUID(void)
 
     CoInitialize(NULL);
 
-    for (i = 0; i < sizeof(folders)/sizeof(folders[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(folders); i++)
     {
         IShellFolder2 *folder;
         GUID guid;
@@ -5215,6 +5216,34 @@ static void test_GetDefaultSearchGUID(void)
     }
 
     CoUninitialize();
+}
+
+static void test_SHLimitInputEdit(void)
+{
+    IShellFolder *desktop;
+    HRESULT hr;
+    HWND hwnd;
+
+    hr = SHGetDesktopFolder(&desktop);
+    ok(hr == S_OK, "Failed to get desktop folder, hr %#x.\n", hr);
+
+    hr = SHLimitInputEdit(NULL, desktop);
+todo_wine
+    ok(hr == E_FAIL, "Unexpected hr %#x.\n", hr);
+
+    hwnd = CreateWindowA("EDIT", NULL, WS_VISIBLE, 0, 0, 100, 30, NULL, NULL, NULL, NULL);
+    ok(hwnd != NULL, "Failed to create Edit control.\n");
+
+    hr = SHLimitInputEdit(hwnd, desktop);
+todo_wine
+    ok(hr == S_OK, "Failed to set input limits, hr %#x.\n", hr);
+
+    hr = SHLimitInputEdit(hwnd, desktop);
+todo_wine
+    ok(hr == S_OK, "Failed to set input limits, hr %#x.\n", hr);
+
+    DestroyWindow(hwnd);
+    IShellFolder_Release(desktop);
 }
 
 START_TEST(shlfolder)
@@ -5258,6 +5287,7 @@ START_TEST(shlfolder)
     test_DataObject();
     test_GetDefaultColumn();
     test_GetDefaultSearchGUID();
+    test_SHLimitInputEdit();
 
     OleUninitialize();
 }

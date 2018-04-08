@@ -1713,10 +1713,10 @@ struct wined3d_adapter_identifier
 
 struct wined3d_swapchain_desc
 {
-    UINT backbuffer_width;
-    UINT backbuffer_height;
+    unsigned int backbuffer_width;
+    unsigned int backbuffer_height;
     enum wined3d_format_id backbuffer_format;
-    UINT backbuffer_count;
+    unsigned int backbuffer_count;
     DWORD backbuffer_usage;
     enum wined3d_multisample_type multisample_type;
     DWORD multisample_quality;
@@ -1726,8 +1726,7 @@ struct wined3d_swapchain_desc
     BOOL enable_auto_depth_stencil;
     enum wined3d_format_id auto_depth_stencil_format;
     DWORD flags;
-    UINT refresh_rate;
-    enum wined3d_swap_interval swap_interval;
+    unsigned int refresh_rate;
     BOOL auto_restore_display_mode;
 };
 
@@ -2654,8 +2653,8 @@ void __cdecl wined3d_swapchain_get_desc(const struct wined3d_swapchain *swapchai
 HRESULT __cdecl wined3d_swapchain_get_raster_status(const struct wined3d_swapchain *swapchain,
         struct wined3d_raster_status *raster_status);
 ULONG __cdecl wined3d_swapchain_incref(struct wined3d_swapchain *swapchain);
-HRESULT __cdecl wined3d_swapchain_present(struct wined3d_swapchain *swapchain,
-        const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, DWORD flags);
+HRESULT __cdecl wined3d_swapchain_present(struct wined3d_swapchain *swapchain, const RECT *src_rect,
+        const RECT *dst_rect, HWND dst_window_override, unsigned int swap_interval, DWORD flags);
 HRESULT __cdecl wined3d_swapchain_resize_buffers(struct wined3d_swapchain *swapchain, unsigned int buffer_count,
         unsigned int width, unsigned int height, enum wined3d_format_id format_id,
         enum wined3d_multisample_type multisample_type, unsigned int multisample_quality);
