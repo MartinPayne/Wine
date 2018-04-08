@@ -763,16 +763,64 @@ NTSTATUS WINAPI LsaQueryInformationPolicy(
         break;
         case  PolicyDnsDomainInformation:	/* 12 (0xc) */
         {
-            /* Only the domain name is valid for the local computer.
-             * All other fields are zero.
-             */
-            PPOLICY_DNS_DOMAIN_INFO pinfo;
+            struct
+            {
+                POLICY_DNS_DOMAIN_INFO info;
+                struct
+                {
+                    SID sid;
+                    DWORD sid_subauthority[3];
+                } domain_sid;
+                WCHAR domain_name[MAX_COMPUTERNAME_LENGTH + 1];
+                WCHAR dns_domain_name[MAX_COMPUTERNAME_LENGTH + 1];
+                WCHAR dns_forest_name[MAX_COMPUTERNAME_LENGTH + 1];
+            } *xdi;
+            struct
+            {
+                SID sid;
+                DWORD sid_subauthority[3];
+            } computer_sid;
+            DWORD dwSize;
 
-            pinfo = ADVAPI_GetDomainName(sizeof(*pinfo), offsetof(POLICY_DNS_DOMAIN_INFO, Name));
+            xdi = heap_alloc_zero(sizeof(*xdi));
+            if (!xdi) return STATUS_NO_MEMORY;
 
-            TRACE("setting domain to %s\n", debugstr_w(pinfo->Name.Buffer));
+            dwSize = MAX_COMPUTERNAME_LENGTH + 1;
+            if (GetComputerNameExW(ComputerNamePhysicalDnsDomain, xdi->domain_name, &dwSize))
+            {
+                WCHAR *dot;
 
-            *Buffer = pinfo;
+                dot = strrchrW(xdi->domain_name, '.');
+                if (dot) *dot = 0;
+                struprW(xdi->domain_name);
+                xdi->info.Name.Buffer = xdi->domain_name;
+                xdi->info.Name.Length = strlenW(xdi->domain_name) * sizeof(WCHAR);
+                xdi->info.Name.MaximumLength = xdi->info.Name.Length + sizeof(WCHAR);
+                TRACE("setting Name to %s\n", debugstr_w(xdi->info.Name.Buffer));
+            }
+
+            dwSize = MAX_COMPUTERNAME_LENGTH + 1;
+            if (GetComputerNameExW(ComputerNameDnsDomain, xdi->dns_domain_name, &dwSize))
+            {
+                xdi->info.DnsDomainName.Buffer = xdi->dns_domain_name;
+                xdi->info.DnsDomainName.Length = dwSize * sizeof(WCHAR);
+                xdi->info.DnsDomainName.MaximumLength = (dwSize + 1) * sizeof(WCHAR);
+                TRACE("setting DnsDomainName to %s\n", debugstr_w(xdi->info.DnsDomainName.Buffer));
+
+                xdi->info.DnsForestName.Buffer = xdi->dns_domain_name;
+                xdi->info.DnsForestName.Length = dwSize * sizeof(WCHAR);
+                xdi->info.DnsForestName.MaximumLength = (dwSize + 1) * sizeof(WCHAR);
+                TRACE("setting DnsForestName to %s\n", debugstr_w(xdi->info.DnsForestName.Buffer));
+            }
+
+            dwSize = sizeof(xdi->domain_sid);
+            if (ADVAPI_GetComputerSid(&computer_sid.sid) && GetWindowsAccountDomainSid(&computer_sid.sid, &xdi->domain_sid.sid, &dwSize))
+            {
+                xdi->info.Sid = &xdi->domain_sid.sid;
+                TRACE("setting SID to %s\n", debugstr_sid(&xdi->domain_sid.sid));
+            }
+
+            *Buffer = xdi;
         }
         break;
         case  PolicyAuditLogInformation:

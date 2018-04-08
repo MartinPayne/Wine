@@ -42,7 +42,6 @@
 
 #define D3D9_MAX_VERTEX_SHADER_CONSTANTF 256
 #define D3D9_MAX_TEXTURE_UNITS 20
-#define D3D9_MAX_SIMULTANEOUS_RENDERTARGETS 4
 
 #define D3DPRESENTFLAGS_MASK 0x00000fffu
 
@@ -103,7 +102,7 @@ struct d3d9_device
     UINT index_buffer_pos;
 
     struct d3d9_texture *textures[D3D9_MAX_TEXTURE_UNITS];
-    struct d3d9_surface *render_targets[D3D9_MAX_SIMULTANEOUS_RENDERTARGETS];
+    struct d3d9_surface *render_targets[D3D_MAX_SIMULTANEOUS_RENDERTARGETS];
 
     LONG device_state;
     BOOL in_destruction;
@@ -321,13 +320,14 @@ static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool, unsigned int
     {
         case D3DPOOL_DEFAULT:
             if (usage & D3DUSAGE_DYNAMIC)
-                return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP;
+                return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
             return WINED3D_RESOURCE_ACCESS_GPU;
         case D3DPOOL_MANAGED:
-            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU
+                    | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
         case D3DPOOL_SYSTEMMEM:
         case D3DPOOL_SCRATCH:
-            return WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP;
+            return WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
         default:
             return 0;
     }

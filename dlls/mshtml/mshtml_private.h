@@ -595,9 +595,7 @@ struct HTMLDocument {
     IMonikerProp                IMonikerProp_iface;
     IOleObject                  IOleObject_iface;
     IOleDocument                IOleDocument_iface;
-    IOleDocumentView            IOleDocumentView_iface;
     IOleInPlaceActiveObject     IOleInPlaceActiveObject_iface;
-    IViewObjectEx               IViewObjectEx_iface;
     IOleInPlaceObjectWindowless IOleInPlaceObjectWindowless_iface;
     IServiceProvider            IServiceProvider_iface;
     IOleCommandTarget           IOleCommandTarget_iface;
@@ -642,6 +640,8 @@ struct HTMLDocumentObj {
     DispatchEx dispex;
     IUnknown IUnknown_outer;
     ICustomDoc ICustomDoc_iface;
+    IOleDocumentView IOleDocumentView_iface;
+    IViewObjectEx IViewObjectEx_iface;
     ITargetContainer ITargetContainer_iface;
 
     IWindowForBindingUI IWindowForBindingUI_iface;
@@ -800,12 +800,6 @@ extern cp_static_data_t HTMLElementEvents2_data DECLSPEC_HIDDEN;
 #define HTMLELEMENT_CPC {&DIID_HTMLElementEvents2, &HTMLElementEvents2_data}
 extern const cpc_entry_t HTMLElement_cpc[] DECLSPEC_HIDDEN;
 
-typedef struct {
-    HTMLElement element;
-
-    IHTMLTextContainer IHTMLTextContainer_iface;
-} HTMLTextContainer;
-
 struct HTMLFrameBase {
     HTMLElement element;
 
@@ -882,11 +876,10 @@ HRESULT create_storage(IHTMLStorage**) DECLSPEC_HIDDEN;
 void HTMLDocument_Persist_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_OleCmd_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_OleObj_Init(HTMLDocument*) DECLSPEC_HIDDEN;
-void HTMLDocument_View_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 void HTMLDocument_Service_Init(HTMLDocument*) DECLSPEC_HIDDEN;
 
+void HTMLDocument_View_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void TargetContainer_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
-void init_binding_ui(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 
 void HTMLDocumentNode_SecMgr_Init(HTMLDocumentNode*) DECLSPEC_HIDDEN;
 
@@ -897,6 +890,8 @@ void ConnectionPointContainer_Destroy(ConnectionPointContainer*) DECLSPEC_HIDDEN
 
 HRESULT create_nscontainer(HTMLDocumentObj*,NSContainer**) DECLSPEC_HIDDEN;
 void NSContainer_Release(NSContainer*) DECLSPEC_HIDDEN;
+
+compat_mode_t lock_document_mode(HTMLDocumentNode*) DECLSPEC_HIDDEN;
 
 void init_mutation(nsIComponentManager*) DECLSPEC_HIDDEN;
 void init_document_mutation(HTMLDocumentNode*) DECLSPEC_HIDDEN;
@@ -948,6 +943,7 @@ void nsAString_Finish(nsAString*) DECLSPEC_HIDDEN;
 
 HRESULT return_nsstr(nsresult,nsAString*,BSTR*) DECLSPEC_HIDDEN;
 HRESULT return_nsstr_variant(nsresult nsres, nsAString *nsstr, VARIANT *p) DECLSPEC_HIDDEN;
+HRESULT return_nsform(nsresult,nsIDOMHTMLFormElement*,IHTMLFormElement**) DECLSPEC_HIDDEN;
 
 nsICommandParams *create_nscommand_params(void) DECLSPEC_HIDDEN;
 HRESULT nsnode_to_nsstring(nsIDOMNode*,nsAString*) DECLSPEC_HIDDEN;
@@ -1051,8 +1047,6 @@ HRESULT HTMLGenericElement_Create(HTMLDocumentNode*,nsIDOMElement*,HTMLElement**
 
 void HTMLDOMNode_Init(HTMLDocumentNode*,HTMLDOMNode*,nsIDOMNode*,dispex_static_data_t*) DECLSPEC_HIDDEN;
 void HTMLElement_Init(HTMLElement*,HTMLDocumentNode*,nsIDOMElement*,dispex_static_data_t*) DECLSPEC_HIDDEN;
-void HTMLTextContainer_Init(HTMLTextContainer*,HTMLDocumentNode*,nsIDOMElement*,dispex_static_data_t*) DECLSPEC_HIDDEN;
-void HTMLFrameBase_Init(HTMLFrameBase*,HTMLDocumentNode*,nsIDOMElement*,dispex_static_data_t*) DECLSPEC_HIDDEN;
 
 void EventTarget_Init(EventTarget*,IUnknown*,dispex_static_data_t*,compat_mode_t) DECLSPEC_HIDDEN;
 HRESULT EventTarget_QI(EventTarget*,REFIID,void**) DECLSPEC_HIDDEN;
@@ -1069,11 +1063,9 @@ HRESULT HTMLElement_get_attr_col(HTMLDOMNode*,HTMLAttributeCollection**) DECLSPE
 HRESULT HTMLElement_handle_event(HTMLDOMNode*,DWORD,nsIDOMEvent*,BOOL*) DECLSPEC_HIDDEN;
 void HTMLElement_init_dispex_info(dispex_data_t*,compat_mode_t) DECLSPEC_HIDDEN;
 
-HRESULT HTMLFrameBase_QI(HTMLFrameBase*,REFIID,void**) DECLSPEC_HIDDEN;
-void HTMLFrameBase_destructor(HTMLFrameBase*) DECLSPEC_HIDDEN;
-
-HRESULT get_node(HTMLDocumentNode*,nsIDOMNode*,BOOL,HTMLDOMNode**) DECLSPEC_HIDDEN;
-HRESULT get_elem(HTMLDocumentNode*,nsIDOMElement*,HTMLElement**) DECLSPEC_HIDDEN;
+HRESULT get_node(nsIDOMNode*,BOOL,HTMLDOMNode**) DECLSPEC_HIDDEN;
+HRESULT get_element(nsIDOMElement*,HTMLElement**) DECLSPEC_HIDDEN;
+HRESULT get_document_node(nsIDOMDocument*,HTMLDocumentNode**) DECLSPEC_HIDDEN;
 
 HTMLElement *unsafe_impl_from_IHTMLElement(IHTMLElement*) DECLSPEC_HIDDEN;
 
@@ -1086,9 +1078,9 @@ HRESULT handle_link_click_event(HTMLElement*,nsAString*,nsAString*,nsIDOMEvent*,
 HRESULT wrap_iface(IUnknown*,IUnknown*,IUnknown**) DECLSPEC_HIDDEN;
 
 IHTMLElementCollection *create_all_collection(HTMLDOMNode*,BOOL) DECLSPEC_HIDDEN;
-IHTMLElementCollection *create_collection_from_nodelist(HTMLDocumentNode*,nsIDOMNodeList*) DECLSPEC_HIDDEN;
-IHTMLElementCollection *create_collection_from_htmlcol(HTMLDocumentNode*,nsIDOMHTMLCollection*) DECLSPEC_HIDDEN;
-IHTMLDOMChildrenCollection *create_child_collection(HTMLDocumentNode*,nsIDOMNodeList*) DECLSPEC_HIDDEN;
+IHTMLElementCollection *create_collection_from_nodelist(nsIDOMNodeList*,compat_mode_t) DECLSPEC_HIDDEN;
+IHTMLElementCollection *create_collection_from_htmlcol(nsIDOMHTMLCollection*,compat_mode_t) DECLSPEC_HIDDEN;
+IHTMLDOMChildrenCollection *create_child_collection(nsIDOMNodeList*) DECLSPEC_HIDDEN;
 
 HRESULT attr_value_to_string(VARIANT*) DECLSPEC_HIDDEN;
 HRESULT get_elem_attr_value_by_dispid(HTMLElement*,DISPID,VARIANT*) DECLSPEC_HIDDEN;

@@ -849,7 +849,7 @@ static void test_Loader(void)
             SetLastError(0xdeadbeef);
             hlib_as_data_file = LoadLibraryExA(dll_name, 0, LOAD_LIBRARY_AS_DATAFILE);
             ok(hlib_as_data_file != 0, "LoadLibraryEx error %u\n", GetLastError());
-            ok((ULONG_PTR)hlib_as_data_file & 1, "hlib_as_data_file is even\n");
+            ok(((ULONG_PTR)hlib_as_data_file & 3) == 1, "hlib_as_data_file got %p\n", hlib_as_data_file);
 
             hlib = GetModuleHandleA(dll_name);
             ok(!hlib, "GetModuleHandle should fail\n");
@@ -865,7 +865,7 @@ static void test_Loader(void)
 
             SetLastError(0xdeadbeef);
             hlib_as_data_file = LoadLibraryExA(dll_name, 0, LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE);
-            if (!((ULONG_PTR)hlib_as_data_file & 1) ||  /* winxp */
+            if (!((ULONG_PTR)hlib_as_data_file & 3) ||  /* winxp */
                 (!hlib_as_data_file && GetLastError() == ERROR_INVALID_PARAMETER))  /* w2k3 */
             {
                 win_skip( "LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE not supported\n" );
@@ -877,9 +877,36 @@ static void test_Loader(void)
 
                 SetLastError(0xdeadbeef);
                 h = CreateFileA( dll_name, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
-                todo_wine ok( h == INVALID_HANDLE_VALUE, "open succeeded\n" );
-                todo_wine ok( GetLastError() == ERROR_SHARING_VIOLATION, "wrong error %u\n", GetLastError() );
+                ok( h == INVALID_HANDLE_VALUE, "open succeeded\n" );
+                ok( GetLastError() == ERROR_SHARING_VIOLATION, "wrong error %u\n", GetLastError() );
                 CloseHandle( h );
+
+                SetLastError(0xdeadbeef);
+                h = CreateFileA( dll_name, GENERIC_READ | DELETE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
+                ok( h != INVALID_HANDLE_VALUE, "open failed err %u\n", GetLastError() );
+                CloseHandle( h );
+
+                SetLastError(0xdeadbeef);
+                ret = FreeLibrary(hlib_as_data_file);
+                ok(ret, "FreeLibrary error %d\n", GetLastError());
+            }
+
+            SetLastError(0xdeadbeef);
+            hlib_as_data_file = LoadLibraryExA(dll_name, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+            if (!((ULONG_PTR)hlib_as_data_file & 3) ||  /* winxp */
+                (!hlib_as_data_file && GetLastError() == ERROR_INVALID_PARAMETER))  /* w2k3 */
+            {
+                win_skip( "LOAD_LIBRARY_AS_IMAGE_RESOURCE not supported\n" );
+                FreeLibrary(hlib_as_data_file);
+            }
+            else
+            {
+                ok(hlib_as_data_file != 0, "LoadLibraryEx error %u\n", GetLastError());
+                ok(((ULONG_PTR)hlib_as_data_file & 3) == 2, "hlib_as_data_file got %p\n",
+                   hlib_as_data_file);
+
+                hlib = GetModuleHandleA(dll_name);
+                ok(!hlib, "GetModuleHandle should fail\n");
 
                 SetLastError(0xdeadbeef);
                 ret = FreeLibrary(hlib_as_data_file);
@@ -1250,6 +1277,85 @@ static void test_Loader(void)
     }
 
     section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
+}
+
+static void test_filenames(void)
+{
+    IMAGE_NT_HEADERS nt_header = nt_header_template;
+    char dll_name[MAX_PATH], long_path[MAX_PATH], short_path[MAX_PATH], buffer[MAX_PATH];
+    HMODULE mod, mod2;
+    BOOL ret;
+
+    nt_header.FileHeader.NumberOfSections = 1;
+    nt_header.FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER);
+
+    nt_header.OptionalHeader.SectionAlignment = page_size;
+    nt_header.OptionalHeader.DllCharacteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+    nt_header.OptionalHeader.FileAlignment = page_size;
+    nt_header.OptionalHeader.SizeOfHeaders = sizeof(dos_header) + sizeof(nt_header) + sizeof(IMAGE_SECTION_HEADER);
+    nt_header.OptionalHeader.SizeOfImage = sizeof(dos_header) + sizeof(nt_header) + sizeof(IMAGE_SECTION_HEADER) + page_size;
+
+    create_test_dll( &dos_header, sizeof(dos_header), &nt_header, dll_name );
+    strcpy( long_path, dll_name );
+    strcpy( strrchr( long_path, '\\' ), "\\this-is-a-long-name.dll" );
+    ret = MoveFileA( dll_name, long_path );
+    ok( ret, "MoveFileA failed err %u\n", GetLastError() );
+    GetShortPathNameA( long_path, short_path, MAX_PATH );
+
+    mod = LoadLibraryA( short_path );
+    ok( mod != NULL, "loading failed err %u\n", GetLastError() );
+    GetModuleFileNameA( mod, buffer, MAX_PATH );
+    ok( !lstrcmpiA( buffer, short_path ), "got wrong path %s / %s\n", buffer, short_path );
+    mod2 = GetModuleHandleA( short_path );
+    ok( mod == mod2, "wrong module %p for %s\n", mod2, short_path );
+    mod2 = GetModuleHandleA( long_path );
+    ok( mod == mod2, "wrong module %p for %s\n", mod2, long_path );
+    mod2 = LoadLibraryA( long_path );
+    ok( mod2 != NULL, "loading failed err %u\n", GetLastError() );
+    ok( mod == mod2, "library loaded twice\n" );
+    GetModuleFileNameA( mod2, buffer, MAX_PATH );
+    ok( !lstrcmpiA( buffer, short_path ), "got wrong path %s / %s\n", buffer, short_path );
+    FreeLibrary( mod2 );
+    FreeLibrary( mod );
+
+    mod = LoadLibraryA( long_path );
+    ok( mod != NULL, "loading failed err %u\n", GetLastError() );
+    GetModuleFileNameA( mod, buffer, MAX_PATH );
+    ok( !lstrcmpiA( buffer, long_path ), "got wrong path %s / %s\n", buffer, long_path );
+    mod2 = GetModuleHandleA( short_path );
+    ok( mod == mod2, "wrong module %p for %s\n", mod2, short_path );
+    mod2 = GetModuleHandleA( long_path );
+    ok( mod == mod2, "wrong module %p for %s\n", mod2, long_path );
+    mod2 = LoadLibraryA( short_path );
+    ok( mod2 != NULL, "loading failed err %u\n", GetLastError() );
+    ok( mod == mod2, "library loaded twice\n" );
+    GetModuleFileNameA( mod2, buffer, MAX_PATH );
+    ok( !lstrcmpiA( buffer, long_path ), "got wrong path %s / %s\n", buffer, long_path );
+    FreeLibrary( mod2 );
+    FreeLibrary( mod );
+
+    strcpy( dll_name, long_path );
+    strcpy( strrchr( dll_name, '\\' ), "\\this-is-another-name.dll" );
+    ret = CreateHardLinkA( dll_name, long_path, NULL );
+    ok( ret, "CreateHardLinkA failed err %u\n", GetLastError() );
+    if (ret)
+    {
+        mod = LoadLibraryA( dll_name );
+        ok( mod != NULL, "loading failed err %u\n", GetLastError() );
+        GetModuleFileNameA( mod, buffer, MAX_PATH );
+        ok( !lstrcmpiA( buffer, dll_name ), "got wrong path %s / %s\n", buffer, dll_name );
+        mod2 = GetModuleHandleA( long_path );
+        ok( mod == mod2, "wrong module %p for %s\n", mod2, long_path );
+        mod2 = LoadLibraryA( long_path );
+        ok( mod2 != NULL, "loading failed err %u\n", GetLastError() );
+        ok( mod == mod2, "library loaded twice\n" );
+        GetModuleFileNameA( mod2, buffer, MAX_PATH );
+        ok( !lstrcmpiA( buffer, dll_name ), "got wrong path %s / %s\n", buffer, short_path );
+        FreeLibrary( mod2 );
+        FreeLibrary( mod );
+        DeleteFileA( dll_name );
+    }
+    DeleteFileA( long_path );
 }
 
 /* Verify linking style of import descriptors */
@@ -3488,6 +3594,7 @@ START_TEST(loader)
     }
 
     test_Loader();
+    test_filenames();
     test_ResolveDelayLoadedAPI();
     test_ImportDescriptors();
     test_section_access();

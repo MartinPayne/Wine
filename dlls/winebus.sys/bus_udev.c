@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdio.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -47,6 +48,9 @@
 # undef SW_MAX
 # if defined(EVIOCGBIT) && defined(EV_ABS) && defined(BTN_PINKIE)
 #  define HAS_PROPER_INPUT_HEADER
+# endif
+# ifndef SYN_DROPPED
+#  define SYN_DROPPED 3
 # endif
 #endif
 
@@ -75,6 +79,7 @@
 #define LE_DWORD(x) (x)
 #endif
 
+#include "controller.h"
 #include "bus.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(plugplay);
@@ -110,50 +115,6 @@ static inline struct platform_private *impl_from_DEVICE_OBJECT(DEVICE_OBJECT *de
 }
 
 #ifdef HAS_PROPER_INPUT_HEADER
-static const BYTE REPORT_HEADER[] = {
-    0x05, 0x01, /* USAGE_PAGE (Generic Desktop) */
-    0x09, 0x00, /* USAGE (??) */
-    0xa1, 0x01, /* COLLECTION (Application) */
-    0x09, 0x01, /*   USAGE () */
-    0xa1, 0x00, /*   COLLECTION (Physical) */
-};
-
-#define IDX_HEADER_PAGE 1
-#define IDX_HEADER_USAGE 3
-
-static const BYTE REPORT_BUTTONS[] = {
-    0x05, 0x09, /* USAGE_PAGE (Button) */
-    0x19, 0x01, /* USAGE_MINIMUM (Button 1) */
-    0x29, 0x03, /* USAGE_MAXIMUM (Button 3) */
-    0x15, 0x00, /* LOGICAL_MINIMUM (0) */
-    0x25, 0x01, /* LOGICAL_MAXIMUM (1) */
-    0x35, 0x00, /* LOGICAL_MINIMUM (0) */
-    0x45, 0x01, /* LOGICAL_MAXIMUM (1) */
-    0x95, 0x03, /* REPORT_COUNT (3) */
-    0x75, 0x01, /* REPORT_SIZE (1) */
-    0x81, 0x02, /* INPUT (Data,Var,Abs) */
-};
-#define IDX_BUTTON_MIN_USAGE 3
-#define IDX_BUTTON_MAX_USAGE 5
-#define IDX_BUTTON_COUNT 11
-
-static const BYTE REPORT_PADDING[] = {
-    0x95, 0x03, /* REPORT_COUNT (3) */
-    0x75, 0x01, /* REPORT_SIZE (1) */
-    0x81, 0x03, /* INPUT (Cnst,Var,Abs) */
-};
-#define IDX_PADDING_BIT_COUNT 1
-
-static const BYTE REPORT_AXIS_HEADER[] = {
-    0x05, 0x01,  /* USAGE_PAGE (Generic Desktop) */
-};
-#define IDX_AXIS_PAGE 1
-
-
-static const BYTE REPORT_AXIS_USAGE[] = {
-    0x09, 0x30,  /* USAGE (X) */
-};
-#define IDX_AXIS_USAGE 1
 
 static const BYTE REPORT_ABS_AXIS_TAIL[] = {
     0x17, 0x00, 0x00, 0x00, 0x00,  /* LOGICAL_MINIMUM (0) */
@@ -169,33 +130,6 @@ static const BYTE REPORT_ABS_AXIS_TAIL[] = {
 #define IDX_ABS_PHY_MINIMUM 11
 #define IDX_ABS_PHY_MAXIMUM 16
 #define IDX_ABS_AXIS_COUNT 23
-
-static const BYTE REPORT_REL_AXIS_TAIL[] = {
-    0x15, 0x81,    /* LOGICAL_MINIMUM (0) */
-    0x25, 0x7f,    /* LOGICAL_MAXIMUM (0xffff) */
-    0x75, 0x08,    /* REPORT_SIZE (16) */
-    0x95, 0x02,    /* REPORT_COUNT (2) */
-    0x81, 0x06,    /* INPUT (Data,Var,Rel) */
-};
-#define IDX_REL_AXIS_COUNT 7
-
-static const BYTE REPORT_HATSWITCH[] = {
-    0x05, 0x01,  /* USAGE_PAGE (Generic Desktop) */
-    0x09, 0x39,  /* USAGE (Hatswitch) */
-    0x15, 0x00,  /* LOGICAL_MINIMUM (0) */
-    0x25, 0x08,  /* LOGICAL_MAXIMUM (0x08) */
-    0x35, 0x00,  /* PHYSICAL_MINIMUM (0) */
-    0x45, 0x08,  /* PHYSICAL_MAXIMUM (8) */
-    0x75, 0x08,  /* REPORT_SIZE (8) */
-    0x95, 0x01,  /* REPORT_COUNT (1) */
-    0x81, 0x02,  /* INPUT (Data,Var,Abs) */
-};
-#define IDX_HATSWITCH_COUNT 15
-
-static const BYTE REPORT_TAIL[] = {
-    0xc0, /*   END_COLLECTION */
-    0xc0  /* END_COLLECTION */
-};
 
 static const BYTE ABS_TO_HID_MAP[][2] = {
     {HID_USAGE_PAGE_GENERIC, HID_USAGE_GENERIC_X},              /*ABS_X*/
@@ -271,15 +205,6 @@ struct wine_input_private {
 
 #define test_bit(arr,bit) (((BYTE*)(arr))[(bit)>>3]&(1<<((bit)&7)))
 
-static BYTE *add_button_block(BYTE* report_ptr, BYTE usage_min, BYTE usage_max)
-{
-    memcpy(report_ptr, REPORT_BUTTONS, sizeof(REPORT_BUTTONS));
-    report_ptr[IDX_BUTTON_MIN_USAGE] = usage_min;
-    report_ptr[IDX_BUTTON_MAX_USAGE] = usage_max;
-    report_ptr[IDX_BUTTON_COUNT] = (usage_max - usage_min) + 1;
-    return report_ptr + sizeof(REPORT_BUTTONS);
-}
-
 static BYTE *add_axis_block(BYTE *report_ptr, BYTE count, BYTE page, BYTE *usages, BOOL absolute, const struct wine_input_absinfo *absinfo)
 {
     int i;
@@ -312,20 +237,6 @@ static BYTE *add_axis_block(BYTE *report_ptr, BYTE count, BYTE page, BYTE *usage
         report_ptr += sizeof(REPORT_REL_AXIS_TAIL);
     }
     return report_ptr;
-}
-
-static BYTE *add_padding_block(BYTE *report_ptr, BYTE bitcount)
-{
-    memcpy(report_ptr, REPORT_PADDING, sizeof(REPORT_PADDING));
-    report_ptr[IDX_PADDING_BIT_COUNT] = bitcount;
-    return report_ptr + sizeof(REPORT_PADDING);
-}
-
-static BYTE *add_hatswitch(BYTE *report_ptr, INT count)
-{
-    memcpy(report_ptr, REPORT_HATSWITCH, sizeof(REPORT_HATSWITCH));
-    report_ptr[IDX_HATSWITCH_COUNT] = count;
-    return report_ptr + sizeof(REPORT_HATSWITCH);
 }
 
 static const BYTE* what_am_I(struct udev_device *dev)
@@ -362,23 +273,6 @@ static const BYTE* what_am_I(struct udev_device *dev)
         parent = udev_device_get_parent_with_subsystem_devtype(parent, "input", NULL);
     }
     return Unknown;
-}
-
-static void set_button_value(struct wine_input_private *ext, int code, int value)
-{
-    int index = ext->button_map[code];
-    int bindex = index / 8;
-    int b = index % 8;
-    BYTE mask;
-
-    mask = 1<<b;
-    if (value)
-        ext->current_report_buffer[bindex] = ext->current_report_buffer[bindex] | mask;
-    else
-    {
-        mask = ~mask;
-        ext->current_report_buffer[bindex] = ext->current_report_buffer[bindex] & mask;
-    }
 }
 
 static void set_abs_axis_value(struct wine_input_private *ext, int code, int value)
@@ -701,7 +595,7 @@ static BOOL set_report_from_event(struct wine_input_private *ext, struct input_e
             return FALSE;
 #endif
         case EV_KEY:
-            set_button_value(ext, ie->code, ie->value);
+            set_button_value(ext->button_map[ie->code], ie->value, ext->current_report_buffer);
             return FALSE;
         case EV_ABS:
             set_abs_axis_value(ext, ie->code, ie->value);
@@ -725,17 +619,6 @@ static inline WCHAR *strdupAtoW(const char *src)
     if ((dst = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR))))
         MultiByteToWideChar(CP_UNIXCP, 0, src, -1, dst, len);
     return dst;
-}
-
-static DWORD get_sysattr_dword(struct udev_device *dev, const char *sysattr, int base)
-{
-    const char *attr = udev_device_get_sysattr_value(dev, sysattr);
-    if (!attr)
-    {
-        WARN("Could not get %s from device\n", sysattr);
-        return 0;
-    }
-    return strtol(attr, NULL, base);
 }
 
 static WCHAR *get_sysattr_string(struct udev_device *dev, const char *sysattr)
@@ -790,23 +673,23 @@ static NTSTATUS hidraw_get_reportdescriptor(DEVICE_OBJECT *device, BYTE *buffer,
 
 static NTSTATUS hidraw_get_string(DEVICE_OBJECT *device, DWORD index, WCHAR *buffer, DWORD length)
 {
-    struct udev_device *usbdev;
+    struct udev_device *hiddev;
     struct platform_private *private = impl_from_DEVICE_OBJECT(device);
     WCHAR *str = NULL;
 
-    usbdev = udev_device_get_parent_with_subsystem_devtype(private->udev_device, "usb", "usb_device");
-    if (usbdev)
+    hiddev = udev_device_get_parent_with_subsystem_devtype(private->udev_device, "hid", NULL);
+    if (hiddev)
     {
         switch (index)
         {
             case HID_STRING_ID_IPRODUCT:
-                str = get_sysattr_string(usbdev, "product");
+                str = get_sysattr_string(hiddev, "product");
                 break;
             case HID_STRING_ID_IMANUFACTURER:
-                str = get_sysattr_string(usbdev, "manufacturer");
+                str = get_sysattr_string(hiddev, "manufacturer");
                 break;
             case HID_STRING_ID_ISERIALNUMBER:
-                str = get_sysattr_string(usbdev, "serial");
+                str = get_sysattr_string(hiddev, "serial");
                 break;
             default:
                 ERR("Unhandled string index %08x\n", index);
@@ -1159,16 +1042,71 @@ static int check_same_device(DEVICE_OBJECT *device, void* context)
     return !compare_platform_device(device, context);
 }
 
+static int parse_uevent_info(const char *uevent, DWORD *vendor_id,
+                             DWORD *product_id, WCHAR **serial_number)
+{
+    DWORD bus_type;
+    char *tmp = strdup(uevent);
+    char *saveptr = NULL;
+    char *line;
+    char *key;
+    char *value;
+
+    int found_id = 0;
+    int found_serial = 0;
+
+    line = strtok_r(tmp, "\n", &saveptr);
+    while (line != NULL)
+    {
+        /* line: "KEY=value" */
+        key = line;
+        value = strchr(line, '=');
+        if (!value)
+        {
+            goto next_line;
+        }
+        *value = '\0';
+        value++;
+
+        if (strcmp(key, "HID_ID") == 0)
+        {
+            /**
+             *        type vendor   product
+             * HID_ID=0003:000005AC:00008242
+             **/
+            int ret = sscanf(value, "%x:%x:%x", &bus_type, vendor_id, product_id);
+            if (ret == 3)
+                found_id = 1;
+        }
+        else if (strcmp(key, "HID_UNIQ") == 0)
+        {
+            /* The caller has to free the serial number */
+            if (strlen(value))
+            {
+                *serial_number = (WCHAR*)strdupAtoW(value);
+                found_serial = 1;
+            }
+        }
+
+next_line:
+        line = strtok_r(NULL, "\n", &saveptr);
+    }
+
+    free(tmp);
+    return (found_id && found_serial);
+}
+
 static void try_add_device(struct udev_device *dev)
 {
     DWORD vid = 0, pid = 0, version = 0;
-    struct udev_device *usbdev = NULL;
+    struct udev_device *hiddev = NULL;
     DEVICE_OBJECT *device = NULL;
     const char *subsystem;
     const char *devnode;
     WCHAR *serial = NULL;
     BOOL is_gamepad = FALSE;
     int fd;
+    static const CHAR *base_serial = "0000";
 
     if (!(devnode = udev_device_get_devnode(dev)))
         return;
@@ -1180,8 +1118,8 @@ static void try_add_device(struct udev_device *dev)
     }
 
     subsystem = udev_device_get_subsystem(dev);
-    usbdev = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_device");
-    if (usbdev)
+    hiddev = udev_device_get_parent_with_subsystem_devtype(dev, "hid", NULL);
+    if (hiddev)
     {
 #ifdef HAS_PROPER_INPUT_HEADER
         const platform_vtbl *other_vtbl = NULL;
@@ -1200,10 +1138,10 @@ static void try_add_device(struct udev_device *dev)
             return;
         }
 #endif
-        vid     = get_sysattr_dword(usbdev, "idVendor", 16);
-        pid     = get_sysattr_dword(usbdev, "idProduct", 16);
-        version = get_sysattr_dword(usbdev, "version", 10);
-        serial  = get_sysattr_string(usbdev, "serial");
+        parse_uevent_info(udev_device_get_sysattr_value(hiddev, "uevent"),
+                          &vid, &pid, &serial);
+        if (serial == NULL)
+            serial = strdupAtoW(base_serial);
     }
 #ifdef HAS_PROPER_INPUT_HEADER
     else

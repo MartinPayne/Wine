@@ -271,6 +271,7 @@ static inline enum complex_fixup get_complex_fixup(struct color_fixup_desc fixup
 #define MAX_CONSTANT_BUFFERS        15
 #define MAX_SAMPLER_OBJECTS         16
 #define MAX_SHADER_RESOURCE_VIEWS   128
+#define MAX_RENDER_TARGET_VIEWS     8
 #define MAX_UNORDERED_ACCESS_VIEWS  8
 #define MAX_TGSM_REGISTERS          8192
 #define MAX_VERTEX_BLENDS           4
@@ -1944,9 +1945,7 @@ struct wined3d_context
     struct fbo_entry        *current_fbo;
     GLuint                  fbo_read_binding;
     GLuint                  fbo_draw_binding;
-    struct wined3d_rendertarget_info *blit_targets;
-    struct wined3d_fbo_entry_key *fbo_key;
-    GLenum *draw_buffers;
+    struct wined3d_rendertarget_info blit_targets[MAX_RENDER_TARGET_VIEWS];
     DWORD draw_buffers_mask; /* Enabled draw buffers, 31 max. */
 
     /* Queries */
@@ -1993,7 +1992,7 @@ struct wined3d_context
 
 struct wined3d_fb_state
 {
-    struct wined3d_rendertarget_view **render_targets;
+    struct wined3d_rendertarget_view *render_targets[MAX_RENDER_TARGET_VIEWS];
     struct wined3d_rendertarget_view *depth_stencil;
 };
 
@@ -2135,10 +2134,6 @@ void context_alloc_occlusion_query(struct wined3d_context *context,
 void context_apply_blit_state(struct wined3d_context *context, const struct wined3d_device *device) DECLSPEC_HIDDEN;
 BOOL context_apply_clear_state(struct wined3d_context *context, const struct wined3d_state *state,
         UINT rt_count, const struct wined3d_fb_state *fb) DECLSPEC_HIDDEN;
-void context_apply_compute_state(struct wined3d_context *context,
-        const struct wined3d_device *device, const struct wined3d_state *state) DECLSPEC_HIDDEN;
-BOOL context_apply_draw_state(struct wined3d_context *context,
-        const struct wined3d_device *device, const struct wined3d_state *state) DECLSPEC_HIDDEN;
 void context_apply_fbo_state_blit(struct wined3d_context *context, GLenum target,
         struct wined3d_surface *render_target, struct wined3d_surface *depth_stencil, DWORD location) DECLSPEC_HIDDEN;
 void context_active_texture(struct wined3d_context *context, const struct wined3d_gl_info *gl_info,
@@ -2537,6 +2532,9 @@ struct wined3d_gl_limits
     UINT vertex_attribs;
 
     unsigned int texture_buffer_offset_alignment;
+
+    unsigned int framebuffer_width;
+    unsigned int framebuffer_height;
 
     UINT glsl_varyings;
     UINT glsl_vs_float_constants;
@@ -3147,6 +3145,15 @@ struct wined3d_texture
         DWORD color_key_flags;
     } async;
 
+    struct wined3d_overlay_info
+    {
+        struct list entry;
+        struct list overlays;
+        struct wined3d_surface *dst;
+        RECT src_rect;
+        RECT dst_rect;
+    } *overlay_info;
+
     struct wined3d_texture_sub_resource
     {
         void *parent;
@@ -3168,6 +3175,23 @@ struct wined3d_texture
 static inline struct wined3d_texture *texture_from_resource(struct wined3d_resource *resource)
 {
     return CONTAINING_RECORD(resource, struct wined3d_texture, resource);
+}
+
+static inline GLenum wined3d_texture_get_sub_resource_target(const struct wined3d_texture *texture,
+        unsigned int sub_resource_idx)
+{
+    static const GLenum cube_targets[] =
+    {
+        GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB,
+    };
+
+    return texture->resource.usage & WINED3DUSAGE_LEGACY_CUBEMAP
+            ? cube_targets[sub_resource_idx / texture->level_count] : texture->target;
 }
 
 static inline struct gl_texture *wined3d_texture_get_gl_texture(struct wined3d_texture *texture,
@@ -3276,7 +3300,7 @@ struct fbo_entry
     struct wined3d_fbo_entry_key
     {
         DWORD rb_namespace;
-        struct wined3d_fbo_resource objects[1];
+        struct wined3d_fbo_resource objects[MAX_RENDER_TARGET_VIEWS + 1];
     } key;
 };
 
@@ -3284,7 +3308,6 @@ struct wined3d_surface
 {
     struct wined3d_texture *container;
 
-    GLenum texture_target;
     unsigned int texture_level;
     unsigned int texture_layer;
 
@@ -3294,13 +3317,6 @@ struct wined3d_surface
 
     struct list               renderbuffers;
     const struct wined3d_renderbuffer_entry *current_renderbuffer;
-
-    /* DirectDraw Overlay handling */
-    RECT                      overlay_srcrect;
-    RECT                      overlay_destrect;
-    struct wined3d_surface *overlay_dest;
-    struct list               overlays;
-    struct list               overlay_entry;
 };
 
 static inline unsigned int surface_get_sub_resource_idx(const struct wined3d_surface *surface)
@@ -3327,8 +3343,9 @@ void wined3d_surface_upload_data(struct wined3d_surface *surface, const struct w
         const struct wined3d_format *format, const RECT *src_rect, UINT src_pitch, const POINT *dst_point,
         BOOL srgb, const struct wined3d_const_bo_address *data) DECLSPEC_HIDDEN;
 
-void draw_textured_quad(const struct wined3d_surface *src_surface, struct wined3d_context *context,
-        const RECT *src_rect, const RECT *dst_rect, enum wined3d_texture_filter_type filter) DECLSPEC_HIDDEN;
+void draw_textured_quad(struct wined3d_texture *texture, unsigned int sub_resource_idx,
+        struct wined3d_context *context, const RECT *src_rect, const RECT *dst_rect,
+        enum wined3d_texture_filter_type filter) DECLSPEC_HIDDEN;
 
 struct wined3d_sampler
 {

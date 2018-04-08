@@ -44,9 +44,6 @@ typedef struct {
 
     LONG ref;
 
-    /* FIXME: implement weak reference */
-    HTMLDocumentNode *doc;
-
     nsIDOMNodeList *nslist;
 } HTMLDOMChildrenCollection;
 
@@ -136,7 +133,7 @@ static HRESULT WINAPI HTMLDOMChildrenCollectionEnum_Next(IEnumVARIANT *iface, UL
         nsres = nsIDOMNodeList_Item(This->col->nslist, This->iter+fetched, &nsnode);
         assert(nsres == NS_OK);
 
-        hres = get_node(This->col->doc, nsnode, TRUE, &node);
+        hres = get_node(nsnode, TRUE, &node);
         nsIDOMNode_Release(nsnode);
         if(FAILED(hres)) {
             ERR("get_node failed: %08x\n", hres);
@@ -244,7 +241,6 @@ static ULONG WINAPI HTMLDOMChildrenCollection_Release(IHTMLDOMChildrenCollection
     TRACE("(%p) ref=%d\n", This, ref);
 
     if(!ref) {
-        htmldoc_release(&This->doc->basedoc);
         nsIDOMNodeList_Release(This->nslist);
         heap_free(This);
     }
@@ -342,7 +338,7 @@ static HRESULT WINAPI HTMLDOMChildrenCollection_item(IHTMLDOMChildrenCollection 
         return E_FAIL;
     }
 
-    hres = get_node(This->doc, nsnode, TRUE, &node);
+    hres = get_node(nsnode, TRUE, &node);
     if(FAILED(hres))
         return hres;
 
@@ -440,7 +436,7 @@ static dispex_static_data_t HTMLDOMChildrenCollection_dispex = {
     HTMLDOMNode_init_dispex_info
 };
 
-IHTMLDOMChildrenCollection *create_child_collection(HTMLDocumentNode *doc, nsIDOMNodeList *nslist)
+IHTMLDOMChildrenCollection *create_child_collection(nsIDOMNodeList *nslist)
 {
     HTMLDOMChildrenCollection *ret;
 
@@ -453,9 +449,6 @@ IHTMLDOMChildrenCollection *create_child_collection(HTMLDocumentNode *doc, nsIDO
 
     nsIDOMNodeList_AddRef(nslist);
     ret->nslist = nslist;
-
-    htmldoc_addref(&doc->basedoc);
-    ret->doc = doc;
 
     init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLDOMChildrenCollection_iface,
             &HTMLDOMChildrenCollection_dispex);
@@ -589,7 +582,7 @@ static HRESULT WINAPI HTMLDOMNode_get_parentNode(IHTMLDOMNode *iface, IHTMLDOMNo
         return S_OK;
     }
 
-    hres = get_node(This->doc, nsnode, TRUE, &node);
+    hres = get_node(nsnode, TRUE, &node);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
@@ -628,7 +621,7 @@ static HRESULT WINAPI HTMLDOMNode_get_childNodes(IHTMLDOMNode *iface, IDispatch 
         return E_FAIL;
     }
 
-    *p = (IDispatch*)create_child_collection(This->doc, nslist);
+    *p = (IDispatch*)create_child_collection(nslist);
     nsIDOMNodeList_Release(nslist);
 
     return *p ? S_OK : E_OUTOFMEMORY;
@@ -712,7 +705,7 @@ static HRESULT WINAPI HTMLDOMNode_insertBefore(IHTMLDOMNode *iface, IHTMLDOMNode
     if(FAILED(hres))
         return hres;
 
-    hres = get_node(This->doc, nsnode, TRUE, &node_obj);
+    hres = get_node(nsnode, TRUE, &node_obj);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
@@ -743,7 +736,7 @@ static HRESULT WINAPI HTMLDOMNode_removeChild(IHTMLDOMNode *iface, IHTMLDOMNode 
         return E_FAIL;
     }
 
-    hres = get_node(This->doc, nsnode, TRUE, &node_obj);
+    hres = get_node(nsnode, TRUE, &node_obj);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
@@ -780,7 +773,7 @@ static HRESULT WINAPI HTMLDOMNode_replaceChild(IHTMLDOMNode *iface, IHTMLDOMNode
     if(NS_FAILED(nsres))
         return E_FAIL;
 
-    hres = get_node(This->doc, nsnode, TRUE, &ret_node);
+    hres = get_node(nsnode, TRUE, &ret_node);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
@@ -860,7 +853,7 @@ static HRESULT WINAPI HTMLDOMNode_appendChild(IHTMLDOMNode *iface, IHTMLDOMNode 
         return E_FAIL;
     }
 
-    hres = get_node(This->doc, nsnode, TRUE, &node_obj);
+    hres = get_node(nsnode, TRUE, &node_obj);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
@@ -946,7 +939,7 @@ static HRESULT WINAPI HTMLDOMNode_get_firstChild(IHTMLDOMNode *iface, IHTMLDOMNo
         return S_OK;
     }
 
-    hres = get_node(This->doc, nschild, TRUE, &node);
+    hres = get_node(nschild, TRUE, &node);
     nsIDOMNode_Release(nschild);
     if(FAILED(hres))
         return hres;
@@ -970,7 +963,7 @@ static HRESULT WINAPI HTMLDOMNode_get_lastChild(IHTMLDOMNode *iface, IHTMLDOMNod
         return S_OK;
     }
 
-    hres = get_node(This->doc, nschild, TRUE, &node);
+    hres = get_node(nschild, TRUE, &node);
     nsIDOMNode_Release(nschild);
     if(FAILED(hres))
         return hres;
@@ -994,7 +987,7 @@ static HRESULT WINAPI HTMLDOMNode_get_previousSibling(IHTMLDOMNode *iface, IHTML
         return S_OK;
     }
 
-    hres = get_node(This->doc, nschild, TRUE, &node);
+    hres = get_node(nschild, TRUE, &node);
     nsIDOMNode_Release(nschild);
     if(FAILED(hres))
         return hres;
@@ -1018,7 +1011,7 @@ static HRESULT WINAPI HTMLDOMNode_get_nextSibling(IHTMLDOMNode *iface, IHTMLDOMN
         return S_OK;
     }
 
-    hres = get_node(This->doc, nssibling, TRUE, &node);
+    hres = get_node(nssibling, TRUE, &node);
     nsIDOMNode_Release(nssibling);
     if(FAILED(hres))
         return hres;
@@ -1614,10 +1607,13 @@ void init_node_cc(void)
     ccp_init(&node_ccp, &node_ccp_callback);
 }
 
-HRESULT get_node(HTMLDocumentNode *This, nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
+HRESULT get_node(nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
 {
+    nsIDOMDocument *dom_document;
+    HTMLDocumentNode *document;
     nsISupports *unk = NULL;
     nsresult nsres;
+    HRESULT hres;
 
     nsres = nsIDOMNode_GetMshtmlNode(nsnode, &unk);
     assert(nsres == NS_OK);
@@ -1633,5 +1629,18 @@ HRESULT get_node(HTMLDocumentNode *This, nsIDOMNode *nsnode, BOOL create, HTMLDO
         return S_OK;
     }
 
-    return create_node(This, nsnode, ret);
+    nsres = nsIDOMNode_GetOwnerDocument(nsnode, &dom_document);
+    if(NS_FAILED(nsres) || !dom_document) {
+        ERR("GetOwnerDocument failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    hres = get_document_node(dom_document, &document);
+    nsIDOMDocument_Release(dom_document);
+    if(!document)
+        return E_FAIL;
+
+    hres = create_node(document, nsnode, ret);
+    htmldoc_release(&document->basedoc);
+    return hres;
 }

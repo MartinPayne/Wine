@@ -234,7 +234,7 @@ static ULONG WINAPI FolderItemVerbImpl_Release(FolderItemVerb *iface)
     {
         IContextMenu_Release(This->contextmenu);
         SysFreeString(This->name);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
     }
 
     return ref;
@@ -346,7 +346,7 @@ static HRESULT FolderItemVerb_Constructor(IContextMenu *contextmenu, BSTR name, 
 
     TRACE("%p, %s\n", contextmenu, debugstr_w(name));
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderItemVerbImpl));
+    This = heap_alloc(sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 
@@ -404,7 +404,7 @@ static ULONG WINAPI FolderItemVerbsImpl_Release(FolderItemVerbs *iface)
     {
         IContextMenu_Release(This->contextmenu);
         DestroyMenu(This->hMenu);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
     }
 
     return ref;
@@ -578,7 +578,7 @@ static HRESULT FolderItemVerbs_Constructor(BSTR path, FolderItemVerbs **verbs)
 
     *verbs = NULL;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FolderItemVerbsImpl));
+    This = heap_alloc(sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 
@@ -613,7 +613,7 @@ static HRESULT FolderItemVerbs_Constructor(BSTR path, FolderItemVerbs **verbs)
     return S_OK;
 
 failed:
-    HeapFree(GetProcessHeap(), 0, This);
+    heap_free(This);
     return hr;
 }
 
@@ -661,8 +661,8 @@ static ULONG WINAPI FolderItemImpl_Release(FolderItem2 *iface)
     if (!ref)
     {
         Folder3_Release(&This->folder->Folder3_iface);
-        HeapFree(GetProcessHeap(), 0, This->path);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This->path);
+        heap_free(This);
     }
     return ref;
 }
@@ -964,7 +964,7 @@ static HRESULT FolderItem_Constructor(FolderImpl *folder, const WCHAR *path, Fol
 
     *item = NULL;
 
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This));
+    This = heap_alloc_zero(sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 
@@ -1031,8 +1031,8 @@ static ULONG WINAPI FolderItemsImpl_Release(FolderItems3 *iface)
         Folder3_Release(&This->folder->Folder3_iface);
         for (i = 0; i < This->item_count; i++)
             SysFreeString(This->item_names[i]);
-        HeapFree(GetProcessHeap(), 0, This->item_names);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This->item_names);
+        heap_free(This);
     }
     return ref;
 }
@@ -1285,7 +1285,7 @@ static HRESULT FolderItems_Constructor(FolderImpl *folder, FolderItems **ret)
 
     *ret = NULL;
 
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This));
+    This = heap_alloc_zero(sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 
@@ -1312,13 +1312,13 @@ static HRESULT FolderItems_Constructor(FolderImpl *folder, FolderItems **ret)
         LPITEMIDLIST *pidls;
         ULONG fetched;
 
-        pidls = HeapAlloc(GetProcessHeap(), 0, This->item_count * sizeof(*pidls));
-        This->item_names = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, This->item_count * sizeof(*This->item_names));
+        pidls = heap_alloc(This->item_count * sizeof(*pidls));
+        This->item_names = heap_alloc_zero(This->item_count * sizeof(*This->item_names));
 
         if (!pidls || !This->item_names)
         {
-            HeapFree(GetProcessHeap(), 0, pidls);
-            HeapFree(GetProcessHeap(), 0, This->item_names);
+            heap_free(pidls);
+            heap_free(This->item_names);
             hr = E_OUTOFMEMORY;
             goto failed;
         }
@@ -1336,7 +1336,7 @@ static HRESULT FolderItems_Constructor(FolderImpl *folder, FolderItems **ret)
 
             ILFree(pidls[i]);
         }
-        HeapFree(GetProcessHeap(), 0, pidls);
+        heap_free(pidls);
     }
     IEnumIDList_Release(enumidlist);
 
@@ -1397,7 +1397,7 @@ static ULONG WINAPI FolderImpl_Release(Folder3 *iface)
         SysFreeString(This->path);
         IShellFolder2_Release(This->folder);
         IDispatch_Release(This->application);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
     }
     return ref;
 }
@@ -1667,14 +1667,14 @@ static HRESULT Folder_Constructor(IShellFolder2 *folder, LPITEMIDLIST pidl, Fold
 
     *ret = NULL;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    This = heap_alloc(sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 
     This->Folder3_iface.lpVtbl = &FolderImpl_Vtbl;
     This->ref = 1;
     This->folder = folder;
-    This->pidl = pidl;
+    This->pidl = ILClone(pidl);
 
     hr = SHBindToParent(pidl, &IID_IShellFolder2, (void **)&parent, &last_part);
     IShellFolder2_GetDisplayNameOf(parent, last_part, SHGDN_FORPARSING, &strret);
@@ -1734,7 +1734,7 @@ static ULONG WINAPI ShellDispatch_Release(IShellDispatch6 *iface)
     TRACE("(%p), new refcount=%i\n", iface, ref);
 
     if (!ref)
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
 
     return ref;
 }
@@ -1820,11 +1820,33 @@ static HRESULT WINAPI ShellDispatch_get_Parent(IShellDispatch6 *iface, IDispatch
     return S_OK;
 }
 
-static HRESULT WINAPI ShellDispatch_NameSpace(IShellDispatch6 *iface,
-        VARIANT dir, Folder **ret)
+static HRESULT create_folder_for_pidl(LPITEMIDLIST pidl, Folder **ret)
 {
     IShellFolder2 *folder;
     IShellFolder *desktop;
+    HRESULT hr;
+
+    *ret = NULL;
+
+    if (FAILED(hr = SHGetDesktopFolder(&desktop)))
+        return hr;
+
+    if (_ILIsDesktop(pidl))
+        hr = IShellFolder_QueryInterface(desktop, &IID_IShellFolder2, (void **)&folder);
+    else
+        hr = IShellFolder_BindToObject(desktop, pidl, NULL, &IID_IShellFolder2, (void **)&folder);
+
+    IShellFolder_Release(desktop);
+
+    if (FAILED(hr))
+        return S_FALSE;
+
+    return Folder_Constructor(folder, pidl, ret);
+}
+
+static HRESULT WINAPI ShellDispatch_NameSpace(IShellDispatch6 *iface,
+        VARIANT dir, Folder **ret)
+{
     LPITEMIDLIST pidl;
     HRESULT hr;
 
@@ -1854,29 +1876,45 @@ static HRESULT WINAPI ShellDispatch_NameSpace(IShellDispatch6 *iface,
             return S_FALSE;
     }
 
-    if (FAILED(hr = SHGetDesktopFolder(&desktop)))
-        return hr;
+    hr = create_folder_for_pidl(pidl, ret);
+    ILFree(pidl);
 
-    if (_ILIsDesktop(pidl))
-        hr = IShellFolder_QueryInterface(desktop, &IID_IShellFolder2, (void **)&folder);
-    else
-        hr = IShellFolder_BindToObject(desktop, pidl, NULL, &IID_IShellFolder2, (void **)&folder);
+    return hr;
+}
 
-    IShellFolder_Release(desktop);
-
-    if (FAILED(hr))
-        return S_FALSE;
-
-    return Folder_Constructor(folder, pidl, ret);
+static BOOL is_optional_argument(const VARIANT *arg)
+{
+    return V_VT(arg) == VT_ERROR && V_ERROR(arg) == DISP_E_PARAMNOTFOUND;
 }
 
 static HRESULT WINAPI ShellDispatch_BrowseForFolder(IShellDispatch6 *iface,
-        LONG Hwnd, BSTR Title, LONG Options, VARIANT RootFolder, Folder **ppsdf)
+        LONG hwnd, BSTR title, LONG options, VARIANT rootfolder, Folder **folder)
 {
-    FIXME("(%p,%x,%s,%x,%s,%p)\n", iface, Hwnd, debugstr_w(Title), Options, debugstr_variant(&RootFolder), ppsdf);
+    PIDLIST_ABSOLUTE selection;
+    BROWSEINFOW bi = { 0 };
+    HRESULT hr;
 
-    *ppsdf = NULL;
-    return E_NOTIMPL;
+    TRACE("(%p,%x,%s,%x,%s,%p)\n", iface, hwnd, debugstr_w(title), options, debugstr_variant(&rootfolder), folder);
+
+    *folder = NULL;
+
+    if (!is_optional_argument(&rootfolder))
+        FIXME("root folder is ignored\n");
+
+    bi.hwndOwner = LongToHandle(hwnd);
+    bi.lpszTitle = title;
+    bi.ulFlags = options;
+
+    selection = SHBrowseForFolderW(&bi);
+    if (selection)
+    {
+        hr = create_folder_for_pidl(selection, folder);
+        ILFree(selection);
+    }
+    else
+        hr = S_FALSE;
+
+    return hr;
 }
 
 static HRESULT WINAPI ShellDispatch_Windows(IShellDispatch6 *iface,
@@ -2244,7 +2282,7 @@ HRESULT WINAPI IShellDispatch_Constructor(IUnknown *outer, REFIID riid, void **p
 
     if (outer) return CLASS_E_NOAGGREGATION;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(ShellDispatch));
+    This = heap_alloc(sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
     This->IShellDispatch6_iface.lpVtbl = &ShellDispatchVtbl;
     This->ref = 1;

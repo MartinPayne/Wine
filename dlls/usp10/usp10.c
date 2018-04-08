@@ -1155,7 +1155,7 @@ HRESULT WINAPI ScriptGetProperties(const SCRIPT_PROPERTIES ***props, int *num)
 
     if (!props && !num) return E_INVALIDARG;
 
-    if (num) *num = sizeof(script_props)/sizeof(script_props[0]);
+    if (num) *num = ARRAY_SIZE(script_props);
     if (props) *props = script_props;
 
     return S_OK;
@@ -3609,14 +3609,13 @@ HRESULT WINAPI ScriptTextOut(const HDC hdc, SCRIPT_CACHE *psc, int x, int y, UIN
     if  (!psa->fNoGlyphIndex)                                     /* Have Glyphs?                      */
         fuOptions |= ETO_GLYPH_INDEX;                             /* Say don't do translation to glyph */
 
-    lpDx = heap_alloc(cGlyphs * sizeof(INT) * 2);
-    if (!lpDx) return E_OUTOFMEMORY;
+    if (!(lpDx = heap_calloc(cGlyphs, 2 * sizeof(*lpDx))))
+        return E_OUTOFMEMORY;
     fuOptions |= ETO_PDY;
 
     if (psa->fRTL && psa->fLogicalOrder)
     {
-        reordered_glyphs = heap_alloc( cGlyphs * sizeof(WORD) );
-        if (!reordered_glyphs)
+        if (!(reordered_glyphs = heap_calloc(cGlyphs, sizeof(*reordered_glyphs))))
         {
             heap_free( lpDx );
             return E_OUTOFMEMORY;
@@ -3755,8 +3754,7 @@ HRESULT WINAPI ScriptLayout(int runs, const BYTE *level, int *vistolog, int *log
     if (!level || (!vistolog && !logtovis))
         return E_INVALIDARG;
 
-    indexs = heap_alloc(sizeof(int) * runs);
-    if (!indexs)
+    if (!(indexs = heap_calloc(runs, sizeof(*indexs))))
         return E_OUTOFMEMORY;
 
     if (vistolog)

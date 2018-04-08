@@ -54,7 +54,7 @@ static inline BOOL is_version_nt(void)
 }
 
 /* returns directory handle to \\BaseNamedObjects */
-HANDLE get_BaseNamedObjects_handle(void)
+static HANDLE get_BaseNamedObjects_handle(void)
 {
     static HANDLE handle = NULL;
     static const WCHAR basenameW[] = {'\\','S','e','s','s','i','o','n','s','\\','%','u',
@@ -79,6 +79,37 @@ HANDLE get_BaseNamedObjects_handle(void)
         }
     }
     return handle;
+}
+
+static void get_create_object_attributes( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nameW,
+                                          SECURITY_ATTRIBUTES *sa, const WCHAR *name )
+{
+    attr->Length                   = sizeof(*attr);
+    attr->RootDirectory            = 0;
+    attr->ObjectName               = NULL;
+    attr->Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
+    attr->SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
+    attr->SecurityQualityOfService = NULL;
+    if (name)
+    {
+        RtlInitUnicodeString( nameW, name );
+        attr->ObjectName = nameW;
+        attr->RootDirectory = get_BaseNamedObjects_handle();
+    }
+}
+
+static BOOL get_open_object_attributes( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nameW,
+                                        BOOL inherit, const WCHAR *name )
+{
+    if (!name)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    RtlInitUnicodeString( nameW, name );
+    InitializeObjectAttributes( attr, nameW, inherit ? OBJ_INHERIT : 0,
+                                get_BaseNamedObjects_handle(), NULL );
+    return TRUE;
 }
 
 /* helper for kernel32->ntdll timeout format conversion */
@@ -476,18 +507,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateEventExW( SECURITY_ATTRIBUTES *sa, LPCWSTR
         return 0;
     }
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
-    attr.SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateEvent( &ret, access, &attr,
                             (flags & CREATE_EVENT_MANUAL_RESET) ? NotificationEvent : SynchronizationEvent,
@@ -530,18 +550,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenEventW( DWORD access, BOOL inherit, LPCWSTR 
 
     if (!is_version_nt()) access = EVENT_ALL_ACCESS;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = inherit ? OBJ_INHERIT : 0;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
 
     status = NtOpenEvent( &ret, access, &attr );
     if (status != STATUS_SUCCESS)
@@ -640,18 +649,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateMutexExW( SECURITY_ATTRIBUTES *sa, LPCWSTR
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
-    attr.SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateMutant( &ret, access, &attr, (flags & CREATE_MUTEX_INITIAL_OWNER) != 0 );
     if (status == STATUS_OBJECT_NAME_EXISTS)
@@ -692,18 +690,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenMutexW( DWORD access, BOOL inherit, LPCWSTR 
 
     if (!is_version_nt()) access = MUTEX_ALL_ACCESS;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = inherit ? OBJ_INHERIT : 0;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
 
     status = NtOpenMutant( &ret, access, &attr );
     if (status != STATUS_SUCCESS)
@@ -785,18 +772,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateSemaphoreExW( SECURITY_ATTRIBUTES *sa, LON
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
-    attr.SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateSemaphore( &ret, access, &attr, initial, max );
     if (status == STATUS_OBJECT_NAME_EXISTS)
@@ -837,18 +813,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenSemaphoreW( DWORD access, BOOL inherit, LPCW
 
     if (!is_version_nt()) access = SEMAPHORE_ALL_ACCESS;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = inherit ? OBJ_INHERIT : 0;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
 
     status = NtOpenSemaphore( &ret, access, &attr );
     if (status != STATUS_SUCCESS)
@@ -885,18 +850,7 @@ HANDLE WINAPI CreateJobObjectW( LPSECURITY_ATTRIBUTES sa, LPCWSTR name )
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
-    attr.SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateJobObject( &ret, JOB_OBJECT_ALL_ACCESS, &attr );
     if (status == STATUS_OBJECT_NAME_EXISTS)
@@ -933,18 +887,7 @@ HANDLE WINAPI OpenJobObjectW( DWORD access, BOOL inherit, LPCWSTR name )
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = inherit ? OBJ_INHERIT : 0;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
 
     status = NtOpenJobObject( &ret, access, &attr );
     if (status != STATUS_SUCCESS)
@@ -1087,18 +1030,7 @@ HANDLE WINAPI CreateWaitableTimerExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWO
     UNICODE_STRING nameW;
     OBJECT_ATTRIBUTES attr;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = OBJ_OPENIF | ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
-    attr.SecurityDescriptor       = sa ? sa->lpSecurityDescriptor : NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateTimer( &handle, access, &attr,
                  (flags & CREATE_WAITABLE_TIMER_MANUAL_RESET) ? NotificationTimer : SynchronizationTimer );
@@ -1140,18 +1072,7 @@ HANDLE WINAPI OpenWaitableTimerW( DWORD access, BOOL inherit, LPCWSTR name )
 
     if (!is_version_nt()) access = TIMER_ALL_ACCESS;
 
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = NULL;
-    attr.Attributes               = inherit ? OBJ_INHERIT : 0;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (name)
-    {
-        RtlInitUnicodeString( &nameW, name );
-        attr.ObjectName = &nameW;
-        attr.RootDirectory = get_BaseNamedObjects_handle();
-    }
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
 
     status = NtOpenTimer(&handle, access, &attr);
     if (status != STATUS_SUCCESS)
@@ -1329,6 +1250,145 @@ BOOL WINAPI DeleteTimerQueueTimer( HANDLE TimerQueue, HANDLE Timer,
         return FALSE;
     }
     return TRUE;
+}
+
+
+/*
+ * Mappings
+ */
+
+
+/***********************************************************************
+ *             CreateFileMappingA   (KERNEL32.@)
+ */
+HANDLE WINAPI CreateFileMappingA( HANDLE file, SECURITY_ATTRIBUTES *sa, DWORD protect,
+                                  DWORD size_high, DWORD size_low, LPCSTR name )
+{
+    WCHAR buffer[MAX_PATH];
+
+    if (!name) return CreateFileMappingW( file, sa, protect, size_high, size_low, NULL );
+
+    if (!MultiByteToWideChar( CP_ACP, 0, name, -1, buffer, MAX_PATH ))
+    {
+        SetLastError( ERROR_FILENAME_EXCED_RANGE );
+        return 0;
+    }
+    return CreateFileMappingW( file, sa, protect, size_high, size_low, buffer );
+}
+
+
+/***********************************************************************
+ *             CreateFileMappingW   (KERNEL32.@)
+ */
+HANDLE WINAPI CreateFileMappingW( HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect,
+                                  DWORD size_high, DWORD size_low, LPCWSTR name )
+{
+    static const int sec_flags = (SEC_FILE | SEC_IMAGE | SEC_RESERVE | SEC_COMMIT |
+                                  SEC_NOCACHE | SEC_WRITECOMBINE | SEC_LARGE_PAGES);
+    HANDLE ret;
+    NTSTATUS status;
+    DWORD access, sec_type;
+    LARGE_INTEGER size;
+    UNICODE_STRING nameW;
+    OBJECT_ATTRIBUTES attr;
+
+    sec_type = protect & sec_flags;
+    protect &= ~sec_flags;
+    if (!sec_type) sec_type = SEC_COMMIT;
+
+    /* Win9x compatibility */
+    if (!protect && !is_version_nt()) protect = PAGE_READONLY;
+
+    switch(protect)
+    {
+    case PAGE_READONLY:
+    case PAGE_WRITECOPY:
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ;
+        break;
+    case PAGE_READWRITE:
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE;
+        break;
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_WRITECOPY:
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_EXECUTE;
+        break;
+    case PAGE_EXECUTE_READWRITE:
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE;
+        break;
+    default:
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    size.u.LowPart  = size_low;
+    size.u.HighPart = size_high;
+
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        file = 0;
+        if (!size.QuadPart)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+
+    get_create_object_attributes( &attr, &nameW, sa, name );
+
+    status = NtCreateSection( &ret, access, &attr, &size, protect, sec_type, file );
+    if (status == STATUS_OBJECT_NAME_EXISTS)
+        SetLastError( ERROR_ALREADY_EXISTS );
+    else
+        SetLastError( RtlNtStatusToDosError(status) );
+    return ret;
+}
+
+
+/***********************************************************************
+ *             OpenFileMappingA   (KERNEL32.@)
+ */
+HANDLE WINAPI OpenFileMappingA( DWORD access, BOOL inherit, LPCSTR name )
+{
+    WCHAR buffer[MAX_PATH];
+
+    if (!name) return OpenFileMappingW( access, inherit, NULL );
+
+    if (!MultiByteToWideChar( CP_ACP, 0, name, -1, buffer, MAX_PATH ))
+    {
+        SetLastError( ERROR_FILENAME_EXCED_RANGE );
+        return 0;
+    }
+    return OpenFileMappingW( access, inherit, buffer );
+}
+
+
+/***********************************************************************
+ *             OpenFileMappingW   (KERNEL32.@)
+ */
+HANDLE WINAPI OpenFileMappingW( DWORD access, BOOL inherit, LPCWSTR name )
+{
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    HANDLE ret;
+    NTSTATUS status;
+
+    if (!get_open_object_attributes( &attr, &nameW, inherit, name )) return 0;
+
+    if (access == FILE_MAP_COPY) access = SECTION_MAP_READ;
+
+    if (!is_version_nt())
+    {
+        /* win9x doesn't do access checks, so try with full access first */
+        if (!NtOpenSection( &ret, access | SECTION_MAP_READ | SECTION_MAP_WRITE, &attr )) return ret;
+    }
+
+    status = NtOpenSection( &ret, access, &attr );
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return 0;
+    }
+    return ret;
 }
 
 

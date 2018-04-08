@@ -200,10 +200,14 @@ void device_context_remove(struct wined3d_device *device, struct wined3d_context
     device->contexts = new_array;
 }
 
-static BOOL is_full_clear(const struct wined3d_surface *target, const RECT *draw_rect, const RECT *clear_rect)
+static BOOL is_full_clear(const struct wined3d_texture *texture, unsigned int sub_resource_idx,
+        const RECT *draw_rect, const RECT *clear_rect)
 {
-    unsigned int height = wined3d_texture_get_level_height(target->container, target->texture_level);
-    unsigned int width = wined3d_texture_get_level_width(target->container, target->texture_level);
+    unsigned int width, height, level;
+
+    level = sub_resource_idx % texture->level_count;
+    width = wined3d_texture_get_level_width(texture, level);
+    height = wined3d_texture_get_level_height(texture, level);
 
     /* partial draw rect */
     if (draw_rect->left || draw_rect->top || draw_rect->right < width || draw_rect->bottom < height)
@@ -262,7 +266,8 @@ void device_clear_render_targets(struct wined3d_device *device, UINT rt_count, c
         {
             struct wined3d_texture *rt = wined3d_texture_from_resource(rtv->resource);
 
-            if (flags & WINED3DCLEAR_TARGET && !is_full_clear(target, draw_rect, rect_count ? clear_rect : NULL))
+            if (flags & WINED3DCLEAR_TARGET && !is_full_clear(rt, rtv->sub_resource_idx,
+                    draw_rect, rect_count ? clear_rect : NULL))
                 wined3d_texture_load_location(rt, rtv->sub_resource_idx, context, rtv->resource->draw_binding);
             else
                 wined3d_texture_prepare_location(rt, rtv->sub_resource_idx, context, rtv->resource->draw_binding);
@@ -276,11 +281,11 @@ void device_clear_render_targets(struct wined3d_device *device, UINT rt_count, c
     }
     else
     {
+        unsigned int ds_level = dsv->sub_resource_idx % depth_stencil->container->level_count;
+
         render_offscreen = TRUE;
-        drawable_width = wined3d_texture_get_level_pow2_width(depth_stencil->container,
-                depth_stencil->texture_level);
-        drawable_height = wined3d_texture_get_level_pow2_height(depth_stencil->container,
-                depth_stencil->texture_level);
+        drawable_width = wined3d_texture_get_level_pow2_width(depth_stencil->container, ds_level);
+        drawable_height = wined3d_texture_get_level_pow2_height(depth_stencil->container, ds_level);
     }
 
     if (depth_stencil)
@@ -289,7 +294,7 @@ void device_clear_render_targets(struct wined3d_device *device, UINT rt_count, c
         struct wined3d_texture *ds = wined3d_texture_from_resource(dsv->resource);
 
         if (flags & (WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL)
-                && !is_full_clear(depth_stencil, draw_rect, rect_count ? clear_rect : NULL))
+                && !is_full_clear(ds, dsv->sub_resource_idx, draw_rect, rect_count ? clear_rect : NULL))
             wined3d_texture_load_location(ds, dsv->sub_resource_idx, context, ds_location);
         else
             wined3d_texture_prepare_location(ds, dsv->sub_resource_idx, context, ds_location);
@@ -944,15 +949,12 @@ static void device_init_swapchain_state(struct wined3d_device *device, struct wi
     BOOL ds_enable = swapchain->desc.enable_auto_depth_stencil;
     unsigned int i;
 
-    if (device->fb.render_targets)
+    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
     {
-        for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
-        {
-            wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
-        }
-        if (device->back_buffer_view)
-            wined3d_device_set_rendertarget_view(device, 0, device->back_buffer_view, TRUE);
+        wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
     }
+    if (device->back_buffer_view)
+        wined3d_device_set_rendertarget_view(device, 0, device->back_buffer_view, TRUE);
 
     wined3d_device_set_depth_stencil_view(device, ds_enable ? device->auto_depth_stencil_view : NULL);
 }
@@ -1045,7 +1047,6 @@ HRESULT CDECL wined3d_device_init_3d(struct wined3d_device *device,
         struct wined3d_swapchain_desc *swapchain_desc)
 {
     static const struct wined3d_color black = {0.0f, 0.0f, 0.0f, 0.0f};
-    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
     struct wined3d_swapchain *swapchain = NULL;
     DWORD clear_flags = 0;
     HRESULT hr;
@@ -1057,16 +1058,14 @@ HRESULT CDECL wined3d_device_init_3d(struct wined3d_device *device,
     if (device->wined3d->flags & WINED3D_NO3D)
         return WINED3DERR_INVALIDCALL;
 
-    if (!(device->fb.render_targets = heap_calloc(gl_info->limits.buffers, sizeof(*device->fb.render_targets))))
-        return E_OUTOFMEMORY;
+    memset(device->fb.render_targets, 0, sizeof(device->fb.render_targets));
 
     /* Setup the implicit swapchain. This also initializes a context. */
-    TRACE("Creating implicit swapchain\n");
-    hr = device->device_parent->ops->create_swapchain(device->device_parent,
-            swapchain_desc, &swapchain);
-    if (FAILED(hr))
+    TRACE("Creating implicit swapchain.\n");
+    if (FAILED(hr = device->device_parent->ops->create_swapchain(device->device_parent,
+            swapchain_desc, &swapchain)))
     {
-        WARN("Failed to create implicit swapchain\n");
+        WARN("Failed to create implicit swapchain.\n");
         goto err_out;
     }
 
@@ -1103,7 +1102,7 @@ HRESULT CDECL wined3d_device_init_3d(struct wined3d_device *device,
 
     device->contexts[0]->last_was_rhw = 0;
 
-    TRACE("All defaults now set up, leaving 3D init.\n");
+    TRACE("All defaults now set up.\n");
 
     /* Clear the screen */
     if (swapchain->back_buffers && swapchain->back_buffers[0])
@@ -1126,7 +1125,6 @@ err_out:
         wined3d_rendertarget_view_decref(device->back_buffer_view);
     if (swapchain)
         wined3d_swapchain_decref(swapchain);
-    heap_free(device->fb.render_targets);
 
     return hr;
 }
@@ -1181,7 +1179,7 @@ static void device_free_sampler(struct wine_rb_entry *entry, void *context)
 
 HRESULT CDECL wined3d_device_uninit_3d(struct wined3d_device *device)
 {
-    UINT i;
+    unsigned int i;
 
     TRACE("device %p.\n", device);
 
@@ -1240,9 +1238,6 @@ HRESULT CDECL wined3d_device_uninit_3d(struct wined3d_device *device)
     heap_free(device->swapchains);
     device->swapchains = NULL;
     device->swapchain_count = 0;
-
-    heap_free(device->fb.render_targets);
-    device->fb.render_targets = NULL;
 
     device->d3d_initialized = FALSE;
 
@@ -3078,7 +3073,7 @@ static HRESULT process_vertices_strided(const struct wined3d_device *device, DWO
     vertex_size = get_flexible_vertex_size(DestFVF);
     box.left = dwDestIndex * vertex_size;
     box.right = box.left + dwCount * vertex_size;
-    if (FAILED(hr = wined3d_resource_map(&dest->resource, 0, &map_desc, &box, 0)))
+    if (FAILED(hr = wined3d_resource_map(&dest->resource, 0, &map_desc, &box, WINED3D_MAP_WRITE)))
     {
         WARN("Failed to map buffer, hr %#x.\n", hr);
         return hr;
@@ -3342,7 +3337,7 @@ HRESULT CDECL wined3d_device_process_vertices(struct wined3d_device *device,
         resource = &state->streams[e->stream_idx].buffer->resource;
         box.left = src_start_idx * e->stride;
         box.right = box.left + vertex_count * e->stride;
-        if (FAILED(wined3d_resource_map(resource, 0, &map_desc, &box, WINED3D_MAP_READONLY)))
+        if (FAILED(wined3d_resource_map(resource, 0, &map_desc, &box, WINED3D_MAP_READ)))
             ERR("Failed to map resource.\n");
         e->data.buffer_object = 0;
         e->data.addr += (ULONG_PTR)map_desc.data;
@@ -4499,7 +4494,7 @@ static struct wined3d_texture *wined3d_device_create_cursor_texture(struct wined
     struct wined3d_texture *texture;
     HRESULT hr;
 
-    if (FAILED(wined3d_resource_map(&cursor_image->resource, sub_resource_idx, &map_desc, NULL, WINED3D_MAP_READONLY)))
+    if (FAILED(wined3d_resource_map(&cursor_image->resource, sub_resource_idx, &map_desc, NULL, WINED3D_MAP_READ)))
     {
         ERR("Failed to map source texture.\n");
         return NULL;
@@ -4603,7 +4598,7 @@ HRESULT CDECL wined3d_device_set_cursor_properties(struct wined3d_device *device
         memset(mask_bits, 0xff, mask_size);
 
         wined3d_resource_map(&texture->resource, sub_resource_idx, &map_desc, NULL,
-                WINED3D_MAP_NO_DIRTY_UPDATE | WINED3D_MAP_READONLY);
+                WINED3D_MAP_NO_DIRTY_UPDATE | WINED3D_MAP_READ);
         cursor_info.fIcon = FALSE;
         cursor_info.xHotspot = x_hotspot;
         cursor_info.yHotspot = y_hotspot;
@@ -4753,12 +4748,9 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         state_unbind_resources(&device->state);
     }
 
-    if (device->fb.render_targets)
+    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
     {
-        for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
-        {
-            wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
-        }
+        wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
     }
     wined3d_device_set_depth_stencil_view(device, NULL);
 

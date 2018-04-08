@@ -69,6 +69,7 @@ my @source_vars = (
     "OBJC_SRCS",
     "PO_SRCS",
     "RC_SRCS",
+    "SOURCES",
     "SVG_SRCS",
     "XTEMPLATE_SRCS"
 );
@@ -191,13 +192,18 @@ sub replace_makefile_variables($)
         }
         $new .= $_;
     }
-    foreach my $var (@source_vars)
+    # if we are using SOURCES, ignore the other variables
+    unless ($replaced{"SOURCES"})
     {
-        next if defined $replaced{$var};
-        next unless defined ${$make}{"=$var"};
-        my @values = @{${$make}{"=$var"}};
-        next unless @values;
-        $new .= "\n$var = \\\n\t" . join(" \\\n\t", sort @values) . "\n";
+        foreach my $var (@source_vars)
+        {
+            next if defined $replaced{$var};
+            next if $var eq "SOURCES";
+            next unless defined ${$make}{"=$var"};
+            my @values = @{${$make}{"=$var"}};
+            next unless @values;
+            $new .= "\n$var = \\\n\t" . join(" \\\n\t", sort @values) . "\n";
+        }
     }
     close OLD_FILE;
     update_file("$file.in", $new) if $old ne $new;
@@ -228,7 +234,6 @@ sub parse_makefile($)
         {
             my $var = $1;
             $make{$var} = $2;
-            ${$make{"=flags"}}{"implib"} = 1 if $var eq "IMPORTLIB";
             next;
         }
         my $source_vars_regexp = join "|", @source_vars;
@@ -239,42 +244,10 @@ sub parse_makefile($)
             $make{$var} = \@list;
             next;
         }
-        if (/(install-lib|install-dev|clean)\s*:/)
-        {
-            ${$make{"=flags"}}{$1} = 1;
-            next;
-        }
         if (/^\s*(TOPSRCDIR|TOPOBJDIR|SRCDIR|VPATH)\s*=\s*(.*)/)
         {
             die "Variable $1 in $file.in is obsolete";
         }
-    }
-
-    if ($file =~ /^programs\/([^\/]+)\/Makefile/)
-    {
-        my $prog = $1;
-        if (defined $make{"INSTALL_LIB"})
-        {
-            ${$make{"=flags"}}{"install"} = 1 if grep { "$prog.exe" eq $_; } @{$make{"INSTALL_LIB"}};
-            ${$make{"=flags"}}{"installbin"} = 1 if grep { $prog eq $_; } @{$make{"INSTALL_LIB"}};
-        }
-        else
-        {
-            ${$make{"=flags"}}{"install"} = 1;
-        }
-    }
-
-    unless (defined $make{"MODULE"})
-    {
-        ${$make{"=flags"}}{"install-lib"} = 1 if defined $make{"INSTALL_LIB"};
-        ${$make{"=flags"}}{"install-dev"} = 1 if defined $make{"INSTALL_DEV"};
-    }
-    ${$make{"=flags"}}{"clean"} = 1 if defined $make{"PROGRAMS"} || defined $make{"EXTRA_TARGETS"} || defined $make{"EXTRA_OBJS"};
-
-    if (defined $make{"=flags"} && defined $make{"MODULE"})
-    {
-        die "Custom install-lib rule not allowed in $file" if defined ${$make{"=flags"}}{"install-lib"};
-        die "Custom install-dev rule not allowed in $file" if defined ${$make{"=flags"}}{"install-dev"};
     }
 
     return %make;
@@ -373,62 +346,56 @@ sub assign_sources_to_makefiles(@)
 
         next if $file =~ /^include\/wine\// && !%flags && !$exported_wine_headers{$name};
 
-        ${$make}{"=flags"}{"clean"} = 1 if $subdir;
-
         if ($name =~ /\.m$/) { push @{${$make}{"=OBJC_SRCS"}}, $name; }
         elsif ($name =~ /\.l$/) { push @{${$make}{"=LEX_SRCS"}}, $name; }
         elsif ($name =~ /\.y$/) { push @{${$make}{"=BISON_SRCS"}}, $name; }
-        elsif ($name =~ /\.x$/) { push @{${$make}{"=XTEMPLATE_SRCS"}}, $name; }
-        elsif ($name =~ /\.rh$/) { push @{${$make}{"=HEADER_SRCS"}}, $name; }
-        elsif ($name =~ /\.inl$/) { push @{${$make}{"=HEADER_SRCS"}}, $name; }
         elsif ($name =~ /\.svg$/) { push @{${$make}{"=SVG_SRCS"}}, $name; }
         elsif ($name =~ /\.sfd$/)
         {
-            ${${$make}{"=flags"}}{"clean"} = 1 if defined $flags{"font"};
-            ${${$make}{"=flags"}}{"install-lib"} = 1 if defined $flags{"install"};
             push @{${$make}{"=FONT_SRCS"}}, $name;
         }
         elsif ($name =~ /\.c$/)
         {
-            ${${$make}{"=flags"}}{"staticimplib"} = 1 if defined $flags{"implib"};
             push @{${$make}{"=C_SRCS"}}, $name;
         }
-        elsif ($name =~ /\.h$/)
+        elsif ($name =~ /\.h$/ || $name =~ /\.rh$/ || $name =~ /\.inl$/ || $name =~ /\.x$/)
         {
             next if $dir ne "include";
-            push @{${$make}{"=HEADER_SRCS"}}, $name;
-            ${${$make}{"=flags"}}{"install-dev"} = 1;
         }
         elsif ($name =~ /\.rc$/)
         {
-            ${${$make}{"=flags"}}{"clean"} = 1 if defined $flags{"po"};
             push @{${$make}{"=RC_SRCS"}}, $name;
         }
         elsif ($name =~ /\.mc$/)
         {
             push @{${$make}{"=MC_SRCS"}}, $name;
-            ${${$make}{"=flags"}}{"clean"} = 1;
         }
         elsif ($name =~ /\.po$/)
         {
             push @{${$make}{"=PO_SRCS"}}, $name;
-            ${${$make}{"=flags"}}{"clean"} = 1;
         }
         elsif ($name =~ /\.idl$/)
         {
             die "no makedep flags specified in $file" unless %flags || $dir eq "include";
             push @{${$make}{"=IDL_SRCS"}}, $name;
-            ${${$make}{"=flags"}}{"clean"} = 1;
         }
         elsif ($name =~ /\.man\.in$/)
         {
             push @{${$make}{"=MANPAGES"}}, $name;
-            ${${$make}{"=flags"}}{($file =~ /^programs\//) ? "manpage" : "clean"} = 1;
         }
         elsif ($name =~ /\.in$/)
         {
             push @{${$make}{"=IN_SRCS"}}, $name;
         }
+        elsif ($name =~ /\.spec$/)
+        {
+            next unless defined ${$make}{"TESTDLL"};
+        }
+        elsif ($dir ne "loader")  # loader dir contains misc files
+        {
+            next;
+        }
+        push @{${$make}{"=SOURCES"}}, $name;
     }
 
     # preserve shared source files from the parent makefile
@@ -441,7 +408,6 @@ sub assign_sources_to_makefiles(@)
         preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "IDL_SRCS" );
         preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "LEX_SRCS" );
         preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "BISON_SRCS" );
-        ${${$make}{"=flags"}}{"clean"} = 1 if defined ${$make}{"=IDL_SRCS"} && @{${$make}{"=IDL_SRCS"}};
     }
 }
 
@@ -457,14 +423,13 @@ sub update_makefiles(@)
         my %make = %{$makefiles{$file}};
         my $args = "";
         my $is_win16 = $make{"MODULE"} && ($make{"MODULE"} =~ /16$/ || $modules16{$make{"MODULE"}});
-        my $flag_args = defined $make{"=flags"} ? ",[" . join(",",sort keys %{$make{"=flags"}}) ."]" : "";
         if (defined($make{"TESTDLL"}))  # test
         {
             die "TESTDLL should not be defined in $file" unless $file =~ /\/tests\/Makefile$/;
             die "MODULE should not be defined in $file" if defined $make{"MODULE"};
             die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
             (my $dir = $file) =~ s/^(.*)\/Makefile/$1/;
-            push @lines, "WINE_CONFIG_TEST($dir$flag_args)\n";
+            push @lines, "WINE_CONFIG_TEST($dir)\n";
         }
         elsif (defined($make{"MODULE"}) && $make{"MODULE"} =~ /\.a$/)  # import lib
         {
@@ -472,7 +437,7 @@ sub update_makefiles(@)
             die "APPMODE should not be defined in $file" if defined $make{"APPMODE"};
             die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
             (my $name = $file) =~ s/^dlls\/(.*)\/Makefile/$1/;
-            push @lines, "WINE_CONFIG_LIB($name$flag_args)\n";
+            push @lines, "WINE_CONFIG_LIB($name)\n";
         }
         elsif (defined($make{"MODULE"}) && defined($make{"APPMODE"}))  # program
         {
@@ -487,9 +452,8 @@ sub update_makefiles(@)
             {
                 die "Invalid MODULE in $file" unless $make{"MODULE"} eq "$name.exe";
             }
-            $args .= "," if $is_win16 || defined $make{"=flags"};
-            $args .= "enable_win16" if $is_win16;
-            push @lines, "WINE_CONFIG_PROGRAM($name$args$flag_args)\n";
+            $args .= ",enable_win16" if $is_win16;
+            push @lines, "WINE_CONFIG_PROGRAM($name$args)\n";
         }
         elsif (defined($make{"MODULE"}))  # dll
         {
@@ -507,10 +471,7 @@ sub update_makefiles(@)
             }
             my $implib = $make{"IMPORTLIB"} || "";
             die "Invalid IMPORTLIB name in $file" if $implib =~ /\./;
-            $args .= "," if $is_win16 || defined $make{"=flags"};
-            $args .= "enable_win16" if $is_win16;
-            $args .= $flag_args;
-            $args .= ",[$implib]" if $implib && $implib ne $name;
+            $args .= ",enable_win16" if $is_win16;
             push @lines, "WINE_CONFIG_DLL($name$args)\n";
         }
         elsif ($file =~ /^tools.*\/Makefile$/)
@@ -518,14 +479,12 @@ sub update_makefiles(@)
             die "APPMODE should not be defined in $file" if defined $make{"APPMODE"};
             die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
             (my $name = $file) =~ s/^(.*)\/Makefile/$1/;
-            push @lines, "WINE_CONFIG_TOOL($name$flag_args)\n";
+            push @lines, "WINE_CONFIG_TOOL($name)\n";
         }
         elsif ($file =~ /\/Makefile$/)
         {
             (my $name = $file) =~ s/^(.*)\/Makefile/$1/;
-            $args = "[$name]";
-            $args .= "," if defined $make{"=flags"};
-            push @lines, "WINE_CONFIG_MAKEFILE($args$flag_args)\n";
+            push @lines, "WINE_CONFIG_MAKEFILE($name)\n";
         }
     }
 

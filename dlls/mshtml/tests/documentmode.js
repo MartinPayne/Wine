@@ -106,6 +106,28 @@ function test_xhr_props() {
     next_test();
 }
 
+function test_javascript() {
+    var g = window;
+
+    function test_exposed(func, obj, expect) {
+        if(expect)
+            ok(func in obj, func + " not found in " + obj);
+        else
+            ok(!(func in obj), func + " found in " + obj);
+    }
+
+    var v = document.documentMode;
+
+    test_exposed("ScriptEngineMajorVersion", g, true);
+
+    test_exposed("JSON", g, v >= 8);
+    test_exposed("now", Date, true);
+    test_exposed("isArray", Array, v >= 9);
+    test_exposed("indexOf", Array.prototype, v >= 9);
+
+    next_test();
+}
+
 function test_elem_by_id() {
     document.body.innerHTML = '<form id="testid" name="testname"></form>';
 
@@ -165,10 +187,6 @@ function test_conditional_comments() {
     function test_version(v) {
         var version = compat_version ? compat_version : 7;
 
-        /* Uncomment and fix tests below once we support that. */
-        if(version >= 9)
-            return;
-
         div.innerHTML = "<!--[if lte IE " + v + "]>true<![endif]-->";
         ok(div.innerText === (version <= v ? "true" : ""),
            "div.innerText = " + div.innerText + " for version (<=) " + v);
@@ -178,11 +196,11 @@ function test_conditional_comments() {
            "div.innerText = " + div.innerText + " for version (<) " + v);
 
         div.innerHTML = "<!--[if gte IE " + v + "]>true<![endif]-->";
-        ok(div.innerText === (version >= v ? "true" : ""),
+        ok(div.innerText === (version >= v && version < 10 ? "true" : ""),
            "div.innerText = " + div.innerText + " for version (>=) " + v);
 
         div.innerHTML = "<!--[if gt IE " + v + "]>true<![endif]-->";
-        ok(div.innerText === (version > v ? "true" : ""),
+        ok(div.innerText === (version > v && version < 10 ? "true" : ""),
            "div.innerText = " + div.innerText + " for version (>) " + v);
     }
 
@@ -200,6 +218,7 @@ var tests = [
     test_elem_props,
     test_doc_props,
     test_window_props,
+    test_javascript,
     test_xhr_props,
     test_elem_by_id,
     test_conditional_comments

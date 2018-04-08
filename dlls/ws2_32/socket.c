@@ -4648,12 +4648,24 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
 
     case WS_FIONREAD:
     {
+#if defined(linux)
+        int listening = 0;
+        socklen_t len = sizeof(listening);
+#endif
         if (out_size != sizeof(WS_u_long) || IS_INTRESOURCE(out_buff))
         {
             SetLastError(WSAEFAULT);
             return SOCKET_ERROR;
         }
         if ((fd = get_sock_fd( s, 0, NULL )) == -1) return SOCKET_ERROR;
+
+#if defined(linux)
+        /* On Linux, FIONREAD on listening socket always fails (see tcp(7)).
+           However, it succeeds on native. */
+        if (!getsockopt( fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &len ) && listening)
+            (*(WS_u_long *) out_buff) = 0;
+        else
+#endif
         if (ioctl(fd, FIONREAD, out_buff ) == -1)
             status = wsaErrno();
         release_sock_fd( s, fd );
@@ -5885,6 +5897,22 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
 #endif
+
+        case WS_SO_RANDOMIZE_PORT:
+            FIXME("Ignoring WS_SO_RANDOMIZE_PORT\n");
+            return 0;
+
+        case WS_SO_PORT_SCALABILITY:
+            FIXME("Ignoring WS_SO_PORT_SCALABILITY\n");
+            return 0;
+
+        case WS_SO_REUSE_UNICASTPORT:
+            FIXME("Ignoring WS_SO_REUSE_UNICASTPORT\n");
+            return 0;
+
+        case WS_SO_REUSE_MULTICASTPORT:
+            FIXME("Ignoring WS_SO_REUSE_MULTICASTPORT\n");
+            return 0;
 
         default:
             TRACE("Unknown SOL_SOCKET optname: 0x%08x\n", optname);
@@ -7218,7 +7246,10 @@ int WINAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEvent, LPWSANETWORKEVENTS lp
     if (!ret)
     {
         for (i = 0; i < FD_MAX_EVENTS; i++)
-            lpEvent->iErrorCode[i] = NtStatusToWSAError(errors[i]);
+        {
+            if (lpEvent->lNetworkEvents & (1 << i))
+                lpEvent->iErrorCode[i] = NtStatusToWSAError(errors[i]);
+        }
         return 0;
     }
     SetLastError(WSAEINVAL);

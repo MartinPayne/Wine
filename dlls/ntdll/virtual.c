@@ -2845,7 +2845,7 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
 
     base = ROUND_ADDR( addr, page_mask );
 
-    if (is_beyond_limit( base, 1, working_set_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
+    if (is_beyond_limit( base, 1, working_set_limit )) return STATUS_INVALID_PARAMETER;
 
     /* Find the view containing the address */
 
@@ -3164,7 +3164,11 @@ NTSTATUS WINAPI NtUnmapViewOfSection( HANDLE process, PVOID addr )
             if (!status) delete_view( view );
             else FIXME( "failed to unmap %p %x\n", view->base, status );
         }
-        else delete_view( view );
+        else
+        {
+            delete_view( view );
+            status = STATUS_SUCCESS;
+        }
     }
     server_leave_uninterrupted_section( &csVirtual, &sigset );
     return status;

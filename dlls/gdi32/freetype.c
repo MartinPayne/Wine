@@ -7523,6 +7523,9 @@ static BOOL get_bitmap_text_metrics(GdiFont *font)
         TM.tmPitchAndFamily = FT_IS_FIXED_WIDTH(ft_face) ? 0 : TMPF_FIXED_PITCH;
         TM.tmCharSet = font->charset;
     }
+
+    if(font->fake_bold)
+        TM.tmWeight = FW_BOLD;
 #undef TM
 
     return TRUE;
@@ -7552,8 +7555,15 @@ static void scale_font_metrics(const GdiFont *font, LPTEXTMETRICW ptm)
     SCALE_Y(ptm->tmDescent);
     SCALE_Y(ptm->tmInternalLeading);
     SCALE_Y(ptm->tmExternalLeading);
-    SCALE_Y(ptm->tmOverhang);
 
+    SCALE_X(ptm->tmOverhang);
+    if(font->fake_bold)
+    {
+        if(!FT_IS_SCALABLE(font->ft_face))
+            ptm->tmOverhang++;
+        ptm->tmAveCharWidth++;
+        ptm->tmMaxCharWidth++;
+    }
     SCALE_X(ptm->tmAveCharWidth);
     SCALE_X(ptm->tmMaxCharWidth);
 
@@ -7778,11 +7788,8 @@ static BOOL get_outline_text_metrics(GdiFont *font)
     }
     TM.tmMaxCharWidth = SCALE_X(ft_face->bbox.xMax - ft_face->bbox.xMin);
     TM.tmWeight = FW_REGULAR;
-    if (font->fake_bold) {
-        TM.tmAveCharWidth++;
-        TM.tmMaxCharWidth++;
+    if (font->fake_bold)
         TM.tmWeight = FW_BOLD;
-    }
     else
     {
         if (ft_face->style_flags & FT_STYLE_FLAG_BOLD)
@@ -8902,6 +8909,7 @@ static const struct gdi_dc_funcs freetype_funcs =
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pWidenPath */
     NULL,                               /* wine_get_wgl_driver */
+    NULL,                               /* wine_get_vulkan_driver */
     GDI_PRIORITY_FONT_DRV               /* priority */
 };
 

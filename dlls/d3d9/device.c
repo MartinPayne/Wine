@@ -162,8 +162,7 @@ enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format)
 
 unsigned int wined3dmapflags_from_d3dmapflags(unsigned int flags)
 {
-    static const unsigned int handled = D3DLOCK_READONLY
-            | D3DLOCK_NOSYSLOCK
+    static const unsigned int handled = D3DLOCK_NOSYSLOCK
             | D3DLOCK_NOOVERWRITE
             | D3DLOCK_DISCARD
             | D3DLOCK_DONOTWAIT
@@ -171,7 +170,13 @@ unsigned int wined3dmapflags_from_d3dmapflags(unsigned int flags)
     unsigned int wined3d_flags;
 
     wined3d_flags = flags & handled;
-    flags &= ~handled;
+    if (!(flags & (D3DLOCK_NOOVERWRITE | D3DLOCK_DISCARD)))
+        wined3d_flags |= WINED3D_MAP_READ;
+    if (!(flags & D3DLOCK_READONLY))
+        wined3d_flags |= WINED3D_MAP_WRITE;
+    if (!(wined3d_flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE)))
+        wined3d_flags |= WINED3D_MAP_READ | WINED3D_MAP_WRITE;
+    flags &= ~(handled | D3DLOCK_READONLY);
 
     if (flags)
         FIXME("Unhandled flags %#x.\n", flags);
@@ -448,7 +453,7 @@ void d3dcaps_from_wined3dcaps(D3DCAPS9 *caps, const WINED3DCAPS *wined3d_caps)
         D3DPTEXTURECAPS_CUBEMAP_POW2   | D3DPTEXTURECAPS_VOLUMEMAP_POW2| D3DPTEXTURECAPS_NOPROJECTEDBUMPENV;
 
     caps->MaxVertexShaderConst = min(D3D9_MAX_VERTEX_SHADER_CONSTANTF, caps->MaxVertexShaderConst);
-    caps->NumSimultaneousRTs = min(D3D9_MAX_SIMULTANEOUS_RENDERTARGETS, caps->NumSimultaneousRTs);
+    caps->NumSimultaneousRTs = min(D3D_MAX_SIMULTANEOUS_RENDERTARGETS, caps->NumSimultaneousRTs);
 
     if (caps->PixelShaderVersion > 3)
     {
@@ -1343,7 +1348,8 @@ static HRESULT d3d9_device_create_surface(struct d3d9_device *device, UINT width
     desc.usage = usage & WINED3DUSAGE_MASK;
     if (pool == D3DPOOL_SCRATCH)
         desc.usage |= WINED3DUSAGE_SCRATCH;
-    desc.access = wined3daccess_from_d3dpool(pool, usage) | WINED3D_RESOURCE_ACCESS_MAP;
+    desc.access = wined3daccess_from_d3dpool(pool, usage)
+            | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
     desc.width = width;
     desc.height = height;
     desc.depth = 1;
@@ -1606,6 +1612,23 @@ static HRESULT WINAPI d3d9_device_StretchRect(IDirect3DDevice9Ex *iface, IDirect
         src_rect = &s;
     }
 
+    if (dst_desc.access & WINED3D_RESOURCE_ACCESS_CPU)
+    {
+        WARN("Destination resource is not in DEFAULT pool.\n");
+        goto done;
+    }
+    if (src_desc.access & WINED3D_RESOURCE_ACCESS_CPU)
+    {
+        WARN("Source resource is not in DEFAULT pool.\n");
+        goto done;
+    }
+
+    if (dst->texture && !(dst_desc.usage & (WINED3DUSAGE_RENDERTARGET | WINED3DUSAGE_DEPTHSTENCIL)))
+    {
+        WARN("Destination is a regular texture.\n");
+        goto done;
+    }
+
     if (src_desc.usage & WINED3DUSAGE_DEPTHSTENCIL)
     {
         if (device->in_scene)
@@ -1761,7 +1784,7 @@ static HRESULT WINAPI d3d9_device_SetRenderTarget(IDirect3DDevice9Ex *iface, DWO
 
     TRACE("iface %p, idx %u, surface %p.\n", iface, idx, surface);
 
-    if (idx >= D3D9_MAX_SIMULTANEOUS_RENDERTARGETS)
+    if (idx >= D3D_MAX_SIMULTANEOUS_RENDERTARGETS)
     {
         WARN("Invalid index %u specified.\n", idx);
         return D3DERR_INVALIDCALL;
@@ -1802,7 +1825,7 @@ static HRESULT WINAPI d3d9_device_GetRenderTarget(IDirect3DDevice9Ex *iface, DWO
     if (!surface)
         return D3DERR_INVALIDCALL;
 
-    if (idx >= D3D9_MAX_SIMULTANEOUS_RENDERTARGETS)
+    if (idx >= D3D_MAX_SIMULTANEOUS_RENDERTARGETS)
     {
         WARN("Invalid index %u specified.\n", idx);
         return D3DERR_INVALIDCALL;
@@ -2395,7 +2418,7 @@ static HRESULT WINAPI d3d9_device_GetTextureStageState(IDirect3DDevice9Ex *iface
 
     TRACE("iface %p, stage %u, state %#x, value %p.\n", iface, stage, state, value);
 
-    if (state >= sizeof(tss_lookup) / sizeof(*tss_lookup))
+    if (state >= ARRAY_SIZE(tss_lookup))
     {
         WARN("Invalid state %#x passed.\n", state);
         return D3D_OK;
@@ -2415,7 +2438,7 @@ static HRESULT WINAPI d3d9_device_SetTextureStageState(IDirect3DDevice9Ex *iface
 
     TRACE("iface %p, stage %u, state %#x, value %#x.\n", iface, stage, state, value);
 
-    if (state >= sizeof(tss_lookup) / sizeof(*tss_lookup))
+    if (state >= ARRAY_SIZE(tss_lookup))
     {
         WARN("Invalid state %#x passed.\n", state);
         return D3D_OK;
@@ -2670,7 +2693,7 @@ static HRESULT d3d9_device_prepare_vertex_buffer(struct d3d9_device *device, UIN
         desc.byte_width = size;
         desc.usage = WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_WRITEONLY;
         desc.bind_flags = WINED3D_BIND_VERTEX_BUFFER;
-        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP;
+        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
         desc.misc_flags = 0;
         desc.structure_byte_stride = 0;
 
@@ -2737,7 +2760,7 @@ static HRESULT WINAPI d3d9_device_DrawPrimitiveUP(IDirect3DDevice9Ex *iface,
     wined3d_box.right = vb_pos + size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, data, size);
     wined3d_resource_unmap(vb, 0);
@@ -2775,7 +2798,7 @@ static HRESULT d3d9_device_prepare_index_buffer(struct d3d9_device *device, UINT
         desc.byte_width = size;
         desc.usage = WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_WRITEONLY | WINED3DUSAGE_STATICDECL;
         desc.bind_flags = WINED3D_BIND_INDEX_BUFFER;
-        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP;
+        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
         desc.misc_flags = 0;
         desc.structure_byte_stride = 0;
 
@@ -2848,7 +2871,7 @@ static HRESULT WINAPI d3d9_device_DrawIndexedPrimitiveUP(IDirect3DDevice9Ex *ifa
     wined3d_box.right = vb_pos + vtx_size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, (char *)vertex_data + min_vertex_idx * vertex_stride, vtx_size);
     wined3d_resource_unmap(vb, 0);
@@ -2870,7 +2893,7 @@ static HRESULT WINAPI d3d9_device_DrawIndexedPrimitiveUP(IDirect3DDevice9Ex *ifa
     wined3d_box.right = ib_pos + idx_size;
     ib = wined3d_buffer_get_resource(device->index_buffer);
     if (FAILED(hr = wined3d_resource_map(ib, 0, &wined3d_map_desc, &wined3d_box,
-            ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, index_data, idx_size);
     wined3d_resource_unmap(ib, 0);

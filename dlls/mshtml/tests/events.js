@@ -538,6 +538,18 @@ function test_dispatch_event() {
     ok(calls === "parent.testing(capture),child.testing(capture),"
        + "child.testing(bubble),parent.testing(bubble),", "calls = " + calls);
 
+    var xhr = new XMLHttpRequest();
+    xhr.addEventListener("testing", function(event) {
+        ok(event === e, "event != e");
+        ok(event.target === xhr, "target != child");
+        ok(event.srcElement === null, "srcElement != child");
+        calls += "xhr.testing";
+    }, true);
+
+    calls = "";
+    xhr.dispatchEvent(e);
+    ok(calls === "xhr.testing", "calls = " + calls);
+
     next_test();
 }
 
@@ -620,6 +632,8 @@ function test_mouse_event() {
     ok(e.screenY === 0, "screenY = " + e.screenY);
     ok(e.clientX === 0, "clientX = " + e.clientX);
     ok(e.clientY === 0, "clientY = " + e.clientY);
+    ok(e.offsetX === 0, "offsetX = " + e.offsetX);
+    ok(e.offsetY === 0, "offsetY = " + e.offsetY);
     ok(e.ctrlKey === false, "ctrlKey = " + e.ctrlKey);
     ok(e.altKey === false, "altKey = " + e.altKey);
     ok(e.shiftKey === false, "shiftKey = " + e.shiftKey);
@@ -629,6 +643,9 @@ function test_mouse_event() {
     ok(e.pageX === 0, "pageX = " + e.pageX);
     ok(e.pageY === 0, "pageY = " + e.pageY);
     ok(e.which === 1, "which = " + e.which);
+    ok(e.relatedTarget === null, "relatedTarget = " + e.relatedTarget);
+    ok(e.toElement === null, "toElement = " + e.toElement);
+    ok(e.fromElement === null, "fromElement = " + e.fromElement);
 
     e.initMouseEvent("test", true, true, window, 1, 2, 3, 4, 5, false, false, false, false, 1, document);
     ok(e.type === "test", "type = " + e.type);
@@ -648,8 +665,9 @@ function test_mouse_event() {
     ok(e.button === 1, "button = " + e.button);
     ok(e.buttons === 0, "buttons = " + e.buttons);
     ok(e.which === 2, "which = " + e.which);
+    ok(e.relatedTarget === document, "relatedTarget = " + e.relatedTarget);
 
-    e.initMouseEvent("test", false, false, window, 9, 8, 7, 6, 5, true, true, true, true, 127, document);
+    e.initMouseEvent("test", false, false, window, 9, 8, 7, 6, 5, true, true, true, true, 127, document.body);
     ok(e.type === "test", "type = " + e.type);
     ok(e.cancelable === false, "cancelable = " + e.cancelable);
     ok(e.bubbles === false, "bubbles = " + e.bubbles);
@@ -664,6 +682,7 @@ function test_mouse_event() {
     ok(e.metaKey === true, "metaKey = " + e.metaKey);
     ok(e.button === 127, "button = " + e.button);
     ok(e.which === 128, "which = " + e.which);
+    ok(e.relatedTarget === document.body, "relatedTarget = " + e.relatedTarget);
 
     e.initEvent("testevent", true, true);
     ok(e.type === "testevent", "type = " + e.type);
@@ -736,6 +755,44 @@ function test_keyboard_event() {
     next_test();
 }
 
+function test_error_event() {
+    document.body.innerHTML = '<div><img></img></div>';
+    var div = document.body.firstChild;
+    var img = div.firstChild;
+    var calls = "";
+
+    function record_call(msg) {
+        return function() { calls += msg + "," };
+    }
+    var win_onerror = record_call("window.onerror");
+    var doc_onerror = record_call("doc.onerror");
+    var body_onerror = record_call("body.onerror");
+
+    window.addEventListener("error", win_onerror, true);
+    document.addEventListener("error", doc_onerror, true);
+    document.body.addEventListener("error", body_onerror, true);
+    div.addEventListener("error", record_call("div.onerror"), true);
+
+    div.addEventListener("error", function() {
+        ok(calls === "window.onerror,doc.onerror,body.onerror,div.onerror,", "calls = " + calls);
+
+        window.removeEventListener("error", win_onerror, true);
+        document.removeEventListener("error", doc_onerror, true);
+        document.body.removeEventListener("error", body_onerror, true);
+        next_test();
+    }, true);
+
+    img.src = "about:blank";
+}
+
+function test_detached_img_error_event() {
+    var img = new Image();
+    img.onerror = function() {
+        next_test();
+    }
+    img.src = "about:blank";
+}
+
 var tests = [
     test_content_loaded,
     test_add_remove_listener,
@@ -751,6 +808,8 @@ var tests = [
     test_ui_event,
     test_mouse_event,
     test_keyboard_event,
+    test_error_event,
+    test_detached_img_error_event,
     test_time_stamp,
     test_listener_order
 ];

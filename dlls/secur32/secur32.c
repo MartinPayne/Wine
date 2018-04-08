@@ -996,29 +996,21 @@ BOOLEAN WINAPI GetComputerObjectNameW(
                 if (GetComputerNameW(name, &size))
                 {
                     DWORD len = domainInfo->Name.Length + size + 3;
-                    if (lpNameBuffer)
+                    if (lpNameBuffer && *nSize >= len)
                     {
-                        if (*nSize < len)
-                        {
-                            *nSize = len;
-                            SetLastError(ERROR_INSUFFICIENT_BUFFER);
-                            status = FALSE;
-                        }
-                        else
-                        {
-                            WCHAR bs[] = { '\\', 0 };
-                            WCHAR ds[] = { '$', 0 };
-                            lstrcpyW(lpNameBuffer, domainInfo->Name.Buffer);
-                            lstrcatW(lpNameBuffer, bs);
-                            lstrcatW(lpNameBuffer, name);
-                            lstrcatW(lpNameBuffer, ds);
-                            status = TRUE;
-                        }
+                        WCHAR bs[] = { '\\', 0 };
+                        WCHAR ds[] = { '$', 0 };
+                        lstrcpyW(lpNameBuffer, domainInfo->Name.Buffer);
+                        lstrcatW(lpNameBuffer, bs);
+                        lstrcatW(lpNameBuffer, name);
+                        lstrcatW(lpNameBuffer, ds);
+                        status = TRUE;
                     }
                     else	/* just requesting length required */
                     {
                         *nSize = len;
-                        status = TRUE;
+                        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                        status = FALSE;
                     }
                 }
                 else
@@ -1029,6 +1021,56 @@ BOOLEAN WINAPI GetComputerObjectNameW(
             }
             break;
         case NameFullyQualifiedDN:
+        {
+            static const WCHAR cnW[] = { 'C','N','=',0 };
+            static const WCHAR ComputersW[] = { 'C','N','=','C','o','m','p','u','t','e','r','s',0 };
+            static const WCHAR dcW[] = { 'D','C','=',0 };
+            static const WCHAR commaW[] = { ',',0 };
+            WCHAR name[MAX_COMPUTERNAME_LENGTH + 1];
+            DWORD len, size;
+            WCHAR *suffix;
+
+            size = sizeof(name) / sizeof(name[0]);
+            if (!GetComputerNameW(name, &size))
+            {
+                status = FALSE;
+                break;
+            }
+
+            len = strlenW(cnW) + size + 1 + strlenW(ComputersW) + 1 + strlenW(dcW);
+            suffix = strrchrW(domainInfo->DnsDomainName.Buffer, '.');
+            if (suffix)
+            {
+                *suffix++ = 0;
+                len += 1 + strlenW(dcW) + strlenW(suffix);
+            }
+            len += strlenW(domainInfo->DnsDomainName.Buffer);
+
+            if (lpNameBuffer && *nSize > len)
+            {
+                lstrcpyW(lpNameBuffer, cnW);
+                lstrcatW(lpNameBuffer, name);
+                lstrcatW(lpNameBuffer, commaW);
+                lstrcatW(lpNameBuffer, ComputersW);
+                lstrcatW(lpNameBuffer, commaW);
+                lstrcatW(lpNameBuffer, dcW);
+                lstrcatW(lpNameBuffer, domainInfo->DnsDomainName.Buffer);
+                if (suffix)
+                {
+                    lstrcatW(lpNameBuffer, commaW);
+                    lstrcatW(lpNameBuffer, dcW);
+                    lstrcatW(lpNameBuffer, suffix);
+                }
+                status = TRUE;
+            }
+            else /* just requesting length required */
+            {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                status = FALSE;
+            }
+            *nSize = len + 1;
+            break;
+        }
         case NameDisplay:
         case NameUniqueId:
         case NameCanonical:

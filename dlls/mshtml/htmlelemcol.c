@@ -626,7 +626,7 @@ static dispex_static_data_t HTMLElementCollection_dispex = {
     HTMLElementCollection_iface_tids
 };
 
-static void create_all_list(HTMLDocumentNode *doc, HTMLDOMNode *elem, elem_vector_t *buf)
+static void create_all_list(HTMLDOMNode *elem, elem_vector_t *buf)
 {
     nsIDOMNodeList *nsnode_list;
     nsIDOMNode *iter;
@@ -654,14 +654,14 @@ static void create_all_list(HTMLDocumentNode *doc, HTMLDOMNode *elem, elem_vecto
         if(is_elem_node(iter)) {
             HTMLDOMNode *node;
 
-            hres = get_node(doc, iter, TRUE, &node);
+            hres = get_node(iter, TRUE, &node);
             if(FAILED(hres)) {
                 FIXME("get_node failed: %08x\n", hres);
                 continue;
             }
 
             elem_vector_add(buf, elem_from_HTMLDOMNode(node));
-            create_all_list(doc, node, buf);
+            create_all_list(node, buf);
         }
     }
 }
@@ -676,14 +676,14 @@ IHTMLElementCollection *create_all_collection(HTMLDOMNode *node, BOOL include_ro
         node_addref(node);
         elem_vector_add(&buf, elem_from_HTMLDOMNode(node));
     }
-    create_all_list(node->doc, node, &buf);
+    create_all_list(node, &buf);
     elem_vector_normalize(&buf);
 
     return HTMLElementCollection_Create(buf.buf, buf.len,
                                         dispex_compat_mode(&node->event_target.dispex));
 }
 
-IHTMLElementCollection *create_collection_from_nodelist(HTMLDocumentNode *doc, nsIDOMNodeList *nslist)
+IHTMLElementCollection *create_collection_from_nodelist(nsIDOMNodeList *nslist, compat_mode_t compat_mode)
 {
     UINT32 length = 0, i;
     HTMLDOMNode *node;
@@ -702,7 +702,7 @@ IHTMLElementCollection *create_collection_from_nodelist(HTMLDocumentNode *doc, n
         for(i=0; i<length; i++) {
             nsIDOMNodeList_Item(nslist, i, &nsnode);
             if(is_elem_node(nsnode)) {
-                hres = get_node(doc, nsnode, TRUE, &node);
+                hres = get_node(nsnode, TRUE, &node);
                 if(FAILED(hres))
                     continue;
                 buf.buf[buf.len++] = elem_from_HTMLDOMNode(node);
@@ -715,10 +715,10 @@ IHTMLElementCollection *create_collection_from_nodelist(HTMLDocumentNode *doc, n
         buf.buf = NULL;
     }
 
-    return HTMLElementCollection_Create(buf.buf, buf.len, doc->document_mode);
+    return HTMLElementCollection_Create(buf.buf, buf.len, compat_mode);
 }
 
-IHTMLElementCollection *create_collection_from_htmlcol(HTMLDocumentNode *doc, nsIDOMHTMLCollection *nscol)
+IHTMLElementCollection *create_collection_from_htmlcol(nsIDOMHTMLCollection *nscol, compat_mode_t compat_mode)
 {
     UINT32 length = 0, i;
     elem_vector_t buf;
@@ -736,7 +736,7 @@ IHTMLElementCollection *create_collection_from_htmlcol(HTMLDocumentNode *doc, ns
 
         for(i=0; i<length; i++) {
             nsIDOMHTMLCollection_Item(nscol, i, &nsnode);
-            hres = get_node(doc, nsnode, TRUE, &node);
+            hres = get_node(nsnode, TRUE, &node);
             nsIDOMNode_Release(nsnode);
             if(FAILED(hres))
                 break;
@@ -751,7 +751,7 @@ IHTMLElementCollection *create_collection_from_htmlcol(HTMLDocumentNode *doc, ns
         return NULL;
     }
 
-    return HTMLElementCollection_Create(buf.buf, buf.len, doc->document_mode);
+    return HTMLElementCollection_Create(buf.buf, buf.len, compat_mode);
 }
 
 HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
@@ -792,11 +792,10 @@ HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
         return S_OK;
     }
 
-    hres = get_node(elem->node.doc, parent_node, TRUE, &node);
+    hres = get_node(parent_node, TRUE, &node);
     nsIDOMNode_Release(parent_node);
     if(FAILED(hres))
         return hres;
-
 
     /* Create all children collection and find the element in it.
      * This could be optimized if we ever find the reason. */
@@ -806,7 +805,7 @@ HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
         return E_OUTOFMEMORY;
     }
 
-    create_all_list(elem->node.doc, node, &buf);
+    create_all_list(node, &buf);
 
     for(i=0; i < buf.len; i++) {
         if(buf.buf[i] == elem)

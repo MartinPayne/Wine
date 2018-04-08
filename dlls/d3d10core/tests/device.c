@@ -19,7 +19,8 @@
 #include <assert.h>
 #define COBJMACROS
 #include "initguid.h"
-#include "d3d11.h"
+#include "d3d11_4.h"
+#include "wine/heap.h"
 #include "wine/test.h"
 #include <limits.h>
 
@@ -862,12 +863,61 @@ static void check_texture_uvec4_(unsigned int line, ID3D10Texture2D *texture,
         check_texture_sub_resource_uvec4_(line, texture, sub_resource_idx, NULL, expected_value);
 }
 
+static BOOL use_warp_adapter;
+static unsigned int use_adapter_idx;
+
+static IDXGIAdapter *create_adapter(void)
+{
+    IDXGIFactory4 *factory4;
+    IDXGIFactory *factory;
+    IDXGIAdapter *adapter;
+    HRESULT hr;
+
+    if (!use_warp_adapter && !use_adapter_idx)
+        return NULL;
+
+    if (FAILED(hr = CreateDXGIFactory(&IID_IDXGIFactory, (void **)&factory)))
+    {
+        trace("Failed to create IDXGIFactory, hr %#x.\n", hr);
+        return NULL;
+    }
+
+    adapter = NULL;
+    if (use_warp_adapter)
+    {
+        if (SUCCEEDED(hr = IDXGIFactory_QueryInterface(factory, &IID_IDXGIFactory4, (void **)&factory4)))
+        {
+            hr = IDXGIFactory4_EnumWarpAdapter(factory4, &IID_IDXGIAdapter, (void **)&adapter);
+            IDXGIFactory4_Release(factory4);
+        }
+        else
+        {
+            trace("Failed to get IDXGIFactory4, hr %#x.\n", hr);
+        }
+    }
+    else
+    {
+        hr = IDXGIFactory_EnumAdapters(factory, use_adapter_idx, &adapter);
+    }
+    IDXGIFactory_Release(factory);
+    if (FAILED(hr))
+        trace("Failed to get adapter, hr %#x.\n", hr);
+    return adapter;
+}
+
 static ID3D10Device *create_device(void)
 {
+    IDXGIAdapter *adapter;
     ID3D10Device *device;
+    HRESULT hr;
 
-    if (SUCCEEDED(D3D10CreateDevice(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &device)))
+    adapter = create_adapter();
+    hr = D3D10CreateDevice(adapter, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &device);
+    if (adapter)
+        IDXGIAdapter_Release(adapter);
+    if (SUCCEEDED(hr))
         return device;
+
     if (SUCCEEDED(D3D10CreateDevice(NULL, D3D10_DRIVER_TYPE_WARP, NULL, 0, D3D10_SDK_VERSION, &device)))
         return device;
     if (SUCCEEDED(D3D10CreateDevice(NULL, D3D10_DRIVER_TYPE_REFERENCE, NULL, 0, D3D10_SDK_VERSION, &device)))
@@ -890,6 +940,20 @@ static void get_device_adapter_desc(ID3D10Device *device, DXGI_ADAPTER_DESC *ada
     hr = IDXGIAdapter_GetDesc(adapter, adapter_desc);
     ok(SUCCEEDED(hr), "Failed to get adapter desc, hr %#x.\n", hr);
     IDXGIAdapter_Release(adapter);
+}
+
+static void print_adapter_info(void)
+{
+    DXGI_ADAPTER_DESC adapter_desc;
+    ID3D10Device *device;
+
+    if (!(device = create_device()))
+        return;
+
+    get_device_adapter_desc(device, &adapter_desc);
+    trace("Adapter: %s, %04x:%04x.\n", wine_dbgstr_w(adapter_desc.Description),
+            adapter_desc.VendorId, adapter_desc.DeviceId);
+    ID3D10Device_Release(device);
 }
 
 static BOOL is_warp_device(ID3D10Device *device)
@@ -2504,7 +2568,7 @@ static void test_render_target_views(void)
     texture_desc.CPUAccessFlags = 0;
     texture_desc.MiscFlags = 0;
 
-    data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, texture_desc.Width * texture_desc.Height * 4);
+    data = heap_alloc_zero(texture_desc.Width * texture_desc.Height * 4);
     ok(!!data, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -2545,7 +2609,7 @@ static void test_render_target_views(void)
         ID3D10Texture2D_Release(texture);
     }
 
-    HeapFree(GetProcessHeap(), 0, data);
+    heap_free(data);
     release_test_context(&test_context);
 }
 
@@ -8199,28 +8263,26 @@ static void check_buffer_cpu_access_(unsigned int line, ID3D10Buffer *buffer,
 
     expected_hr = cpu_read ? S_OK : E_INVALIDARG;
     hr = ID3D10Buffer_Map(buffer, D3D10_MAP_READ, 0, &data);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Buffer_Unmap(buffer);
 
     expected_hr = !dynamic && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D10Buffer_Map(buffer, D3D10_MAP_WRITE, 0, &data);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Buffer_Unmap(buffer);
 
     expected_hr = cpu_read && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D10Buffer_Map(buffer, D3D10_MAP_READ_WRITE, 0, &data);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ_WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Buffer_Unmap(buffer);
 
     expected_hr = dynamic ? S_OK : E_INVALIDARG;
     hr = ID3D10Buffer_Map(buffer, D3D10_MAP_WRITE_DISCARD, 0, &data);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(!dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE_DISCARD.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Buffer_Unmap(buffer);
@@ -8254,28 +8316,26 @@ static void check_texture_cpu_access_(unsigned int line, ID3D10Texture2D *textur
 
     expected_hr = cpu_read ? S_OK : E_INVALIDARG;
     hr = ID3D10Texture2D_Map(texture, 0, D3D10_MAP_READ, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Texture2D_Unmap(texture, 0);
 
     expected_hr = !dynamic && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D10Texture2D_Map(texture, 0, D3D10_MAP_WRITE, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Texture2D_Unmap(texture, 0);
 
     expected_hr = cpu_read && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D10Texture2D_Map(texture, 0, D3D10_MAP_READ_WRITE, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ_WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Texture2D_Unmap(texture, 0);
 
     expected_hr = dynamic ? S_OK : E_INVALIDARG;
     hr = ID3D10Texture2D_Map(texture, 0, D3D10_MAP_WRITE_DISCARD, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(!dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE_DISCARD.\n", hr);
     if (SUCCEEDED(hr))
         ID3D10Texture2D_Unmap(texture, 0);
@@ -8362,7 +8422,7 @@ static void test_resource_access(void)
 
     data.SysMemPitch = 0;
     data.SysMemSlicePitch = 0;
-    data.pSysMem = HeapAlloc(GetProcessHeap(), 0, 10240);
+    data.pSysMem = heap_alloc(10240);
     ok(!!data.pSysMem, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -8509,7 +8569,7 @@ static void test_resource_access(void)
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, (void *)data.pSysMem);
+    heap_free((void *)data.pSysMem);
 
     refcount = ID3D10Device_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
@@ -12701,7 +12761,7 @@ static void test_buffer_srv(void)
                 resource_data.SysMemSlicePitch = 0;
                 if (current_buffer->data_offset)
                 {
-                    data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, current_buffer->byte_count);
+                    data = heap_alloc_zero(current_buffer->byte_count);
                     ok(!!data, "Failed to allocate memory.\n");
                     memcpy(data + current_buffer->data_offset, current_buffer->data,
                             current_buffer->byte_count - current_buffer->data_offset);
@@ -12713,7 +12773,7 @@ static void test_buffer_srv(void)
                 }
                 hr = ID3D10Device_CreateBuffer(device, &buffer_desc, &resource_data, &buffer);
                 ok(SUCCEEDED(hr), "Test %u: Failed to create buffer, hr %#x.\n", i, hr);
-                HeapFree(GetProcessHeap(), 0, data);
+                heap_free(data);
             }
             else
             {
@@ -14342,7 +14402,7 @@ static void test_generate_mips(void)
     ok(SUCCEEDED(hr), "Failed to create sampler state, hr %#x.\n", hr);
     ID3D10Device_PSSetSamplers(device, 0, 1, &sampler_state);
 
-    data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) * 32 * 32 * 32);
+    data = heap_alloc(sizeof(*data) * 32 * 32 * 32);
 
     for (z = 0; z < 32; ++z)
     {
@@ -14369,7 +14429,7 @@ static void test_generate_mips(void)
         }
     }
 
-    zero_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*zero_data) * 16 * 16 * 16);
+    zero_data = heap_alloc_zero(sizeof(*zero_data) * 16 * 16 * 16);
 
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
@@ -14531,6 +14591,8 @@ static void test_generate_mips(void)
     if (is_warp_device(device))
     {
         win_skip("Creating the next texture crashes WARP on some testbot boxes.\n");
+        heap_free(zero_data);
+        heap_free(data);
         ID3D10SamplerState_Release(sampler_state);
         ID3D10PixelShader_Release(ps_3d);
         ID3D10PixelShader_Release(ps);
@@ -14628,7 +14690,8 @@ static void test_generate_mips(void)
 
     ID3D10Resource_Release(resource);
 
-    HeapFree(GetProcessHeap(), 0, data);
+    heap_free(zero_data);
+    heap_free(data);
 
     ID3D10SamplerState_Release(sampler_state);
     ID3D10PixelShader_Release(ps_3d);
@@ -14856,6 +14919,20 @@ done:
 
 START_TEST(device)
 {
+    unsigned int argc, i;
+    char **argv;
+
+    argc = winetest_get_mainargs(&argv);
+    for (i = 2; i < argc; ++i)
+    {
+        if (!strcmp(argv[i], "--warp"))
+            use_warp_adapter = TRUE;
+        else if (!strcmp(argv[i], "--adapter") && i + 1 < argc)
+            use_adapter_idx = atoi(argv[++i]);
+    }
+
+    print_adapter_info();
+
     test_feature_level();
     test_device_interfaces();
     test_create_texture2d();

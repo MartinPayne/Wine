@@ -135,6 +135,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_fragment_layer_viewport",      ARB_FRAGMENT_LAYER_VIEWPORT   },
     {"GL_ARB_fragment_program",             ARB_FRAGMENT_PROGRAM          },
     {"GL_ARB_fragment_shader",              ARB_FRAGMENT_SHADER           },
+    {"GL_ARB_framebuffer_no_attachments",   ARB_FRAMEBUFFER_NO_ATTACHMENTS},
     {"GL_ARB_framebuffer_object",           ARB_FRAMEBUFFER_OBJECT        },
     {"GL_ARB_framebuffer_sRGB",             ARB_FRAMEBUFFER_SRGB          },
     {"GL_ARB_geometry_shader4",             ARB_GEOMETRY_SHADER4          },
@@ -2737,6 +2738,8 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     USE_GL_FUNC(glGetShaderPrecisionFormat)
     USE_GL_FUNC(glDepthRangef)
     USE_GL_FUNC(glClearDepthf)
+    /* GL_ARB_framebuffer_no_attachments */
+    USE_GL_FUNC(glFramebufferParameteri)
     /* GL_ARB_framebuffer_object */
     USE_GL_FUNC(glBindFramebuffer)
     USE_GL_FUNC(glBindRenderbuffer)
@@ -3521,7 +3524,7 @@ static void wined3d_adapter_init_limits(struct wined3d_gl_info *gl_info)
     if (gl_info->supported[ARB_DRAW_BUFFERS] && wined3d_settings.offscreen_rendering_mode == ORM_FBO)
     {
         gl_info->gl_ops.gl.p_glGetIntegerv(GL_MAX_DRAW_BUFFERS_ARB, &gl_max);
-        gl_info->limits.buffers = gl_max;
+        gl_info->limits.buffers = min(MAX_RENDER_TARGET_VIEWS, gl_max);
         TRACE("Max draw buffers: %u.\n", gl_max);
     }
     if (gl_info->supported[ARB_MULTITEXTURE])
@@ -3776,6 +3779,19 @@ static void wined3d_adapter_init_limits(struct wined3d_gl_info *gl_info)
         gl_info->limits.samples = gl_max;
     }
 
+    if (gl_info->supported[ARB_FRAMEBUFFER_NO_ATTACHMENTS])
+    {
+        gl_info->gl_ops.gl.p_glGetIntegerv(GL_MAX_FRAMEBUFFER_WIDTH, &gl_max);
+        gl_info->limits.framebuffer_width = gl_max;
+        gl_info->gl_ops.gl.p_glGetIntegerv(GL_MAX_FRAMEBUFFER_HEIGHT, &gl_max);
+        gl_info->limits.framebuffer_height = gl_max;
+    }
+    else
+    {
+        gl_info->limits.framebuffer_width = gl_info->limits.texture_size;
+        gl_info->limits.framebuffer_height = gl_info->limits.texture_size;
+    }
+
     gl_info->limits.samplers[WINED3D_SHADER_TYPE_PIXEL] =
             min(gl_info->limits.samplers[WINED3D_SHADER_TYPE_PIXEL], MAX_GL_FRAGMENT_SAMPLERS);
     sampler_count = 0;
@@ -3918,6 +3934,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         {ARB_DEBUG_OUTPUT,                 MAKEDWORD_VERSION(4, 3)},
         {ARB_ES3_COMPATIBILITY,            MAKEDWORD_VERSION(4, 3)},
         {ARB_FRAGMENT_LAYER_VIEWPORT,      MAKEDWORD_VERSION(4, 3)},
+        {ARB_FRAMEBUFFER_NO_ATTACHMENTS,   MAKEDWORD_VERSION(4, 3)},
         {ARB_INTERNALFORMAT_QUERY2,        MAKEDWORD_VERSION(4, 3)},
         {ARB_SHADER_IMAGE_SIZE,            MAKEDWORD_VERSION(4, 3)},
         {ARB_SHADER_STORAGE_BUFFER_OBJECT, MAKEDWORD_VERSION(4, 3)},

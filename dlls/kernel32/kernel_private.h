@@ -55,8 +55,8 @@ static inline obj_handle_t console_handle_unmap(HANDLE h)
 extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
 extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
 
-extern const WCHAR *DIR_Windows DECLSPEC_HIDDEN;
-extern const WCHAR *DIR_System DECLSPEC_HIDDEN;
+extern const WCHAR DIR_Windows[] DECLSPEC_HIDDEN;
+extern const WCHAR DIR_System[] DECLSPEC_HIDDEN;
 extern const WCHAR *DIR_SysWow64 DECLSPEC_HIDDEN;
 
 extern void FILE_SetDosError(void) DECLSPEC_HIDDEN;
@@ -106,8 +106,5 @@ extern void LOCALE_InitRegistry(void) DECLSPEC_HIDDEN;
 
 /* oldconfig.c */
 extern void convert_old_config(void) DECLSPEC_HIDDEN;
-
-/* returns directory handle for named objects */
-extern HANDLE get_BaseNamedObjects_handle(void) DECLSPEC_HIDDEN;
 
 #endif

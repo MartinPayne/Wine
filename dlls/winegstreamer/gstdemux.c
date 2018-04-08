@@ -69,7 +69,7 @@ typedef struct GSTImpl {
     GstBus *bus;
     guint64 start, nextofs, nextpullofs, stop;
     ALLOCATOR_PROPERTIES props;
-    HANDLE event, changed_ofs;
+    HANDLE no_more_pads_event, push_event;
 
     HANDLE push_thread;
 } GSTImpl;
@@ -321,6 +321,7 @@ static gboolean setcaps_sink(GstPad *pad, GstCaps *caps)
         return FALSE;
     FreeMediaType(pin->pmt);
     *pin->pmt = amt;
+    SetEvent(pin->caps_event);
     return TRUE;
 }
 
@@ -519,7 +520,7 @@ static DWORD CALLBACK push_data(LPVOID iface)
 
     TRACE("Waiting..\n");
 
-    WaitForSingleObject(This->event, INFINITE);
+    WaitForSingleObject(This->push_event, INFINITE);
 
     TRACE("Starting..\n");
     for (;;) {
@@ -617,8 +618,6 @@ static GstFlowReturn got_data_sink(GstPad *pad, GstObject *parent, GstBuffer *bu
 
     if (This->initial) {
         gst_buffer_unref(buf);
-        TRACE("Triggering %p %p\n", pad, pin->caps_event);
-        SetEvent(pin->caps_event);
         return GST_FLOW_OK;
     }
 
@@ -1050,7 +1049,7 @@ static void no_more_pads(GstElement *decodebin, gpointer user)
 {
     GSTImpl *This = (GSTImpl*)user;
     TRACE("%p %p\n", This, decodebin);
-    SetEvent(This->event);
+    SetEvent(This->no_more_pads_event);
 }
 
 static GstAutoplugSelectResult autoplug_blacklist(GstElement *bin, GstPad *pad, GstCaps *caps, GstElementFactory *fact, gpointer user)
@@ -1079,9 +1078,8 @@ static GstBusSyncReply watch_bus(GstBus *bus, GstMessage *msg, gpointer data)
 
     if (GST_MESSAGE_TYPE(msg) & GST_MESSAGE_ERROR) {
         gst_message_parse_error(msg, &err, &dbg_info);
-        FIXME("%s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
-        WARN("%s\n", dbg_info);
-        SetEvent(This->event);
+        ERR("%s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
+        ERR("%s\n", dbg_info);
     } else if (GST_MESSAGE_TYPE(msg) & GST_MESSAGE_WARNING) {
         gst_message_parse_warning(msg, &err, &dbg_info);
         WARN("%s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
@@ -1096,14 +1094,13 @@ static GstBusSyncReply watch_bus(GstBus *bus, GstMessage *msg, gpointer data)
 static void unknown_type(GstElement *bin, GstPad *pad, GstCaps *caps, gpointer user)
 {
     gchar *strcaps = gst_caps_to_string(caps);
-    FIXME("Could not find a filter for caps: %s\n", strcaps);
+    ERR("Could not find a filter for caps: %s\n", strcaps);
     g_free(strcaps);
 }
 
 static HRESULT GST_Connect(GSTInPin *pPin, IPin *pConnectPin, ALLOCATOR_PROPERTIES *props)
 {
     GSTImpl *This = (GSTImpl*)pPin->pin.pinInfo.pFilter;
-    HRESULT hr;
     int ret, i;
     LONGLONG avail, duration;
     GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
@@ -1128,7 +1125,7 @@ static HRESULT GST_Connect(GSTInPin *pPin, IPin *pConnectPin, ALLOCATOR_PROPERTI
 
     gstfilter = gst_element_factory_make("decodebin", NULL);
     if (!gstfilter) {
-        FIXME("Could not make source filter, are gstreamer-plugins-* installed for %u bits?\n",
+        ERR("Could not make source filter, are gstreamer-plugins-* installed for %u bits?\n",
               8 * (int)sizeof(void*));
         return E_FAIL;
     }
@@ -1158,24 +1155,26 @@ static HRESULT GST_Connect(GSTInPin *pPin, IPin *pConnectPin, ALLOCATOR_PROPERTI
 
     /* Add initial pins */
     This->initial = This->discont = TRUE;
-    ResetEvent(This->event);
+    ResetEvent(This->no_more_pads_event);
     gst_element_set_state(This->container, GST_STATE_PLAYING);
-    WaitForSingleObject(This->event, -1);
-    gst_element_get_state(This->container, NULL, NULL, -1);
+    ret = gst_element_get_state(This->container, NULL, NULL, -1);
 
-    if (!This->cStreams) {
-        FIXME("GStreamer could not find any streams\n");
-        hr = E_FAIL;
-    } else {
-        gst_pad_query_duration(This->ppPins[0]->their_src, GST_FORMAT_TIME, &duration);
-        for (i = 0; i < This->cStreams; ++i) {
-            This->ppPins[i]->seek.llDuration = This->ppPins[i]->seek.llStop = duration / 100;
-            This->ppPins[i]->seek.llCurrent = 0;
-            if (!This->ppPins[i]->seek.llDuration)
-                This->ppPins[i]->seek.dwCapabilities = 0;
-            WaitForSingleObject(This->ppPins[i]->caps_event, -1);
-        }
-        hr = S_OK;
+    if (ret == GST_STATE_CHANGE_FAILURE)
+    {
+        ERR("GStreamer failed to play stream\n");
+        return E_FAIL;
+    }
+
+    WaitForSingleObject(This->no_more_pads_event, INFINITE);
+
+    gst_pad_query_duration(This->ppPins[0]->their_src, GST_FORMAT_TIME, &duration);
+    for (i = 0; i < This->cStreams; ++i)
+    {
+        This->ppPins[i]->seek.llDuration = This->ppPins[i]->seek.llStop = duration / 100;
+        This->ppPins[i]->seek.llCurrent = 0;
+        if (!This->ppPins[i]->seek.llDuration)
+            This->ppPins[i]->seek.dwCapabilities = 0;
+        WaitForSingleObject(This->ppPins[i]->caps_event, INFINITE);
     }
     *props = This->props;
 
@@ -1191,7 +1190,7 @@ static HRESULT GST_Connect(GSTInPin *pPin, IPin *pConnectPin, ALLOCATOR_PROPERTI
     gst_pad_set_active(This->my_src, 1);
 
     This->nextofs = This->nextpullofs = 0;
-    return hr;
+    return S_OK;
 }
 
 static inline GSTOutPin *impl_from_IMediaSeeking( IMediaSeeking *iface )
@@ -1252,6 +1251,7 @@ IUnknown * CALLBACK Gstreamer_Splitter_create(IUnknown *pUnkOuter, HRESULT *phr)
         *phr = E_OUTOFMEMORY;
         return NULL;
     }
+    memset(This, 0, sizeof(*This));
 
     obj = (IUnknown*)&This->filter.IBaseFilter_iface;
     BaseFilter_Init(&This->filter, &GST_Vtbl, &CLSID_Gstreamer_Splitter, (DWORD_PTR)(__FILE__ ": GSTImpl.csFilter"), &BaseFuncTable);
@@ -1259,7 +1259,8 @@ IUnknown * CALLBACK Gstreamer_Splitter_create(IUnknown *pUnkOuter, HRESULT *phr)
     This->cStreams = 0;
     This->ppPins = NULL;
     This->push_thread = NULL;
-    This->event = CreateEventW(NULL, 0, 0, NULL);
+    This->no_more_pads_event = CreateEventW(NULL, 0, 0, NULL);
+    This->push_event = CreateEventW(NULL, 0, 0, NULL);
     This->bus = NULL;
 
     piInput = &This->pInputPin.pin.pinInfo;
@@ -1286,7 +1287,8 @@ static void GST_Destroy(GSTImpl *This)
 
     TRACE("Destroying %p\n", This);
 
-    CloseHandle(This->event);
+    CloseHandle(This->no_more_pads_event);
+    CloseHandle(This->push_event);
 
     /* Don't need to clean up output pins, disconnecting input pin will do that */
     IPin_ConnectedTo((IPin *)&This->pInputPin, &connected);
@@ -1913,7 +1915,6 @@ static HRESULT GST_RemoveOutputPins(GSTImpl *This)
 {
     HRESULT hr;
     ULONG i;
-    GSTOutPin **ppOldPins = This->ppPins;
 
     TRACE("(%p)\n", This);
     mark_wine_thread();
@@ -1927,17 +1928,17 @@ static HRESULT GST_RemoveOutputPins(GSTImpl *This)
     This->my_src = This->their_sink = NULL;
 
     for (i = 0; i < This->cStreams; i++) {
-        hr = BaseOutputPinImpl_BreakConnect(&ppOldPins[i]->pin);
+        hr = BaseOutputPinImpl_BreakConnect(&This->ppPins[i]->pin);
         TRACE("Disconnect: %08x\n", hr);
-        IPin_Release(&ppOldPins[i]->pin.pin.IPin_iface);
+        IPin_Release(&This->ppPins[i]->pin.pin.IPin_iface);
     }
     This->cStreams = 0;
+    CoTaskMemFree(This->ppPins);
     This->ppPins = NULL;
     gst_element_set_bus(This->container, NULL);
     gst_object_unref(This->container);
     This->container = NULL;
     BaseFilterImpl_IncrementPinVersion(&This->filter);
-    CoTaskMemFree(ppOldPins);
     return S_OK;
 }
 
@@ -1995,6 +1996,7 @@ static HRESULT WINAPI GSTInPin_ReceiveConnection(IPin *iface, IPin *pReceivePin,
 
         This->pReader = NULL;
         This->pAlloc = NULL;
+        ResetEvent(((GSTImpl *)This->pin.pinInfo.pFilter)->push_event);
         if (SUCCEEDED(hr))
             hr = IPin_QueryInterface(pReceivePin, &IID_IAsyncReader, (LPVOID *)&This->pReader);
         if (SUCCEEDED(hr))
@@ -2017,7 +2019,7 @@ static HRESULT WINAPI GSTInPin_ReceiveConnection(IPin *iface, IPin *pReceivePin,
             This->pin.pConnectedTo = pReceivePin;
             IPin_AddRef(pReceivePin);
             hr = IMemAllocator_Commit(This->pAlloc);
-            SetEvent(((GSTImpl*)This->pin.pinInfo.pFilter)->event);
+            SetEvent(((GSTImpl*)This->pin.pinInfo.pFilter)->push_event);
         } else {
             GST_RemoveOutputPins((GSTImpl *)This->pin.pinInfo.pFilter);
             if (This->pReader)
@@ -2229,18 +2231,6 @@ void CALLBACK perform_cb(TP_CALLBACK_INSTANCE *instance, void *user)
         {
             struct event_sink_data *data = &cbdata->u.event_sink_data;
             cbdata->u.event_sink_data.ret = event_sink(data->pad, data->parent, data->event);
-            break;
-        }
-    case ACCEPT_CAPS_SINK:
-        {
-            struct accept_caps_sink_data *data = &cbdata->u.accept_caps_sink_data;
-            cbdata->u.accept_caps_sink_data.ret = accept_caps_sink(data->pad, data->caps);
-            break;
-        }
-    case SETCAPS_SINK:
-        {
-            struct setcaps_sink_data *data = &cbdata->u.setcaps_sink_data;
-            cbdata->u.setcaps_sink_data.ret = setcaps_sink(data->pad, data->caps);
             break;
         }
     case GOT_DATA_SINK:

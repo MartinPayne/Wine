@@ -17,7 +17,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -43,6 +42,15 @@ static const char * const strings[4] = {
 };
 
 static const char BAD_EXTENSION[] = "*.badtxt";
+
+static int strcmp_aw(LPCWSTR strw, const char *stra)
+{
+    WCHAR buf[1024];
+
+    if (!stra) return 1;
+    MultiByteToWideChar(CP_ACP, 0, stra, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    return lstrcmpW(strw, buf);
+}
 
 static HWND create_listbox(DWORD add_style, HWND parent)
 {
@@ -230,6 +238,31 @@ static LRESULT WINAPI main_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
 {
     switch (msg)
     {
+    case WM_MEASUREITEM:
+    {
+        DWORD style = GetWindowLongA(GetWindow(hwnd, GW_CHILD), GWL_STYLE);
+        MEASUREITEMSTRUCT *mi = (void*)lparam;
+
+        ok(wparam == mi->CtlID, "got wParam=%08lx, expected %08x\n", wparam, mi->CtlID);
+        ok(mi->CtlType == ODT_LISTBOX, "mi->CtlType = %u\n", mi->CtlType);
+        ok(mi->CtlID == 1, "mi->CtlID = %u\n", mi->CtlID);
+        ok(mi->itemHeight, "mi->itemHeight = 0\n");
+
+        if (mi->itemID > 4 || style & LBS_OWNERDRAWFIXED)
+            break;
+
+        if (style & LBS_HASSTRINGS)
+        {
+            ok(!strcmp_aw((WCHAR*)mi->itemData, strings[mi->itemID]),
+                    "mi->itemData = %s (%d)\n", wine_dbgstr_w((WCHAR*)mi->itemData), mi->itemID);
+        }
+        else
+        {
+            ok((void*)mi->itemData == strings[mi->itemID],
+                    "mi->itemData = %08lx, expected %p\n", mi->itemData, strings[mi->itemID]);
+        }
+        break;
+    }
     case WM_DRAWITEM:
     {
         RECT rc_item, rc_client, rc_clip;
@@ -292,10 +325,10 @@ static void test_ownerdraw(void)
     RECT rc;
 
     parent = create_parent();
-    assert(parent);
+    ok(parent != NULL, "Failed to create parent window.\n");
 
     hLB = create_listbox(LBS_OWNERDRAWFIXED | WS_CHILD | WS_VISIBLE, parent);
-    assert(hLB);
+    ok(hLB != NULL, "Failed to create listbox window.\n");
 
     SetForegroundWindow(hLB);
     UpdateWindow(hLB);
@@ -334,7 +367,7 @@ static void test_LB_SELITEMRANGE(void)
     INT ret;
 
     hLB = create_listbox(LBS_EXTENDEDSEL, 0);
-    assert(hLB);
+    ok(hLB != NULL, "Failed to create listbox window.\n");
 
     listbox_query(hLB, &answer);
     listbox_test_query(test_nosel, answer);
@@ -594,7 +627,7 @@ static void test_listbox_LB_DIR(void)
      */
     hList = CreateWindowA( WC_LISTBOXA, "list test", WS_VISIBLE|WS_POPUP,
                           1, 1, 600, 100, NULL, NULL, NULL, NULL );
-    assert(hList);
+    ok(hList != NULL, "Failed to create listbox window.\n");
 
     /* Test for standard usage */
 
@@ -1076,6 +1109,7 @@ static void test_listbox_dlgdir(void)
     char * p;
     char driveletter;
     HANDLE file;
+    BOOL ret;
 
     file = CreateFileA( "wtest1.tmp.c", GENERIC_READ|GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL );
     ok(file != INVALID_HANDLE_VALUE, "Error creating the test file: %d\n", GetLastError());
@@ -1088,7 +1122,8 @@ static void test_listbox_dlgdir(void)
      */
 
     hInst = GetModuleHandleA(0);
-    if (!RegisterListboxWindowClass(hInst)) assert(0);
+    ret = RegisterListboxWindowClass(hInst);
+    ok(ret, "Failed to register test class.\n");
 
     hWnd = CreateWindowA("ListboxContainerClass", "ListboxContainerClass",
                     WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -1836,6 +1871,26 @@ static void test_listbox(void)
     run_test(EMS_NS);
 }
 
+static void test_WM_MEASUREITEM(void)
+{
+    HWND parent, listbox;
+    LRESULT data;
+
+    parent = create_parent();
+    listbox = create_listbox(WS_CHILD | LBS_OWNERDRAWVARIABLE, parent);
+
+    data = SendMessageA(listbox, LB_GETITEMDATA, 0, 0);
+    ok(data == (LRESULT)strings[0], "data = %08lx, expected %p\n", data, strings[0]);
+    DestroyWindow(parent);
+
+    parent = create_parent();
+    listbox = create_listbox(WS_CHILD | LBS_OWNERDRAWVARIABLE | LBS_HASSTRINGS, parent);
+
+    data = SendMessageA(listbox, LB_GETITEMDATA, 0, 0);
+    ok(!data, "data = %08lx\n", data);
+    DestroyWindow(parent);
+}
+
 START_TEST(listbox)
 {
     ULONG_PTR ctx_cookie;
@@ -1858,6 +1913,7 @@ START_TEST(listbox)
     test_GetListBoxInfo();
     test_missing_lbuttonup();
     test_extents();
+    test_WM_MEASUREITEM();
 
     unload_v6_module(ctx_cookie, hCtx);
 }

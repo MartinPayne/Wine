@@ -3019,15 +3019,19 @@ static HRESULT HTMLWindow_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD 
 static compat_mode_t HTMLWindow_get_compat_mode(DispatchEx *dispex)
 {
     HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
+    return lock_document_mode(This->doc);
+}
 
-    This->doc->document_mode_locked = TRUE;
-    return This->doc->document_mode;
+static nsISupports *HTMLWindow_get_gecko_target(DispatchEx *dispex)
+{
+    HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
+    return (nsISupports*)This->base.outer_window->nswindow;
 }
 
 static void HTMLWindow_bind_event(DispatchEx *dispex, eventid_t eid)
 {
     HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
-    ensure_doc_nsevent_handler(This->doc, eid);
+    ensure_doc_nsevent_handler(This->doc, NULL, eid);
 }
 
 static void HTMLWindow_init_dispex_info(dispex_data_t *info, compat_mode_t compat_mode)
@@ -3050,6 +3054,7 @@ static const event_target_vtbl_t HTMLWindow_event_target_vtbl = {
         HTMLWindow_get_compat_mode,
         NULL
     },
+    HTMLWindow_get_gecko_target,
     HTMLWindow_bind_event,
     NULL,
     NULL,

@@ -16,23 +16,17 @@ C_SRCS = \
 	htmldoc.c \
 	htmlelem.c \
 	htmlelemcol.c \
-	htmlembed.c \
 	htmlevent.c \
 	htmlform.c \
 	htmlframe.c \
-	htmlframebase.c \
 	htmlgeneric.c \
 	htmlhead.c \
-	htmliframe.c \
 	htmlimg.c \
 	htmlinput.c \
 	htmllink.c \
 	htmllocation.c \
-	htmlmeta.c \
 	htmlnode.c \
 	htmlobject.c \
-	htmloption.c \
-	htmlscreen.c \
 	htmlscript.c \
 	htmlselect.c \
 	htmlstorage.c \
@@ -40,14 +34,10 @@ C_SRCS = \
 	htmlstyleelem.c \
 	htmlstylesheet.c \
 	htmltable.c \
-	htmltablecell.c \
-	htmltablerow.c \
 	htmltextarea.c \
-	htmltextcont.c \
 	htmltextnode.c \
 	htmlwindow.c \
 	ifacewrap.c \
-	ipwindow.c \
 	loadopts.c \
 	main.c \
 	mutation.c \
@@ -62,7 +52,6 @@ C_SRCS = \
 	omnavigator.c \
 	persist.c \
 	pluginhost.c \
-	propbag.c \
 	protocol.c \
 	script.c \
 	secmgr.c \

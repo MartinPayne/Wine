@@ -7567,9 +7567,9 @@ static GLuint arbfp_gen_plain_shader(const struct wined3d_gl_info *gl_info, cons
 
 /* Context activation is done by the caller. */
 static HRESULT arbfp_blit_set(struct wined3d_arbfp_blitter *blitter, struct wined3d_context *context,
-        const struct wined3d_surface *surface, const struct wined3d_color_key *color_key)
+        const struct wined3d_texture *texture, unsigned int sub_resource_idx,
+        const struct wined3d_color_key *color_key)
 {
-    const struct wined3d_texture *texture = surface->container;
     enum complex_fixup fixup;
     const struct wined3d_gl_info *gl_info = context->gl_info;
     struct wine_rb_entry *entry;
@@ -7577,10 +7577,12 @@ static HRESULT arbfp_blit_set(struct wined3d_arbfp_blitter *blitter, struct wine
     struct arbfp_blit_desc *desc;
     struct wined3d_color float_color_key[2];
     struct wined3d_vec4 size;
+    unsigned int level;
     GLuint shader;
 
-    size.x = wined3d_texture_get_level_pow2_width(texture, surface->texture_level);
-    size.y = wined3d_texture_get_level_pow2_height(texture, surface->texture_level);
+    level = sub_resource_idx % texture->level_count;
+    size.x = wined3d_texture_get_level_pow2_width(texture, level);
+    size.y = wined3d_texture_get_level_pow2_height(texture, level);
     size.z = 1.0f;
     size.w = 1.0f;
 
@@ -7797,6 +7799,7 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
         const RECT *src_rect, struct wined3d_surface *dst_surface, DWORD dst_location, const RECT *dst_rect,
         const struct wined3d_color_key *color_key, enum wined3d_texture_filter_type filter)
 {
+    unsigned int src_sub_resource_idx = surface_get_sub_resource_idx(src_surface);
     struct wined3d_texture *src_texture = src_surface->container;
     struct wined3d_texture *dst_texture = dst_surface->container;
     struct wined3d_device *device = dst_texture->resource.device;
@@ -7822,6 +7825,8 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
             == WINED3D_LOCATION_DRAWABLE
             && !wined3d_resource_is_offscreen(&src_texture->resource))
     {
+        unsigned int src_level = src_sub_resource_idx % src_texture->level_count;
+
         /* Without FBO blits transferring from the drawable to the texture is
          * expensive, because we have to flip the data in sysmem. Since we can
          * flip in the blitter, we don't actually need that flip anyway. So we
@@ -7830,8 +7835,8 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
         surface_load_fb_texture(src_surface, FALSE, context);
 
         s = *src_rect;
-        s.top = wined3d_texture_get_level_height(src_texture, src_surface->texture_level) - s.top;
-        s.bottom = wined3d_texture_get_level_height(src_texture, src_surface->texture_level) - s.bottom;
+        s.top = wined3d_texture_get_level_height(src_texture, src_level) - s.top;
+        s.bottom = wined3d_texture_get_level_height(src_texture, src_level) - s.bottom;
         src_rect = &s;
     }
     else
@@ -7874,10 +7879,10 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
         color_key = &alpha_test_key;
     }
 
-    arbfp_blit_set(arbfp_blitter, context, src_surface, color_key);
+    arbfp_blit_set(arbfp_blitter, context, src_texture, src_sub_resource_idx, color_key);
 
     /* Draw a textured quad */
-    draw_textured_quad(src_surface, context, src_rect, dst_rect, filter);
+    draw_textured_quad(src_texture, src_sub_resource_idx, context, src_rect, dst_rect, filter);
 
     /* Leave the opengl state valid for blitting */
     arbfp_blit_unset(context->gl_info);

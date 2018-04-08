@@ -1301,6 +1301,7 @@ static void test_empty_rect(void)
 {
     GpPath *path;
     GpStatus status;
+    INT count;
     BOOL result;
 
     status = GdipCreatePath(FillModeAlternate, &path);
@@ -1309,18 +1310,41 @@ static void test_empty_rect(void)
     status = GdipAddPathRectangle(path, 0.0, 0.0, -5.0, 5.0);
     expect(Ok, status);
 
+    status = GdipGetPointCount(path, &count);
+    expect(Ok, status);
+    expect(0, count);
+
     status = GdipIsVisiblePathPoint(path, -2.0, 2.0, NULL, &result);
     expect(Ok, status);
-    expect(FALSE, status);
+    expect(FALSE, result);
 
     status = GdipAddPathRectangle(path, 0.0, 0.0, 5.0, -5.0);
     expect(Ok, status);
 
+    status = GdipGetPointCount(path, &count);
+    expect(Ok, status);
+    expect(0, count);
+
     status = GdipAddPathRectangle(path, 0.0, 0.0, 0.0, 5.0);
     expect(Ok, status);
 
+    status = GdipGetPointCount(path, &count);
+    expect(Ok, status);
+    expect(0, count);
+
     status = GdipAddPathRectangle(path, 0.0, 0.0, 5.0, 0.0);
     expect(Ok, status);
+
+    status = GdipGetPointCount(path, &count);
+    expect(Ok, status);
+    expect(0, count);
+
+    status = GdipAddPathRectangle(path, 0.0, 0.0, 5.0, 0.1);
+    expect(Ok, status);
+
+    status = GdipGetPointCount(path, &count);
+    expect(Ok, status);
+    expect(4, count);
 
     GdipDeletePath(path);
 }

@@ -212,7 +212,7 @@
 # @ stub CreateProcessInternalW
 @ stdcall CreateProcessW(wstr wstr ptr ptr long long ptr wstr ptr ptr) kernel32.CreateProcessW
 @ stdcall CreateRemoteThread(long ptr long ptr long long ptr) kernel32.CreateRemoteThread
-@ stub CreateRemoteThreadEx
+@ stdcall CreateRemoteThreadEx(long ptr long ptr ptr long ptr ptr) kernel32.CreateRemoteThreadEx
 @ stdcall CreateRestrictedToken(long long long ptr long ptr long ptr ptr) advapi32.CreateRestrictedToken
 @ stdcall CreateSemaphoreExW(ptr long long wstr long long) kernel32.CreateSemaphoreExW
 @ stdcall CreateSemaphoreW(ptr long long wstr) kernel32.CreateSemaphoreW
@@ -491,7 +491,7 @@
 # @ stub GetEffectivePackageStatusForUser
 # @ stub GetEightBitStringToUnicodeSizeRoutine
 # @ stub GetEightBitStringToUnicodeStringRoutine
-# @ stub GetEnabledXStateFeatures
+@ stdcall -ret64 -arch=i386,x86_64 GetEnabledXStateFeatures() kernel32.GetEnabledXStateFeatures
 @ stdcall GetEnvironmentStrings() kernel32.GetEnvironmentStrings
 @ stdcall GetEnvironmentStringsA() kernel32.GetEnvironmentStringsA
 @ stdcall GetEnvironmentStringsW() kernel32.GetEnvironmentStringsW
@@ -1029,8 +1029,8 @@
 @ stdcall PathAppendW(wstr wstr) shlwapi.PathAppendW
 @ stdcall PathCanonicalizeA(ptr str) shlwapi.PathCanonicalizeA
 @ stdcall PathCanonicalizeW(ptr wstr) shlwapi.PathCanonicalizeW
-# @ stub PathCchAddBackslash
-# @ stub PathCchAddBackslashEx
+@ stdcall PathCchAddBackslash(wstr long)
+@ stdcall PathCchAddBackslashEx(wstr long ptr ptr)
 # @ stub PathCchAddExtension
 # @ stub PathCchAppend
 # @ stub PathCchAppendEx
@@ -1223,7 +1223,7 @@
 @ stdcall QueueUserWorkItem(ptr ptr long) kernel32.QueueUserWorkItem
 # @ stub QuirkGetData
 # @ stub QuirkGetData2
-# @ stub QuirkIsEnabled
+@ stdcall QuirkIsEnabled(ptr)
 # @ stub QuirkIsEnabled2
 @ stdcall QuirkIsEnabled3(ptr ptr)
 # @ stub QuirkIsEnabledForPackage

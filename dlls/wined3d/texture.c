@@ -369,7 +369,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
     }
     wined3d_resource_update_draw_binding(&texture->resource);
     if ((flags & WINED3D_TEXTURE_CREATE_MAPPABLE) || desc->format == WINED3DFMT_D16_LOCKABLE)
-        texture->resource.access |= WINED3D_RESOURCE_ACCESS_MAP;
+        texture->resource.access |= WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
 
     texture->texture_ops = texture_ops;
 
@@ -492,40 +492,42 @@ static void wined3d_texture_allocate_gl_mutable_storage(struct wined3d_texture *
         GLenum gl_internal_format, const struct wined3d_format *format,
         const struct wined3d_gl_info *gl_info)
 {
-    unsigned int i, sub_call_count;
+    unsigned int level, level_count, layer, layer_count;
+    GLsizei width, height;
+    GLenum target;
 
-    sub_call_count = texture->level_count;
-    if (texture->target != GL_TEXTURE_2D_ARRAY)
-        sub_call_count *= texture->layer_count;
+    level_count = texture->level_count;
+    layer_count = texture->target == GL_TEXTURE_2D_ARRAY ? 1 : texture->layer_count;
 
-    for (i = 0; i < sub_call_count; ++i)
+    for (layer = 0; layer < layer_count; ++layer)
     {
-        struct wined3d_surface *surface = texture->sub_resources[i].u.surface;
-        GLsizei width, height;
+        target = wined3d_texture_get_sub_resource_target(texture, layer * level_count);
 
-        width = wined3d_texture_get_level_pow2_width(texture, surface->texture_level);
-        height = wined3d_texture_get_level_pow2_height(texture, surface->texture_level);
-        if (texture->resource.format_flags & WINED3DFMT_FLAG_HEIGHT_SCALE)
+        for (level = 0; level < level_count; ++level)
         {
-            height *= format->height_scale.numerator;
-            height /= format->height_scale.denominator;
-        }
+            width = wined3d_texture_get_level_pow2_width(texture, level);
+            height = wined3d_texture_get_level_pow2_height(texture, level);
+            if (texture->resource.format_flags & WINED3DFMT_FLAG_HEIGHT_SCALE)
+            {
+                height *= format->height_scale.numerator;
+                height /= format->height_scale.denominator;
+            }
 
-        TRACE("surface %p, target %#x, level %u, width %u, height %u.\n",
-                surface, surface->texture_target, surface->texture_level, width, height);
+            TRACE("texture %p, layer %u, level %u, target %#x, width %u, height %u.\n",
+                    texture, layer, level, target, width, height);
 
-        if (texture->target == GL_TEXTURE_2D_ARRAY)
-        {
-            GL_EXTCALL(glTexImage3D(surface->texture_target, surface->texture_level,
-                    gl_internal_format, width, height, texture->layer_count, 0,
-                    format->glFormat, format->glType, NULL));
-            checkGLcall("glTexImage3D");
-        }
-        else
-        {
-            gl_info->gl_ops.gl.p_glTexImage2D(surface->texture_target, surface->texture_level,
-                    gl_internal_format, width, height, 0, format->glFormat, format->glType, NULL);
-            checkGLcall("glTexImage2D");
+            if (texture->target == GL_TEXTURE_2D_ARRAY)
+            {
+                GL_EXTCALL(glTexImage3D(target, level, gl_internal_format, width, height,
+                        texture->layer_count, 0, format->glFormat, format->glType, NULL));
+                checkGLcall("glTexImage3D");
+            }
+            else
+            {
+                gl_info->gl_ops.gl.p_glTexImage2D(target, level, gl_internal_format,
+                        width, height, 0, format->glFormat, format->glType, NULL);
+                checkGLcall("glTexImage2D");
+            }
         }
     }
 }
@@ -654,6 +656,21 @@ static void wined3d_texture_cleanup(struct wined3d_texture *texture)
         context_release(context);
 
     texture->texture_ops->texture_cleanup_sub_resources(texture);
+    if (texture->overlay_info)
+    {
+        for (i = 0; i < sub_count; ++i)
+        {
+            struct wined3d_overlay_info *info = &texture->overlay_info[i];
+            struct wined3d_overlay_info *overlay, *cur;
+
+            list_remove(&info->entry);
+            LIST_FOR_EACH_ENTRY_SAFE(overlay, cur, &info->overlays, struct wined3d_overlay_info, entry)
+            {
+                list_remove(&overlay->entry);
+            }
+        }
+        heap_free(texture->overlay_info);
+    }
     wined3d_texture_unload_gl_texture(texture);
 }
 
@@ -1224,7 +1241,8 @@ static void texture2d_create_dc(void *object)
     wined3d_texture_get_pitch(texture, surface->texture_level, &row_pitch, &slice_pitch);
     wined3d_texture_get_memory(texture, sub_resource_idx, &data, texture->resource.map_binding);
     desc.pMemory = context_map_bo_address(context, &data,
-            texture->sub_resources[sub_resource_idx].size, GL_PIXEL_UNPACK_BUFFER, 0);
+            texture->sub_resources[sub_resource_idx].size,
+            GL_PIXEL_UNPACK_BUFFER, WINED3D_MAP_READ | WINED3D_MAP_WRITE);
 
     if (context)
         context_release(context);
@@ -1376,7 +1394,6 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, UINT 
         texture->target = GL_TEXTURE_2D_MULTISAMPLE;
     else
         texture->target = GL_TEXTURE_2D;
-    texture->sub_resources[0].u.surface->texture_target = texture->target;
 
     if (((width & (width - 1)) || (height & (height - 1))) && !gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO]
             && !gl_info->supported[ARB_TEXTURE_RECTANGLE] && !gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT])
@@ -1699,7 +1716,6 @@ static void texture2d_cleanup_sub_resources(struct wined3d_texture *texture)
     struct wined3d_renderbuffer_entry *entry, *entry2;
     const struct wined3d_gl_info *gl_info = NULL;
     struct wined3d_context *context = NULL;
-    struct wined3d_surface *overlay, *cur;
     struct wined3d_surface *surface;
     unsigned int i;
 
@@ -1727,15 +1743,6 @@ static void texture2d_cleanup_sub_resources(struct wined3d_texture *texture)
 
         if (surface->dc)
             texture2d_destroy_dc(surface);
-
-        if (surface->overlay_dest)
-            list_remove(&surface->overlay_entry);
-
-        LIST_FOR_EACH_ENTRY_SAFE(overlay, cur, &surface->overlays, struct wined3d_surface, overlay_entry)
-        {
-            list_remove(&overlay->overlay_entry);
-            overlay->overlay_dest = NULL;
-        }
     }
     if (context)
         context_release(context);
@@ -1903,7 +1910,7 @@ static HRESULT texture_resource_sub_resource_map(struct wined3d_resource *resour
         return E_OUTOFMEMORY;
     }
 
-    if (!(flags & WINED3D_MAP_READONLY)
+    if (flags & WINED3D_MAP_WRITE
             && (!(flags & WINED3D_MAP_NO_DIRTY_UPDATE) || (resource->usage & WINED3DUSAGE_DYNAMIC)))
         wined3d_texture_invalidate_location(texture, sub_resource_idx, ~resource->map_binding);
 
@@ -2030,7 +2037,7 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
     const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
     struct wined3d_surface *surfaces;
     UINT pow2_width, pow2_height;
-    unsigned int i, j;
+    unsigned int i, j, sub_count;
     HRESULT hr;
 
     if (!(desc->usage & WINED3DUSAGE_LEGACY_CUBEMAP) && layer_count > 1
@@ -2176,11 +2183,28 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
     if (wined3d_texture_use_pbo(texture, gl_info))
         texture->resource.map_binding = WINED3D_LOCATION_BUFFER;
 
-    if (level_count > ~(SIZE_T)0 / layer_count
-            || !(surfaces = heap_calloc(level_count * layer_count, sizeof(*surfaces))))
+    sub_count = level_count * layer_count;
+    if (sub_count / layer_count != level_count
+            || !(surfaces = heap_calloc(sub_count, sizeof(*surfaces))))
     {
         wined3d_texture_cleanup_sync(texture);
         return E_OUTOFMEMORY;
+    }
+
+    if (desc->usage & WINED3DUSAGE_OVERLAY)
+    {
+        if (!(texture->overlay_info = heap_calloc(sub_count, sizeof(*texture->overlay_info))))
+        {
+            heap_free(surfaces);
+            wined3d_texture_cleanup_sync(texture);
+            return E_OUTOFMEMORY;
+        }
+
+        for (i = 0; i < sub_count; ++i)
+        {
+            list_init(&texture->overlay_info[i].entry);
+            list_init(&texture->overlay_info[i].overlays);
+        }
     }
 
     /* Generate all the surfaces. */
@@ -2188,26 +2212,15 @@ static HRESULT texture_init(struct wined3d_texture *texture, const struct wined3
     {
         for (j = 0; j < texture->layer_count; ++j)
         {
-            static const GLenum cube_targets[6] =
-            {
-                GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB,
-                GL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB,
-                GL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB,
-            };
             struct wined3d_texture_sub_resource *sub_resource;
             unsigned int idx = j * texture->level_count + i;
             struct wined3d_surface *surface;
 
             surface = &surfaces[idx];
             surface->container = texture;
-            surface->texture_target = desc->usage & WINED3DUSAGE_LEGACY_CUBEMAP ? cube_targets[j] : texture->target;
             surface->texture_level = i;
             surface->texture_layer = j;
             list_init(&surface->renderbuffers);
-            list_init(&surface->overlays);
 
             sub_resource = &texture->sub_resources[idx];
             sub_resource->locations = WINED3D_LOCATION_DISCARDED;
@@ -2695,19 +2708,19 @@ HRESULT CDECL wined3d_texture_blt(struct wined3d_texture *dst_texture, unsigned 
 HRESULT CDECL wined3d_texture_get_overlay_position(const struct wined3d_texture *texture,
         unsigned int sub_resource_idx, LONG *x, LONG *y)
 {
-    struct wined3d_surface *surface;
+    struct wined3d_overlay_info *overlay;
 
     TRACE("texture %p, sub_resource_idx %u, x %p, y %p.\n", texture, sub_resource_idx, x, y);
 
-    if (!(texture->resource.usage & WINED3DUSAGE_OVERLAY) || texture->resource.type != WINED3D_RTYPE_TEXTURE_2D
+    if (!(texture->resource.usage & WINED3DUSAGE_OVERLAY)
             || sub_resource_idx >= texture->level_count * texture->layer_count)
     {
         WARN("Invalid sub-resource specified.\n");
         return WINEDDERR_NOTAOVERLAYSURFACE;
     }
 
-    surface = texture->sub_resources[sub_resource_idx].u.surface;
-    if (!surface->overlay_dest)
+    overlay = &texture->overlay_info[sub_resource_idx];
+    if (!overlay->dst)
     {
         TRACE("Overlay not visible.\n");
         *x = 0;
@@ -2715,8 +2728,8 @@ HRESULT CDECL wined3d_texture_get_overlay_position(const struct wined3d_texture 
         return WINEDDERR_OVERLAYNOTVISIBLE;
     }
 
-    *x = surface->overlay_destrect.left;
-    *y = surface->overlay_destrect.top;
+    *x = overlay->dst_rect.left;
+    *y = overlay->dst_rect.top;
 
     TRACE("Returning position %d, %d.\n", *x, *y);
 
@@ -2726,23 +2739,22 @@ HRESULT CDECL wined3d_texture_get_overlay_position(const struct wined3d_texture 
 HRESULT CDECL wined3d_texture_set_overlay_position(struct wined3d_texture *texture,
         unsigned int sub_resource_idx, LONG x, LONG y)
 {
-    struct wined3d_texture_sub_resource *sub_resource;
-    struct wined3d_surface *surface;
+    struct wined3d_overlay_info *overlay;
     LONG w, h;
 
     TRACE("texture %p, sub_resource_idx %u, x %d, y %d.\n", texture, sub_resource_idx, x, y);
 
-    if (!(texture->resource.usage & WINED3DUSAGE_OVERLAY) || texture->resource.type != WINED3D_RTYPE_TEXTURE_2D
-            || !(sub_resource = wined3d_texture_get_sub_resource(texture, sub_resource_idx)))
+    if (!(texture->resource.usage & WINED3DUSAGE_OVERLAY)
+            || sub_resource_idx >= texture->level_count * texture->layer_count)
     {
         WARN("Invalid sub-resource specified.\n");
         return WINEDDERR_NOTAOVERLAYSURFACE;
     }
 
-    surface = sub_resource->u.surface;
-    w = surface->overlay_destrect.right - surface->overlay_destrect.left;
-    h = surface->overlay_destrect.bottom - surface->overlay_destrect.top;
-    SetRect(&surface->overlay_destrect, x, y, x + w, y + h);
+    overlay = &texture->overlay_info[sub_resource_idx];
+    w = overlay->dst_rect.right - overlay->dst_rect.left;
+    h = overlay->dst_rect.bottom - overlay->dst_rect.top;
+    SetRect(&overlay->dst_rect, x, y, x + w, y + h);
 
     return WINED3D_OK;
 }
@@ -2753,6 +2765,7 @@ HRESULT CDECL wined3d_texture_update_overlay(struct wined3d_texture *texture, un
 {
     struct wined3d_texture_sub_resource *sub_resource, *dst_sub_resource;
     struct wined3d_surface *surface, *dst_surface;
+    struct wined3d_overlay_info *overlay;
 
     TRACE("texture %p, sub_resource_idx %u, src_rect %s, dst_texture %p, "
             "dst_sub_resource_idx %u, dst_rect %s, flags %#x.\n",
@@ -2773,42 +2786,44 @@ HRESULT CDECL wined3d_texture_update_overlay(struct wined3d_texture *texture, un
         return WINED3DERR_INVALIDCALL;
     }
 
+    overlay = &texture->overlay_info[sub_resource_idx];
+
     surface = sub_resource->u.surface;
     if (src_rect)
-        surface->overlay_srcrect = *src_rect;
+        overlay->src_rect = *src_rect;
     else
-        SetRect(&surface->overlay_srcrect, 0, 0,
+        SetRect(&overlay->src_rect, 0, 0,
                 wined3d_texture_get_level_width(texture, surface->texture_level),
                 wined3d_texture_get_level_height(texture, surface->texture_level));
 
     dst_surface = dst_sub_resource->u.surface;
     if (dst_rect)
-        surface->overlay_destrect = *dst_rect;
+        overlay->dst_rect = *dst_rect;
     else
-        SetRect(&surface->overlay_destrect, 0, 0,
+        SetRect(&overlay->dst_rect, 0, 0,
                 wined3d_texture_get_level_width(dst_texture, dst_surface->texture_level),
                 wined3d_texture_get_level_height(dst_texture, dst_surface->texture_level));
 
-    if (surface->overlay_dest && (surface->overlay_dest != dst_surface || flags & WINEDDOVER_HIDE))
+    if (overlay->dst && (overlay->dst != dst_surface || flags & WINEDDOVER_HIDE))
     {
-        surface->overlay_dest = NULL;
-        list_remove(&surface->overlay_entry);
+        overlay->dst = NULL;
+        list_remove(&overlay->entry);
     }
 
     if (flags & WINEDDOVER_SHOW)
     {
-        if (surface->overlay_dest != dst_surface)
+        if (overlay->dst != dst_surface)
         {
-            surface->overlay_dest = dst_surface;
-            list_add_tail(&dst_surface->overlays, &surface->overlay_entry);
+            overlay->dst = dst_surface;
+            list_add_tail(&texture->overlay_info[dst_sub_resource_idx].overlays, &overlay->entry);
         }
     }
     else if (flags & WINEDDOVER_HIDE)
     {
         /* Tests show that the rectangles are erased on hide. */
-        SetRectEmpty(&surface->overlay_srcrect);
-        SetRectEmpty(&surface->overlay_destrect);
-        surface->overlay_dest = NULL;
+        SetRectEmpty(&overlay->src_rect);
+        SetRectEmpty(&overlay->dst_rect);
+        overlay->dst = NULL;
     }
 
     return WINED3D_OK;

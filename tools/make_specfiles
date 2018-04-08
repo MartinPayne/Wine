@@ -75,6 +75,10 @@ my @dll_groups =
   "msvcp120_app",
  ],
  [
+  "d3d10",
+  "d3d10_1",
+ ],
+ [
   "d3dx10_43",
   "d3dx10_42",
   "d3dx10_41",
@@ -299,6 +303,7 @@ my @dll_groups =
  [
   "kernelbase",
   "api-ms-win-appmodel-runtime-l1-1-2",
+  "api-ms-win-core-path-l1-1-0",
   "api-ms-win-core-quirks-l1-1-0",
   "api-ms-win-security-grouppolicy-l1-1-0",
  ],

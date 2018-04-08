@@ -25,6 +25,7 @@
 #define COBJMACROS
 #include "initguid.h"
 #include "d3d11_4.h"
+#include "wine/heap.h"
 #include "wine/test.h"
 
 #ifndef ARRAY_SIZE
@@ -7886,10 +7887,10 @@ static void test_sample_c_lz(void)
 
 static void test_multiple_render_targets(void)
 {
+    ID3D11RenderTargetView *rtv[4], *tmp_rtv[4];
     D3D11_TEXTURE2D_DESC texture_desc;
     ID3D11InputLayout *input_layout;
     unsigned int stride, offset, i;
-    ID3D11RenderTargetView *rtv[4];
     ID3D11DeviceContext *context;
     ID3D11Texture2D *rt[4];
     ID3D11VertexShader *vs;
@@ -8024,9 +8025,21 @@ static void test_multiple_render_targets(void)
 
     for (i = 0; i < ARRAY_SIZE(rtv); ++i)
         ID3D11DeviceContext_ClearRenderTargetView(context, rtv[i], red);
-
     ID3D11DeviceContext_Draw(context, 4, 0);
+    check_texture_color(rt[0], 0xffffffff, 2);
+    check_texture_color(rt[1], 0x7f7f7f7f, 2);
+    check_texture_color(rt[2], 0x33333333, 2);
+    check_texture_color(rt[3], 0xff7f3300, 2);
 
+    for (i = 0; i < ARRAY_SIZE(rtv); ++i)
+        ID3D11DeviceContext_ClearRenderTargetView(context, rtv[i], red);
+    for (i = 0; i < ARRAY_SIZE(tmp_rtv); ++i)
+    {
+        memset(tmp_rtv, 0, sizeof(tmp_rtv));
+        tmp_rtv[i] = rtv[i];
+        ID3D11DeviceContext_OMSetRenderTargets(context, 4, tmp_rtv, NULL);
+        ID3D11DeviceContext_Draw(context, 4, 0);
+    }
     check_texture_color(rt[0], 0xffffffff, 2);
     check_texture_color(rt[1], 0x7f7f7f7f, 2);
     check_texture_color(rt[2], 0x33333333, 2);
@@ -8198,7 +8211,7 @@ static void test_render_target_views(void)
     texture_desc.CPUAccessFlags = 0;
     texture_desc.MiscFlags = 0;
 
-    data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, texture_desc.Width * texture_desc.Height * 4);
+    data = heap_alloc_zero(texture_desc.Width * texture_desc.Height * 4);
     ok(!!data, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -8282,7 +8295,7 @@ static void test_render_target_views(void)
         ID3D11Resource_Release(resource);
     }
 
-    HeapFree(GetProcessHeap(), 0, data);
+    heap_free(data);
     release_test_context(&test_context);
 }
 
@@ -11029,7 +11042,6 @@ static void check_resource_cpu_access_(unsigned int line, ID3D11DeviceContext *c
 
     expected_hr = cpu_read ? S_OK : E_INVALIDARG;
     hr = ID3D11DeviceContext_Map(context, resource, 0, D3D11_MAP_READ, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ.\n", hr);
     if (SUCCEEDED(hr))
         ID3D11DeviceContext_Unmap(context, resource, 0);
@@ -11037,21 +11049,20 @@ static void check_resource_cpu_access_(unsigned int line, ID3D11DeviceContext *c
     /* WRITE_DISCARD and WRITE_NO_OVERWRITE are the only allowed options for dynamic resources. */
     expected_hr = !dynamic && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D11DeviceContext_Map(context, resource, 0, D3D11_MAP_WRITE, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D11DeviceContext_Unmap(context, resource, 0);
 
     expected_hr = cpu_read && cpu_write ? S_OK : E_INVALIDARG;
     hr = ID3D11DeviceContext_Map(context, resource, 0, D3D11_MAP_READ_WRITE, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for READ_WRITE.\n", hr);
     if (SUCCEEDED(hr))
         ID3D11DeviceContext_Unmap(context, resource, 0);
 
     expected_hr = dynamic ? S_OK : E_INVALIDARG;
     hr = ID3D11DeviceContext_Map(context, resource, 0, D3D11_MAP_WRITE_DISCARD, 0, &map_desc);
-    todo_wine_if(expected_hr != S_OK && cpu_access)
+    todo_wine_if(!dynamic && cpu_write)
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x for WRITE_DISCARD.\n", hr);
     if (SUCCEEDED(hr))
         ID3D11DeviceContext_Unmap(context, resource, 0);
@@ -11156,7 +11167,7 @@ static void test_resource_access(const D3D_FEATURE_LEVEL feature_level)
 
     data.SysMemPitch = 0;
     data.SysMemSlicePitch = 0;
-    data.pSysMem = HeapAlloc(GetProcessHeap(), 0, 10240);
+    data.pSysMem = heap_alloc(10240);
     ok(!!data.pSysMem, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -11341,7 +11352,7 @@ static void test_resource_access(const D3D_FEATURE_LEVEL feature_level)
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, (void *)data.pSysMem);
+    heap_free((void *)data.pSysMem);
 
     ID3D11DeviceContext_Release(context);
     refcount = ID3D11Device_Release(device);
@@ -12603,14 +12614,13 @@ static void test_draw_uav_only(void)
     ok(SUCCEEDED(hr), "Failed to create pixel shader, hr %#x.\n", hr);
 
     ID3D11DeviceContext_PSSetShader(context, ps, NULL, 0);
-    /* FIXME: Set the render targets to NULL when no attachment draw calls are supported in wined3d. */
-    ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(context, 1, &test_context.backbuffer_rtv, NULL,
+    ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(context, 0, NULL, NULL,
             0, 1, &uav, NULL);
 
     ID3D11DeviceContext_ClearUnorderedAccessViewUint(context, uav, values);
     memset(&vp, 0, sizeof(vp));
-    vp.Width = 1.0f;
-    vp.Height = 100.0f;
+    vp.Width = 10.0f;
+    vp.Height = 10.0f;
     ID3D11DeviceContext_RSSetViewports(context, 1, &vp);
     ID3D11DeviceContext_ClearUnorderedAccessViewUint(context, uav, values);
     draw_quad(&test_context);
@@ -17674,9 +17684,8 @@ static void test_ps_cs_uav_binding(void)
     ID3D11DeviceContext_CSSetConstantBuffers(context, 0, 1, &cs_cb);
     ID3D11DeviceContext_CSSetUnorderedAccessViews(context, 0, 1, &cs_uav, NULL);
     ID3D11DeviceContext_PSSetConstantBuffers(context, 0, 1, &ps_cb);
-    /* FIXME: Set the render targets to NULL when no attachment draw calls are supported in wined3d. */
     ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(context,
-            1, &test_context.backbuffer_rtv, NULL, 1, 1, &ps_uav, NULL);
+            0, NULL, NULL, 1, 1, &ps_uav, NULL);
 
     ID3D11DeviceContext_ClearUnorderedAccessViewFloat(context, cs_uav, zero);
     check_texture_float(cs_texture, 0.0f, 2);
@@ -17738,11 +17747,8 @@ static void test_atomic_instructions(void)
     D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc;
     struct d3d11_test_context test_context;
     struct resource_readback rb, out_rb;
-    D3D11_TEXTURE2D_DESC texture_desc;
     D3D11_BUFFER_DESC buffer_desc;
     ID3D11DeviceContext *context;
-    ID3D11RenderTargetView *rtv;
-    ID3D11Texture2D *texture;
     ID3D11ComputeShader *cs;
     ID3D11PixelShader *ps;
     ID3D11Device *device;
@@ -17872,22 +17878,6 @@ static void test_atomic_instructions(void)
     device = test_context.device;
     context = test_context.immediate_context;
 
-    texture_desc.Width = 1;
-    texture_desc.Height = 1;
-    texture_desc.MipLevels = 1;
-    texture_desc.ArraySize = 1;
-    texture_desc.Format = DXGI_FORMAT_R32_FLOAT;
-    texture_desc.SampleDesc.Count = 1;
-    texture_desc.SampleDesc.Quality = 0;
-    texture_desc.Usage = D3D11_USAGE_DEFAULT;
-    texture_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    texture_desc.CPUAccessFlags = 0;
-    texture_desc.MiscFlags = 0;
-    hr = ID3D11Device_CreateTexture2D(device, &texture_desc, NULL, &texture);
-    ok(SUCCEEDED(hr), "Failed to create texture, hr %#x.\n", hr);
-    hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &rtv);
-    ok(SUCCEEDED(hr), "Failed to create rendertarget view, hr %#x.\n", hr);
-
     cb = create_buffer(device, D3D11_BIND_CONSTANT_BUFFER, 2 * sizeof(struct uvec4), NULL);
     ID3D11DeviceContext_PSSetConstantBuffers(context, 0, 1, &cb);
     ID3D11DeviceContext_CSSetConstantBuffers(context, 0, 1, &cb);
@@ -17914,8 +17904,8 @@ static void test_atomic_instructions(void)
 
     vp.TopLeftX = 0.0f;
     vp.TopLeftY = 0.0f;
-    vp.Width = texture_desc.Width;
-    vp.Height = texture_desc.Height;
+    vp.Width = 1.0f;
+    vp.Height = 1.0f;
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     ID3D11DeviceContext_RSSetViewports(context, 1, &vp);
@@ -17938,8 +17928,7 @@ static void test_atomic_instructions(void)
         ID3D11DeviceContext_UpdateSubresource(context, (ID3D11Resource *)in_buffer, 0,
                 NULL, test->input, 0, 0);
 
-        /* FIXME: Set the render targets to NULL when no attachment draw calls are supported in wined3d. */
-        ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(context, 1, &rtv, NULL,
+        ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(context, 0, NULL, NULL,
                 0, 1, &in_uav, NULL);
 
         draw_quad(&test_context);
@@ -17996,8 +17985,6 @@ static void test_atomic_instructions(void)
     ID3D11Buffer_Release(out_buffer);
     ID3D11ComputeShader_Release(cs);
     ID3D11PixelShader_Release(ps);
-    ID3D11RenderTargetView_Release(rtv);
-    ID3D11Texture2D_Release(texture);
     ID3D11UnorderedAccessView_Release(in_uav);
     ID3D11UnorderedAccessView_Release(out_uav);
     release_test_context(&test_context);
@@ -19223,7 +19210,7 @@ static void test_buffer_srv(void)
                 resource_data.SysMemSlicePitch = 0;
                 if (current_buffer->data_offset)
                 {
-                    data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, current_buffer->byte_count);
+                    data = heap_alloc_zero(current_buffer->byte_count);
                     ok(!!data, "Failed to allocate memory.\n");
                     memcpy(data + current_buffer->data_offset, current_buffer->data,
                             current_buffer->byte_count - current_buffer->data_offset);
@@ -19235,7 +19222,7 @@ static void test_buffer_srv(void)
                 }
                 hr = ID3D11Device_CreateBuffer(device, &buffer_desc, &resource_data, &buffer);
                 ok(SUCCEEDED(hr), "Test %u: Failed to create buffer, hr %#x.\n", i, hr);
-                HeapFree(GetProcessHeap(), 0, data);
+                heap_free(data);
             }
             else
             {
@@ -22788,7 +22775,7 @@ static void test_depth_bias(void)
     rasterizer_desc.SlopeScaledDepthBias = 0.0f;
     rasterizer_desc.DepthClipEnable = TRUE;
 
-    depth_values = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*depth_values) * swapchain_desc.height);
+    depth_values = heap_calloc(swapchain_desc.height, sizeof(*depth_values));
     ok(!!depth_values, "Failed to allocate memory.\n");
 
     for (format_idx = 0; format_idx < ARRAY_SIZE(formats); ++format_idx)
@@ -22990,7 +22977,7 @@ static void test_depth_bias(void)
         ID3D11DepthStencilView_Release(dsv);
     }
 
-    HeapFree(GetProcessHeap(), 0, depth_values);
+    heap_free(depth_values);
     release_test_context(&test_context);
 }
 
@@ -24516,7 +24503,7 @@ static void test_generate_mips(void)
     ok(SUCCEEDED(hr), "Failed to create sampler state, hr %#x.\n", hr);
     ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler_state);
 
-    data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) * 32 * 32 * 32);
+    data = heap_alloc(sizeof(*data) * 32 * 32 * 32);
 
     for (z = 0; z < 32; ++z)
     {
@@ -24543,7 +24530,7 @@ static void test_generate_mips(void)
         }
     }
 
-    zero_data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*zero_data) * 16 * 16 * 16);
+    zero_data = heap_alloc_zero(sizeof(*zero_data) * 16 * 16 * 16);
 
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
@@ -24793,8 +24780,8 @@ static void test_generate_mips(void)
 
     ID3D11Resource_Release(resource);
 
-    HeapFree(GetProcessHeap(), 0, zero_data);
-    HeapFree(GetProcessHeap(), 0, data);
+    heap_free(zero_data);
+    heap_free(data);
 
     ID3D11SamplerState_Release(sampler_state);
     ID3D11PixelShader_Release(ps_3d);
@@ -25021,6 +25008,93 @@ done:
     release_test_context(&test_context);
 }
 
+static void test_unbound_multisample_texture(void)
+{
+    struct d3d11_test_context test_context;
+    ID3D11DeviceContext *context;
+    ID3D11PixelShader *ps;
+    struct uvec4 cb_data;
+    ID3D11Device *device;
+    ID3D11Buffer *cb;
+    unsigned int i;
+    HRESULT hr;
+
+    static const float white[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    static const DWORD ps_code[] =
+    {
+#if 0
+        Texture2DMS<float4, 4> t;
+
+        uint sample_index;
+
+        float4 main(float4 position : SV_Position) : SV_Target
+        {
+            float3 p;
+            t.GetDimensions(p.x, p.y, p.z);
+            p *= float3(position.x / 640.0f, position.y / 480.0f, 0.0f);
+            /* sample index must be a literal */
+            switch (sample_index)
+            {
+                case 1: return t.Load(int2(p.xy), 1);
+                case 2: return t.Load(int2(p.xy), 2);
+                case 3: return t.Load(int2(p.xy), 3);
+                default: return t.Load(int2(p.xy), 0);
+            }
+        }
+#endif
+        0x43425844, 0x03d62416, 0x1914ee8b, 0xccd08d68, 0x27f42136, 0x00000001, 0x000002f8, 0x00000003,
+        0x0000002c, 0x00000060, 0x00000094, 0x4e475349, 0x0000002c, 0x00000001, 0x00000008, 0x00000020,
+        0x00000000, 0x00000001, 0x00000003, 0x00000000, 0x0000030f, 0x505f5653, 0x7469736f, 0x006e6f69,
+        0x4e47534f, 0x0000002c, 0x00000001, 0x00000008, 0x00000020, 0x00000000, 0x00000000, 0x00000003,
+        0x00000000, 0x0000000f, 0x545f5653, 0x65677261, 0xabab0074, 0x52444853, 0x0000025c, 0x00000040,
+        0x00000097, 0x04000059, 0x00208e46, 0x00000000, 0x00000001, 0x04042058, 0x00107000, 0x00000000,
+        0x00005555, 0x04002064, 0x00101032, 0x00000000, 0x00000001, 0x03000065, 0x001020f2, 0x00000000,
+        0x02000068, 0x00000002, 0x0700003d, 0x001000f2, 0x00000000, 0x00004001, 0x00000000, 0x00107e46,
+        0x00000000, 0x07000038, 0x00100032, 0x00000000, 0x00100046, 0x00000000, 0x00101046, 0x00000000,
+        0x0a000038, 0x00100032, 0x00000000, 0x00100046, 0x00000000, 0x00004002, 0x3acccccd, 0x3b088889,
+        0x00000000, 0x00000000, 0x0400004c, 0x0020800a, 0x00000000, 0x00000000, 0x03000006, 0x00004001,
+        0x00000001, 0x0500001b, 0x00100032, 0x00000001, 0x00100046, 0x00000000, 0x08000036, 0x001000c2,
+        0x00000001, 0x00004002, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0900002e, 0x001020f2,
+        0x00000000, 0x00100e46, 0x00000001, 0x00107e46, 0x00000000, 0x00004001, 0x00000001, 0x0100003e,
+        0x03000006, 0x00004001, 0x00000002, 0x0500001b, 0x00100032, 0x00000001, 0x00100046, 0x00000000,
+        0x08000036, 0x001000c2, 0x00000001, 0x00004002, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x0900002e, 0x001020f2, 0x00000000, 0x00100e46, 0x00000001, 0x00107e46, 0x00000000, 0x00004001,
+        0x00000002, 0x0100003e, 0x03000006, 0x00004001, 0x00000003, 0x0500001b, 0x00100032, 0x00000001,
+        0x00100046, 0x00000000, 0x08000036, 0x001000c2, 0x00000001, 0x00004002, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x0900002e, 0x001020f2, 0x00000000, 0x00100e46, 0x00000001, 0x00107e46,
+        0x00000000, 0x00004001, 0x00000003, 0x0100003e, 0x0100000a, 0x0500001b, 0x00100032, 0x00000000,
+        0x00100046, 0x00000000, 0x08000036, 0x001000c2, 0x00000000, 0x00004002, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x0900002e, 0x001020f2, 0x00000000, 0x00100e46, 0x00000000, 0x00107e46,
+        0x00000000, 0x00004001, 0x00000000, 0x0100003e, 0x01000017, 0x0100003e,
+    };
+
+    if (!init_test_context(&test_context, NULL))
+        return;
+    device = test_context.device;
+    context = test_context.immediate_context;
+
+    hr = ID3D11Device_CreatePixelShader(device, ps_code, sizeof(ps_code), NULL, &ps);
+    ok(hr == S_OK, "Failed to create pixel shader, hr %#x.\n", hr);
+    ID3D11DeviceContext_PSSetShader(context, ps, NULL, 0);
+
+    memset(&cb_data, 0, sizeof(cb_data));
+    cb = create_buffer(device, D3D11_BIND_CONSTANT_BUFFER, sizeof(cb_data), &cb_data);
+    ID3D11DeviceContext_PSSetConstantBuffers(context, 0, 1, &cb);
+
+    for (i = 0; i < 4; ++i)
+    {
+        cb_data.x = i;
+        ID3D11DeviceContext_UpdateSubresource(context, (ID3D11Resource *)cb, 0, NULL, &cb_data, 0, 0);
+        ID3D11DeviceContext_ClearRenderTargetView(context, test_context.backbuffer_rtv, white);
+        draw_quad(&test_context);
+        check_texture_color(test_context.backbuffer, 0x00000000, 1);
+    }
+
+    ID3D11Buffer_Release(cb);
+    ID3D11PixelShader_Release(ps);
+    release_test_context(&test_context);
+}
+
 START_TEST(d3d11)
 {
     unsigned int argc, i;
@@ -25150,4 +25224,5 @@ START_TEST(d3d11)
     test_combined_clip_and_cull_distances();
     test_generate_mips();
     test_alpha_to_coverage();
+    test_unbound_multisample_texture();
 }

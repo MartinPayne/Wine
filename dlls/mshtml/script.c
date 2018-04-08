@@ -65,6 +65,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
 #endif
 
+/* See jscript.h in jscript.dll. */
+#define SCRIPTLANGUAGEVERSION_HTML 0x400
+#define SCRIPTLANGUAGEVERSION_ES5  0x102
+
 static const WCHAR documentW[] = {'d','o','c','u','m','e','n','t',0};
 static const WCHAR windowW[] = {'w','i','n','d','o','w',0};
 static const WCHAR script_endW[] = {'<','/','S','C','R','I','P','T','>',0};
@@ -94,7 +98,7 @@ struct ScriptHost {
 
 static ScriptHost *get_elem_script_host(HTMLInnerWindow*,HTMLScriptElement*);
 
-static void set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *val)
+static BOOL set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *val)
 {
     IActiveScriptProperty *script_prop;
     HRESULT hres;
@@ -103,40 +107,25 @@ static void set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *va
             (void**)&script_prop);
     if(FAILED(hres)) {
         WARN("Could not get IActiveScriptProperty iface: %08x\n", hres);
-        return;
+        return FALSE;
     }
 
     hres = IActiveScriptProperty_SetProperty(script_prop, property, NULL, val);
     IActiveScriptProperty_Release(script_prop);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
         WARN("SetProperty(%x) failed: %08x\n", property, hres);
-}
-
-static BOOL is_quirks_mode(HTMLDocumentNode *doc)
-{
-    const WCHAR *compat_mode;
-    nsAString nsstr;
-    nsresult nsres;
-    BOOL ret = FALSE;
-
-    static const WCHAR BackCompatW[] = {'B','a','c','k','C','o','m','p','a','t',0};
-
-    nsAString_Init(&nsstr, NULL);
-    nsres = nsIDOMHTMLDocument_GetCompatMode(doc->nsdoc, &nsstr);
-    if(NS_SUCCEEDED(nsres)) {
-        nsAString_GetData(&nsstr, &compat_mode);
-        if(!strcmpW(compat_mode, BackCompatW))
-            ret = TRUE;
+        return FALSE;
     }
-    nsAString_Finish(&nsstr);
-    return ret;
+
+    return TRUE;
 }
 
 static BOOL init_script_engine(ScriptHost *script_host)
 {
+    compat_mode_t compat_mode;
     IObjectSafety *safety;
     SCRIPTSTATE state;
-    DWORD supported_opts=0, enabled_opts=0;
+    DWORD supported_opts=0, enabled_opts=0, script_mode;
     VARIANT var;
     HRESULT hres;
 
@@ -169,9 +158,21 @@ static BOOL init_script_engine(ScriptHost *script_host)
     if(FAILED(hres))
         return FALSE;
 
+    compat_mode = lock_document_mode(script_host->window->doc);
+    script_mode = compat_mode < COMPAT_MODE_IE8 ? SCRIPTLANGUAGEVERSION_5_7 : SCRIPTLANGUAGEVERSION_5_8;
+    if(IsEqualGUID(&script_host->guid, &CLSID_JScript)) {
+        if(compat_mode >= COMPAT_MODE_IE9)
+            script_mode = SCRIPTLANGUAGEVERSION_ES5;
+        script_mode |= SCRIPTLANGUAGEVERSION_HTML;
+    }
     V_VT(&var) = VT_I4;
-    V_I4(&var) = is_quirks_mode(script_host->window->doc) ? 1 : 2;
-    set_script_prop(script_host, SCRIPTPROP_INVOKEVERSIONING, &var);
+    V_I4(&var) = script_mode;
+    if(!set_script_prop(script_host, SCRIPTPROP_INVOKEVERSIONING, &var) && (script_mode & SCRIPTLANGUAGEVERSION_HTML)) {
+        /* If this failed, we're most likely using native jscript. */
+        WARN("Failed to set script mode to HTML version.\n");
+        V_I4(&var) = compat_mode < COMPAT_MODE_IE8 ? SCRIPTLANGUAGEVERSION_5_7 : SCRIPTLANGUAGEVERSION_5_8;
+        set_script_prop(script_host, SCRIPTPROP_INVOKEVERSIONING, &var);
+    }
 
     V_VT(&var) = VT_BOOL;
     V_BOOL(&var) = VARIANT_TRUE;
@@ -1588,7 +1589,7 @@ void bind_event_scripts(HTMLDocumentNode *doc)
         assert(nsres == NS_OK);
         nsIDOMNode_Release(script_node);
 
-        hres = script_elem_from_nsscript(doc, nsscript, &script_elem);
+        hres = script_elem_from_nsscript(nsscript, &script_elem);
         if(FAILED(hres))
             continue;
 

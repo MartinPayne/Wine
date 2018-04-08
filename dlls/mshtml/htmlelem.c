@@ -1408,6 +1408,7 @@ static HRESULT WINAPI HTMLElement_get_offsetParent(IHTMLElement *iface, IHTMLEle
 {
     HTMLElement *This = impl_from_IHTMLElement(iface);
     nsIDOMElement *nsparent;
+    HTMLElement *parent;
     nsresult nsres;
     HRESULT hres;
 
@@ -1424,22 +1425,18 @@ static HRESULT WINAPI HTMLElement_get_offsetParent(IHTMLElement *iface, IHTMLEle
         return E_FAIL;
     }
 
-    if(nsparent) {
-        HTMLDOMNode *node;
-
-        hres = get_node(This->node.doc, (nsIDOMNode*)nsparent, TRUE, &node);
-        nsIDOMElement_Release(nsparent);
-        if(FAILED(hres))
-            return hres;
-
-        hres = IHTMLDOMNode_QueryInterface(&node->IHTMLDOMNode_iface, &IID_IHTMLElement, (void**)p);
-        node_release(node);
-    }else {
+    if(!nsparent) {
         *p = NULL;
         hres = S_OK;
     }
 
-    return hres;
+    hres = get_element(nsparent, &parent);
+    nsIDOMElement_Release(nsparent);
+    if(FAILED(hres))
+        return hres;
+
+    *p = &parent->IHTMLElement_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLElement_put_innerHTML(IHTMLElement *iface, BSTR v)
@@ -1700,7 +1697,7 @@ static HRESULT insert_adjacent_node(HTMLElement *This, const WCHAR *where, nsIDO
         return E_FAIL;
 
     if(ret_node)
-        hres = get_node(This->node.doc, ret_nsnode, TRUE, ret_node);
+        hres = get_node(ret_nsnode, TRUE, ret_node);
     nsIDOMNode_Release(ret_nsnode);
     return hres;
 }
@@ -2001,7 +1998,7 @@ static HRESULT WINAPI HTMLElement_get_children(IHTMLElement *iface, IDispatch **
         return E_FAIL;
     }
 
-    *p = (IDispatch*)create_collection_from_nodelist(This->node.doc, nsnode_list);
+    *p = (IDispatch*)create_collection_from_nodelist(nsnode_list, This->node.doc->document_mode);
 
     nsIDOMNodeList_Release(nsnode_list);
     return S_OK;
@@ -3188,7 +3185,7 @@ static HRESULT WINAPI HTMLElement2_getElementsByTagName(IHTMLElement2 *iface, BS
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(v), pelColl);
 
     if(!This->dom_element) {
-        *pelColl = create_collection_from_htmlcol(This->node.doc, NULL);
+        *pelColl = create_collection_from_htmlcol(NULL, This->node.doc->document_mode);
         return S_OK;
     }
 
@@ -3200,7 +3197,7 @@ static HRESULT WINAPI HTMLElement2_getElementsByTagName(IHTMLElement2 *iface, BS
         return E_FAIL;
     }
 
-    *pelColl = create_collection_from_htmlcol(This->node.doc, nscol);
+    *pelColl = create_collection_from_htmlcol(nscol, dispex_compat_mode(&This->node.event_target.dispex));
     nsIDOMHTMLCollection_Release(nscol);
     return S_OK;
 }
@@ -4266,7 +4263,7 @@ static HRESULT WINAPI HTMLElement6_getElementsByClassName(IHTMLElement6 *iface, 
         }
     }
 
-    *pel = create_collection_from_htmlcol(This->node.doc, nscol);
+    *pel = create_collection_from_htmlcol(nscol, dispex_compat_mode(&This->node.event_target.dispex));
     nsIDOMHTMLCollection_Release(nscol);
     return S_OK;
 }
@@ -4964,7 +4961,7 @@ static HRESULT WINAPI ElementSelector_querySelectorAll(IElementSelector *iface, 
         return E_FAIL;
     }
 
-    *pel = create_child_collection(This->node.doc, node_list);
+    *pel = create_child_collection(node_list);
     nsIDOMNodeList_Release(node_list);
     return *pel ? S_OK : E_OUTOFMEMORY;
 }
@@ -5119,7 +5116,7 @@ static HRESULT WINAPI ElementTraversal_get_firstElementChild(IElementTraversal *
         return S_OK;
     }
 
-    hres = get_elem(This->node.doc, nselem, &elem);
+    hres = get_element(nselem, &elem);
     nsIDOMElement_Release(nselem);
     if(FAILED(hres))
         return hres;
@@ -5433,19 +5430,16 @@ static HRESULT HTMLElement_populate_props(DispatchEx *dispex)
     return S_OK;
 }
 
+static nsISupports *HTMLElement_get_gecko_target(DispatchEx *dispex)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+    return (nsISupports*)This->node.nsnode;
+}
+
 static void HTMLElement_bind_event(DispatchEx *dispex, eventid_t eid)
 {
     HTMLElement *This = impl_from_DispatchEx(dispex);
-
-    static const WCHAR loadW[] = {'l','o','a','d',0};
-
-    switch(eid) {
-    case EVENTID_LOAD:
-        add_nsevent_listener(This->node.doc, This->node.nsnode, loadW);
-        return;
-    default:
-        ensure_doc_nsevent_handler(This->node.doc, eid);
-    }
+    ensure_doc_nsevent_handler(This->node.doc, This->node.nsnode, eid);
 }
 
 static HRESULT HTMLElement_handle_event_default(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *nsevent, BOOL *prevent_default)
@@ -5470,7 +5464,7 @@ static EventTarget *HTMLElement_get_parent_event_target(DispatchEx *dispex)
     if(!nsnode)
         return NULL;
 
-    hres = get_node(This->node.doc, nsnode, TRUE, &node);
+    hres = get_node(nsnode, TRUE, &node);
     nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return NULL;
@@ -5524,6 +5518,7 @@ static event_target_vtbl_t HTMLElement_event_target_vtbl = {
         NULL,
         HTMLElement_populate_props
     },
+    HTMLElement_get_gecko_target,
     HTMLElement_bind_event,
     HTMLElement_get_parent_event_target,
     HTMLElement_handle_event_default,
@@ -5623,12 +5618,12 @@ HRESULT HTMLElement_Create(HTMLDocumentNode *doc, nsIDOMNode *nsnode, BOOL use_g
     return S_OK;
 }
 
-HRESULT get_elem(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **ret)
+HRESULT get_element(nsIDOMElement *nselem, HTMLElement **ret)
 {
     HTMLDOMNode *node;
     HRESULT hres;
 
-    hres = get_node(doc, (nsIDOMNode*)nselem, TRUE, &node);
+    hres = get_node((nsIDOMNode*)nselem, TRUE, &node);
     if(FAILED(hres))
         return hres;
 

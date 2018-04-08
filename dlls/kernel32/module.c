@@ -58,6 +58,15 @@ static struct list dll_dir_list = LIST_INIT( dll_dir_list );  /* extra dirs from
 static WCHAR *dll_directory;  /* extra path for SetDllDirectoryW */
 static DWORD default_search_flags;  /* default flags set by SetDefaultDllDirectories */
 
+/* to keep track of LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE file handles */
+struct exclusive_datafile
+{
+    struct list entry;
+    HMODULE     module;
+    HANDLE      file;
+};
+static struct list exclusive_datafile_list = LIST_INIT( exclusive_datafile_list );
+
 static CRITICAL_SECTION dlldir_section;
 static CRITICAL_SECTION_DEBUG critsect_debug =
 {
@@ -1125,12 +1134,13 @@ static BOOL load_library_as_datafile( LPCWSTR name, HMODULE *hmod, DWORD flags )
     WCHAR filenameW[MAX_PATH];
     HANDLE hFile = INVALID_HANDLE_VALUE;
     HANDLE mapping;
-    HMODULE module;
-    DWORD sharing = FILE_SHARE_READ;
+    HMODULE module = 0;
+    DWORD protect = PAGE_READONLY;
+    DWORD sharing = FILE_SHARE_READ | FILE_SHARE_DELETE;
 
     *hmod = 0;
 
-    if (!(flags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE)) sharing |= FILE_SHARE_WRITE;
+    if (flags & LOAD_LIBRARY_AS_IMAGE_RESOURCE) protect |= SEC_IMAGE;
 
     if (SearchPathW( NULL, name, dotDLL, sizeof(filenameW) / sizeof(filenameW[0]),
                      filenameW, NULL ))
@@ -1139,22 +1149,39 @@ static BOOL load_library_as_datafile( LPCWSTR name, HMODULE *hmod, DWORD flags )
     }
     if (hFile == INVALID_HANDLE_VALUE) return FALSE;
 
-    mapping = CreateFileMappingW( hFile, NULL, PAGE_READONLY, 0, 0, NULL );
-    CloseHandle( hFile );
-    if (!mapping) return FALSE;
+    mapping = CreateFileMappingW( hFile, NULL, protect, 0, 0, NULL );
+    if (!mapping) goto failed;
 
     module = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 0 );
     CloseHandle( mapping );
-    if (!module) return FALSE;
+    if (!module) goto failed;
 
-    /* make sure it's a valid PE file */
-    if (!RtlImageNtHeader(module))
+    if (!(flags & LOAD_LIBRARY_AS_IMAGE_RESOURCE))
     {
-        UnmapViewOfFile( module );
-        return FALSE;
+        /* make sure it's a valid PE file */
+        if (!RtlImageNtHeader( module )) goto failed;
+        *hmod = (HMODULE)((char *)module + 1); /* set bit 0 for data file module */
+
+        if (flags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE)
+        {
+            struct exclusive_datafile *file = HeapAlloc( GetProcessHeap(), 0, sizeof(*file) );
+            if (!file) goto failed;
+            file->module = *hmod;
+            file->file   = hFile;
+            list_add_head( &exclusive_datafile_list, &file->entry );
+            TRACE( "delaying close %p for module %p\n", file->file, file->module );
+            return TRUE;
+        }
     }
-    *hmod = (HMODULE)((char *)module + 1);  /* set low bit of handle to indicate datafile module */
+    else *hmod = (HMODULE)((char *)module + 2); /* set bit 1 for image resource module */
+
+    CloseHandle( hFile );
     return TRUE;
+
+failed:
+    if (module) UnmapViewOfFile( module );
+    CloseHandle( hFile );
+    return FALSE;
 }
 
 
@@ -1174,7 +1201,6 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
                                              LOAD_LIBRARY_SEARCH_SYSTEM32 |
                                              LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     const DWORD unsupported_flags = (LOAD_IGNORE_CODE_AUTHZ_LEVEL |
-                                     LOAD_LIBRARY_AS_IMAGE_RESOURCE |
                                      LOAD_LIBRARY_REQUIRE_SIGNED_TARGET);
 
     if (!(flags & load_library_search_flags)) flags |= default_search_flags;
@@ -1188,7 +1214,7 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
         load_path = MODULE_get_dll_load_path( flags & LOAD_WITH_ALTERED_SEARCH_PATH ? libname->Buffer : NULL, -1 );
     if (!load_path) return 0;
 
-    if (flags & (LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE))
+    if (flags & (LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE | LOAD_LIBRARY_AS_IMAGE_RESOURCE))
     {
         ULONG_PTR magic;
 
@@ -1199,12 +1225,12 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
             LdrUnlockLoaderLock( 0, magic );
             goto done;
         }
+        if (load_library_as_datafile( libname->Buffer, &hModule, flags ))
+        {
+            LdrUnlockLoaderLock( 0, magic );
+            goto done;
+        }
         LdrUnlockLoaderLock( 0, magic );
-
-        /* The method in load_library_as_datafile allows searching for the
-         * 'native' libraries only
-         */
-        if (load_library_as_datafile( libname->Buffer, &hModule, flags )) goto done;
         flags |= DONT_RESOLVE_DLL_REFERENCES; /* Just in case */
         /* Fallback to normal behaviour */
     }
@@ -1337,11 +1363,26 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeLibrary(HINSTANCE hLibModule)
         return FALSE;
     }
 
-    if ((ULONG_PTR)hLibModule & 1)
+    if ((ULONG_PTR)hLibModule & 3) /* this is a datafile module */
     {
-        /* this is a LOAD_LIBRARY_AS_DATAFILE module */
-        char *ptr = (char *)hLibModule - 1;
-        return UnmapViewOfFile( ptr );
+        if ((ULONG_PTR)hLibModule & 1)
+        {
+            struct exclusive_datafile *file;
+            ULONG_PTR magic;
+
+            LdrLockLoaderLock( 0, NULL, &magic );
+            LIST_FOR_EACH_ENTRY( file, &exclusive_datafile_list, struct exclusive_datafile, entry )
+            {
+                if (file->module != hLibModule) continue;
+                TRACE( "closing %p for module %p\n", file->file, file->module );
+                CloseHandle( file->file );
+                list_remove( &file->entry );
+                HeapFree( GetProcessHeap(), 0, file );
+                break;
+            }
+            LdrUnlockLoaderLock( 0, magic );
+        }
+        return UnmapViewOfFile( (void *)((ULONG_PTR)hLibModule & ~3) );
     }
 
     if ((nts = LdrUnloadDll( hLibModule )) == STATUS_SUCCESS) retv = TRUE;
