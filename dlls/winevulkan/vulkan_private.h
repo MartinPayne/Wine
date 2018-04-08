@@ -48,11 +48,55 @@ struct wine_vk_base
     UINT_PTR loader_magic;
 };
 
+struct VkCommandBuffer_T
+{
+    struct wine_vk_base base;
+    VkDevice device; /* parent */
+    VkCommandBuffer command_buffer; /* native command buffer */
+};
+
+struct VkDevice_T
+{
+    struct wine_vk_base base;
+    struct vulkan_device_funcs funcs;
+    struct VkPhysicalDevice_T *phys_dev; /* parent */
+
+    uint32_t max_queue_families;
+    struct VkQueue_T **queues;
+
+    VkDevice device; /* native device */
+};
+
 struct VkInstance_T
 {
     struct wine_vk_base base;
     struct vulkan_instance_funcs funcs;
+
+    /* We cache devices as we need to wrap them as they are
+     * dispatchable objects.
+     */
+    uint32_t num_phys_devs;
+    struct VkPhysicalDevice_T **phys_devs;
+
     VkInstance instance; /* native instance */
+};
+
+struct VkPhysicalDevice_T
+{
+    struct wine_vk_base base;
+    struct VkInstance_T *instance; /* parent */
+
+    uint32_t num_properties;
+    VkExtensionProperties *properties;
+
+    VkPhysicalDevice phys_dev; /* native physical device */
+};
+
+struct VkQueue_T
+{
+    struct wine_vk_base base;
+    VkDevice device; /* parent */
+    VkQueue queue; /* native queue */
 };
 
 #endif /* __WINE_VULKAN_PRIVATE_H */

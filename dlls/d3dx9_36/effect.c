@@ -1555,13 +1555,16 @@ static HRESULT d3dx9_base_effect_set_value(struct d3dx9_base_effect *base,
             case D3DXPT_TEXTURECUBE:
                 for (i = 0; i < (param->element_count ? param->element_count : 1); ++i)
                 {
-                    IUnknown *unk = ((IUnknown **)data)[i];
-                    if (unk)
-                        IUnknown_AddRef(unk);
+                    IUnknown *old_texture = ((IUnknown **)param->data)[i];
+                    IUnknown *new_texture = ((IUnknown **)data)[i];
 
-                    unk = ((IUnknown **)param->data)[i];
-                    if (unk)
-                        IUnknown_Release(unk);
+                    if (new_texture == old_texture)
+                        continue;
+
+                    if (new_texture)
+                        IUnknown_AddRef(new_texture);
+                    if (old_texture)
+                        IUnknown_Release(old_texture);
                 }
             /* fallthrough */
             case D3DXPT_VOID:
@@ -4351,6 +4354,7 @@ static HRESULT WINAPI ID3DXEffectImpl_ApplyParameterBlock(ID3DXEffect* iface, D3
     return E_NOTIMPL;
 }
 
+#if D3DX_SDK_VERSION >= 26
 static HRESULT WINAPI ID3DXEffectImpl_DeleteParameterBlock(ID3DXEffect* iface, D3DXHANDLE parameter_block)
 {
     struct ID3DXEffectImpl *This = impl_from_ID3DXEffect(iface);
@@ -4359,6 +4363,7 @@ static HRESULT WINAPI ID3DXEffectImpl_DeleteParameterBlock(ID3DXEffect* iface, D
 
     return E_NOTIMPL;
 }
+#endif
 
 static HRESULT WINAPI ID3DXEffectImpl_CloneEffect(ID3DXEffect *iface,
         struct IDirect3DDevice9 *device, struct ID3DXEffect **effect)
@@ -4367,9 +4372,19 @@ static HRESULT WINAPI ID3DXEffectImpl_CloneEffect(ID3DXEffect *iface,
 
     FIXME("(%p)->(%p, %p): stub\n", This, device, effect);
 
+    if (!effect)
+        return D3DERR_INVALIDCALL;
+
+    if (This->base_effect.flags & D3DXFX_NOT_CLONEABLE)
+        return E_FAIL;
+
+    if (!device)
+        return D3DERR_INVALIDCALL;
+
     return E_NOTIMPL;
 }
 
+#if D3DX_SDK_VERSION >= 27
 static HRESULT WINAPI ID3DXEffectImpl_SetRawValue(ID3DXEffect *iface,
         D3DXHANDLE parameter, const void *data, UINT byte_offset, UINT bytes)
 {
@@ -4378,6 +4393,7 @@ static HRESULT WINAPI ID3DXEffectImpl_SetRawValue(ID3DXEffect *iface,
 
     return E_NOTIMPL;
 }
+#endif
 
 static const struct ID3DXEffectVtbl ID3DXEffect_Vtbl =
 {
@@ -4460,9 +4476,13 @@ static const struct ID3DXEffectVtbl ID3DXEffect_Vtbl =
     ID3DXEffectImpl_BeginParameterBlock,
     ID3DXEffectImpl_EndParameterBlock,
     ID3DXEffectImpl_ApplyParameterBlock,
+#if D3DX_SDK_VERSION >= 26
     ID3DXEffectImpl_DeleteParameterBlock,
+#endif
     ID3DXEffectImpl_CloneEffect,
+#if D3DX_SDK_VERSION >= 27
     ID3DXEffectImpl_SetRawValue
+#endif
 };
 
 static inline struct ID3DXEffectCompilerImpl *impl_from_ID3DXEffectCompiler(ID3DXEffectCompiler *iface)

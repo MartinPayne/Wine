@@ -434,7 +434,7 @@
 @ stub IoRegisterLastChanceShutdownNotification
 @ stdcall IoRegisterPlugPlayNotification(long long ptr ptr ptr ptr ptr)
 @ stdcall IoRegisterShutdownNotification(ptr)
-@ stdcall IoReleaseCancelSpinLock(ptr)
+@ stdcall IoReleaseCancelSpinLock(long)
 @ stub IoReleaseRemoveLockAndWaitEx
 @ stub IoReleaseRemoveLockEx
 @ stub IoReleaseVpbSpinLock
@@ -740,7 +740,7 @@
 @ stdcall NtAddAtom(ptr long ptr)
 @ stdcall NtAdjustPrivilegesToken(long long ptr long ptr ptr)
 @ stdcall NtAllocateLocallyUniqueId(ptr)
-@ stdcall NtAllocateUuids(ptr ptr ptr)
+@ stdcall NtAllocateUuids(ptr ptr ptr ptr)
 @ stdcall NtAllocateVirtualMemory(long ptr long ptr long long)
 @ stub NtBuildNumber
 @ stdcall NtClose(long)
@@ -815,7 +815,7 @@
 @ stub ObQueryObjectAuditingByHandle
 @ stdcall ObReferenceObjectByHandle(long long ptr long ptr ptr)
 @ stdcall ObReferenceObjectByName(ptr long ptr long ptr long ptr ptr)
-@ stub ObReferenceObjectByPointer
+@ stdcall ObReferenceObjectByPointer(ptr long ptr long)
 @ stub ObReferenceSecurityDescriptor
 @ stub ObReleaseObjectSecurity
 @ stub ObSetHandleAttributes
@@ -912,6 +912,7 @@
 @ stub PsRevertToSelf
 @ stub PsSetContextThread
 @ stdcall PsSetCreateProcessNotifyRoutine(ptr long)
+@ stdcall PsSetCreateProcessNotifyRoutineEx(ptr long)
 @ stdcall PsSetCreateThreadNotifyRoutine(ptr)
 @ stub PsSetJobUIRestrictionsClass
 @ stub PsSetLegoNotifyRoutine
@@ -975,7 +976,7 @@
 @ stdcall RtlCreateAcl(ptr long long)
 @ stdcall RtlCreateAtomTable(long ptr)
 @ stdcall RtlCreateHeap(long ptr long long ptr ptr)
-@ stub RtlCreateRegistryKey
+@ stdcall RtlCreateRegistryKey(long wstr)
 @ stdcall RtlCreateSecurityDescriptor(ptr long)
 @ stub RtlCreateSystemVolumeInformationFolder
 @ stdcall RtlCreateUnicodeString(ptr wstr)

@@ -68,6 +68,7 @@ typedef struct _KSERVICE_TABLE_DESCRIPTOR
 KSERVICE_TABLE_DESCRIPTOR KeServiceDescriptorTable[4] = { { 0 } };
 
 typedef void (WINAPI *PCREATE_PROCESS_NOTIFY_ROUTINE)(HANDLE,HANDLE,BOOLEAN);
+typedef void (WINAPI *PCREATE_PROCESS_NOTIFY_ROUTINE_EX)(PEPROCESS,HANDLE,PPS_CREATE_NOTIFY_INFO);
 typedef void (WINAPI *PCREATE_THREAD_NOTIFY_ROUTINE)(HANDLE,HANDLE,BOOLEAN);
 
 static const WCHAR servicesW[] = {'\\','R','e','g','i','s','t','r','y',
@@ -610,9 +611,9 @@ void WINAPI IoAcquireCancelSpinLock(PKIRQL irql)
 /***********************************************************************
  *           IoReleaseCancelSpinLock  (NTOSKRNL.EXE.@)
  */
-void WINAPI IoReleaseCancelSpinLock(PKIRQL irql)
+void WINAPI IoReleaseCancelSpinLock(KIRQL irql)
 {
-    FIXME("(%p): stub\n", irql);
+    FIXME("(%u): stub\n", irql);
 }
 
 
@@ -2257,6 +2258,19 @@ static void ObReferenceObject( void *obj )
 
 
 /***********************************************************************
+ *           ObReferenceObjectByPointer   (NTOSKRNL.EXE.@)
+ */
+NTSTATUS WINAPI ObReferenceObjectByPointer(void *obj, ACCESS_MASK access,
+                                           POBJECT_TYPE type,
+                                           KPROCESSOR_MODE mode)
+{
+    FIXME("(%p, %x, %p, %d): stub\n", obj, access, type, mode);
+
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+
+/***********************************************************************
  *           ObDereferenceObject   (NTOSKRNL.EXE.@)
  */
 void WINAPI ObDereferenceObject( void *obj )
@@ -2382,6 +2396,16 @@ NTSTATUS WINAPI PsImpersonateClient(PETHREAD Thread, PACCESS_TOKEN Token, BOOLEA
  *           PsSetCreateProcessNotifyRoutine   (NTOSKRNL.EXE.@)
  */
 NTSTATUS WINAPI PsSetCreateProcessNotifyRoutine( PCREATE_PROCESS_NOTIFY_ROUTINE callback, BOOLEAN remove )
+{
+    FIXME( "stub: %p %d\n", callback, remove );
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *           PsSetCreateProcessNotifyRoutineEx   (NTOSKRNL.EXE.@)
+ */
+NTSTATUS WINAPI PsSetCreateProcessNotifyRoutineEx( PCREATE_PROCESS_NOTIFY_ROUTINE_EX callback, BOOLEAN remove )
 {
     FIXME( "stub: %p %d\n", callback, remove );
     return STATUS_SUCCESS;

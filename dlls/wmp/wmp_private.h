@@ -20,6 +20,7 @@
 
 #include "windows.h"
 #include "wine/heap.h"
+#include "wine/unicode.h"
 #include "ole2.h"
 #include "wmp.h"
 
@@ -34,6 +35,14 @@ typedef struct {
     IID iid;
 } ConnectionPoint;
 
+typedef struct {
+    IWMPMedia IWMPMedia_iface;
+
+    LONG ref;
+
+    WCHAR *url;
+} WMPMedia;
+
 struct WindowsMediaPlayer {
     IOleObject IOleObject_iface;
     IProvideClassInfo2 IProvideClassInfo2_iface;
@@ -45,6 +54,7 @@ struct WindowsMediaPlayer {
     IWMPPlayer IWMPPlayer_iface;
     IWMPSettings IWMPSettings_iface;
     IWMPControls IWMPControls_iface;
+    IWMPNetwork IWMPNetwork_iface;
 
     LONG ref;
 
@@ -52,10 +62,19 @@ struct WindowsMediaPlayer {
     HWND hwnd;
     SIZEL extent;
 
+    /* Settings */
+    VARIANT_BOOL auto_start;
+    VARIANT_BOOL invoke_urls;
+    VARIANT_BOOL enable_error_dialogs;
+
     ConnectionPoint *wmpocx;
+
+    IWMPMedia *wmpmedia;
 };
 
-void init_player_ifaces(WindowsMediaPlayer*) DECLSPEC_HIDDEN;
+void init_player(WindowsMediaPlayer*) DECLSPEC_HIDDEN;
+void destroy_player(WindowsMediaPlayer*) DECLSPEC_HIDDEN;
+IWMPMedia* create_media_from_url(BSTR url);
 void ConnectionPointContainer_Init(WindowsMediaPlayer *wmp) DECLSPEC_HIDDEN;
 void ConnectionPointContainer_Destroy(WindowsMediaPlayer *wmp) DECLSPEC_HIDDEN;
 
@@ -64,3 +83,19 @@ HRESULT WINAPI WMPFactory_CreateInstance(IClassFactory*,IUnknown*,REFIID,void**)
 void unregister_wmp_class(void) DECLSPEC_HIDDEN;
 
 extern HINSTANCE wmp_instance DECLSPEC_HIDDEN;
+
+static inline WCHAR *heap_strdupW(const WCHAR *str)
+{
+    WCHAR *ret;
+
+    if(str) {
+        size_t size = strlenW(str)+1;
+        ret = heap_alloc(size*sizeof(WCHAR));
+        if(ret)
+            memcpy(ret, str, size*sizeof(WCHAR));
+    }else {
+        ret = NULL;
+    }
+
+    return ret;
+}

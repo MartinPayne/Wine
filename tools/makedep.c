@@ -134,6 +134,7 @@ static struct strarray extra_cflags;
 static struct strarray cpp_flags;
 static struct strarray unwind_flags;
 static struct strarray libs;
+static struct strarray enable_tests;
 static struct strarray cmdline_vars;
 static struct strarray disabled_dirs;
 static const char *root_src_dir;
@@ -199,6 +200,7 @@ struct makefile
     struct strarray implib_objs;
     struct strarray all_targets;
     struct strarray phony_targets;
+    struct strarray dependencies;
     struct strarray install_rules[NB_INSTALL_RULES];
 };
 
@@ -421,6 +423,17 @@ static int strarray_exists( const struct strarray *array, const char *str )
 static void strarray_add_uniq( struct strarray *array, const char *str )
 {
     if (!strarray_exists( array, str )) strarray_add( array, str );
+}
+
+
+/*******************************************************************
+ *         strarray_addall_uniq
+ */
+static void strarray_addall_uniq( struct strarray *array, struct strarray added )
+{
+    unsigned int i;
+
+    for (i = 0; i < added.count; i++) strarray_add_uniq( array, added.str[i] );
 }
 
 
@@ -3408,6 +3421,7 @@ static void output_subdirs( struct makefile *make )
     struct strarray testclean_files = empty_strarray;
     struct strarray distclean_files = empty_strarray;
     struct strarray tools_deps = empty_strarray;
+    struct strarray tooldeps_deps = empty_strarray;
     struct strarray winetest_deps = empty_strarray;
     struct strarray crosstest_deps = empty_strarray;
     unsigned int i, j;
@@ -3484,7 +3498,7 @@ static void output_subdirs( struct makefile *make )
             if (!submake->staticlib)
             {
                 strarray_add( &builddeps_deps, subdir );
-                if (!make->appmode.count)
+                if (!submake->appmode.count)
                 {
                     output( "manpages htmlpages sgmlpages xmlpages::\n" );
                     output( "\t@cd %s && $(MAKE) $@\n", subdir );
@@ -3506,6 +3520,30 @@ static void output_subdirs( struct makefile *make )
                 output( "\t@cd %s && $(MAKE) crosstest\n", subdir );
                 strarray_add( &crosstest_deps, target );
                 strarray_add( &builddeps_deps, target );
+            }
+        }
+        else
+        {
+            if (!strcmp( submake->base_dir, "tools" ) || !strncmp( submake->base_dir, "tools/", 6 ))
+            {
+                strarray_add( &tooldeps_deps, submake->base_dir );
+                for (j = 0; j < submake->programs.count; j++)
+                    output( "%s/%s%s: %s\n", submake->base_dir,
+                            submake->programs.str[j], tools_ext, submake->base_dir );
+            }
+            if (submake->programs.count || submake->sharedlib)
+            {
+                struct strarray libs = get_expanded_make_var_array( submake, "EXTRALIBS" );
+                for (j = 0; j < submake->programs.count; j++)
+                    strarray_addall( &libs, get_expanded_file_local_var( submake,
+                                                                    submake->programs.str[j], "LDFLAGS" ));
+                output( "%s: libs/port", submake->base_dir );
+                for (j = 0; j < libs.count; j++)
+                {
+                    if (!strcmp( libs.str[j], "-lwpp" )) output_filename( "libs/wpp" );
+                    if (!strcmp( libs.str[j], "-lwine" )) output_filename( "libs/wine" );
+                }
+                output( "\n" );
             }
         }
 
@@ -3531,6 +3569,13 @@ static void output_subdirs( struct makefile *make )
     output( "\n" );
     output_filenames( makefile_deps );
     output( ":\n" );
+    if (tooldeps_deps.count)
+    {
+        output( "__tooldeps__:" );
+        output_filenames( tooldeps_deps );
+        output( "\n" );
+        strarray_add( &make->phony_targets, "__tooldeps__" );
+    }
     if (winetest_deps.count)
     {
         output( "programs/winetest:" );
@@ -3547,13 +3592,13 @@ static void output_subdirs( struct makefile *make )
         strarray_add( &make->phony_targets, "check" );
         strarray_add( &make->phony_targets, "test" );
     }
-    if (crosstest_deps.count)
-    {
-        output( "crosstest:" );
-        output_filenames( crosstest_deps );
-        output( "\n" );
-        strarray_add( &make->phony_targets, "crosstest" );
-    }
+    output( "crosstest:" );
+    output_filenames( crosstest_deps );
+    output( "\n" );
+    if (!crosstest_deps.count)
+        output( "\t@echo \"crosstest is not supported (mingw not installed?)\" && false\n" );
+    strarray_add( &make->phony_targets, "crosstest" );
+
     output( "clean::\n");
     output_rm_filenames( clean_files );
     output( "testclean::\n");
@@ -3610,7 +3655,19 @@ static void output_sources( struct makefile *make )
             if (!strcmp( ext, output_source_funcs[j].ext )) break;
 
         output_source_funcs[j].fn( make, source, obj );
-        free( obj );
+        strarray_addall_uniq( &make->dependencies, source->dependencies );
+    }
+
+    /* special case for winetest: add resource files from other test dirs */
+    if (make->base_dir && !strcmp( make->base_dir, "programs/winetest" ))
+    {
+        struct strarray tests = enable_tests;
+        if (!tests.count)
+            for (i = 0; i < top_makefile->subdirs.count; i++)
+                if (top_makefile->submakes[i]->testdll && !top_makefile->submakes[i]->disabled)
+                    strarray_add( &tests, top_makefile->submakes[i]->testdll );
+        for (i = 0; i < tests.count; i++)
+            strarray_add( &make->object_files, replace_extension( tests.str[i], ".dll", "_test.res" ));
     }
 
     if (make->dlldata_files.count)
@@ -3660,9 +3717,14 @@ static void output_sources( struct makefile *make )
         output_uninstall_rules( make );
     }
 
+    if (make->dependencies.count)
+    {
+        output_filenames( make->dependencies );
+        output( ":\n" );
+    }
+
     strarray_addall( &make->clean_files, make->object_files );
-    for (i = 0; i < make->crossobj_files.count; i++)
-        strarray_add_uniq( &make->clean_files, make->crossobj_files.str[i] );
+    strarray_addall_uniq( &make->clean_files, make->crossobj_files );
     strarray_addall( &make->clean_files, make->all_targets );
     strarray_addall( &make->clean_files, get_expanded_make_var_array( make, "EXTRA_TARGETS" ));
 
@@ -4140,6 +4202,7 @@ int main( int argc, char *argv[] )
     cpp_flags    = get_expanded_make_var_array( top_makefile, "CPPFLAGS" );
     unwind_flags = get_expanded_make_var_array( top_makefile, "UNWINDFLAGS" );
     libs         = get_expanded_make_var_array( top_makefile, "LIBS" );
+    enable_tests = get_expanded_make_var_array( top_makefile, "ENABLE_TESTS" );
 
     root_src_dir = get_expanded_make_variable( top_makefile, "srcdir" );
     tools_dir    = get_expanded_make_variable( top_makefile, "TOOLSDIR" );

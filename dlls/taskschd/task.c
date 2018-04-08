@@ -1677,6 +1677,8 @@ typedef struct
     IExecAction IExecAction_iface;
     LONG ref;
     WCHAR *path;
+    WCHAR *directory;
+    WCHAR *args;
 } ExecAction;
 
 static inline ExecAction *impl_from_IExecAction(IExecAction *iface)
@@ -1699,6 +1701,8 @@ static ULONG WINAPI ExecAction_Release(IExecAction *iface)
     {
         TRACE("destroying %p\n", iface);
         heap_free(action->path);
+        heap_free(action->directory);
+        heap_free(action->args);
         heap_free(action);
     }
 
@@ -1806,26 +1810,58 @@ static HRESULT WINAPI ExecAction_put_Path(IExecAction *iface, BSTR path)
 
 static HRESULT WINAPI ExecAction_get_Arguments(IExecAction *iface, BSTR *arguments)
 {
-    FIXME("%p,%p: stub\n", iface, arguments);
-    return E_NOTIMPL;
+    ExecAction *action = impl_from_IExecAction(iface);
+
+    TRACE("%p,%p\n", iface, arguments);
+
+    if (!arguments) return E_POINTER;
+
+    if (!action->args) *arguments = NULL;
+    else if (!(*arguments = SysAllocString(action->args))) return E_OUTOFMEMORY;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI ExecAction_put_Arguments(IExecAction *iface, BSTR arguments)
 {
-    FIXME("%p,%s: stub\n", iface, debugstr_w(arguments));
+    ExecAction *action = impl_from_IExecAction(iface);
+    WCHAR *str = NULL;
+
+    TRACE("%p,%s\n", iface, debugstr_w(arguments));
+
+    if (arguments && !(str = heap_strdupW((arguments)))) return E_OUTOFMEMORY;
+    heap_free(action->args);
+    action->args = str;
+
     return S_OK;
 }
 
 static HRESULT WINAPI ExecAction_get_WorkingDirectory(IExecAction *iface, BSTR *directory)
 {
-    FIXME("%p,%p: stub\n", iface, directory);
-    return E_NOTIMPL;
+    ExecAction *action = impl_from_IExecAction(iface);
+
+    TRACE("%p,%p\n", iface, directory);
+
+    if (!directory) return E_POINTER;
+
+    if (!action->directory) *directory = NULL;
+    else if (!(*directory = SysAllocString(action->directory))) return E_OUTOFMEMORY;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI ExecAction_put_WorkingDirectory(IExecAction *iface, BSTR directory)
 {
-    FIXME("%p,%s: stub\n", iface, debugstr_w(directory));
-    return E_NOTIMPL;
+    ExecAction *action = impl_from_IExecAction(iface);
+    WCHAR *str = NULL;
+
+    TRACE("%p,%s\n", iface, debugstr_w(directory));
+
+    if (directory && !(str = heap_strdupW((directory)))) return E_OUTOFMEMORY;
+    heap_free(action->directory);
+    action->directory = str;
+
+    return S_OK;
 }
 
 static const IExecActionVtbl Action_vtbl =
@@ -1858,6 +1894,8 @@ static HRESULT ExecAction_create(IExecAction **obj)
     action->IExecAction_iface.lpVtbl = &Action_vtbl;
     action->ref = 1;
     action->path = NULL;
+    action->directory = NULL;
+    action->args = NULL;
 
     *obj = &action->IExecAction_iface;
 

@@ -1292,7 +1292,10 @@ static void dump_window_styles( DWORD style, DWORD exstyle )
     if(exstyle & WS_EX_STATICEDGE) TRACE(" WS_EX_STATICEDGE");
     if(exstyle & WS_EX_APPWINDOW) TRACE(" WS_EX_APPWINDOW");
     if(exstyle & WS_EX_LAYERED) TRACE(" WS_EX_LAYERED");
+    if(exstyle & WS_EX_NOINHERITLAYOUT) TRACE(" WS_EX_NOINHERITLAYOUT");
     if(exstyle & WS_EX_LAYOUTRTL) TRACE(" WS_EX_LAYOUTRTL");
+    if(exstyle & WS_EX_COMPOSITED) TRACE(" WS_EX_COMPOSITED");
+    if(exstyle & WS_EX_NOACTIVATE) TRACE(" WS_EX_NOACTIVATE");
 
 #define DUMPED_EX_STYLES \
     ((DWORD)(WS_EX_DLGMODALFRAME | \
@@ -1313,7 +1316,10 @@ static void dump_window_styles( DWORD style, DWORD exstyle )
      WS_EX_STATICEDGE | \
      WS_EX_APPWINDOW | \
      WS_EX_LAYERED | \
-     WS_EX_LAYOUTRTL))
+     WS_EX_NOINHERITLAYOUT | \
+     WS_EX_LAYOUTRTL | \
+     WS_EX_COMPOSITED |\
+     WS_EX_NOACTIVATE))
 
     if(exstyle & ~DUMPED_EX_STYLES) TRACE(" %08x", exstyle & ~DUMPED_EX_STYLES);
     TRACE("\n");
@@ -4027,5 +4033,39 @@ BOOL WINAPI GetGestureInfo(HGESTUREINFO handle, PGESTUREINFO ptr)
 {
     FIXME("(%p %p): stub\n", handle, ptr);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/*****************************************************************************
+ *              GetWindowDisplayAffinity (USER32.@)
+ */
+BOOL WINAPI GetWindowDisplayAffinity(HWND hwnd, DWORD *affinity)
+{
+    FIXME("(%p, %p): stub\n", hwnd, affinity);
+
+    if (!hwnd || !affinity)
+    {
+        SetLastError(hwnd ? ERROR_NOACCESS : ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+
+    *affinity = WDA_NONE;
+    return TRUE;
+}
+
+/*****************************************************************************
+ *              SetWindowDisplayAffinity (USER32.@)
+ */
+BOOL WINAPI SetWindowDisplayAffinity(HWND hwnd, DWORD affinity)
+{
+    FIXME("(%p, %u): stub\n", hwnd, affinity);
+
+    if (!hwnd)
+    {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+
+    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
     return FALSE;
 }

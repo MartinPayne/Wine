@@ -308,6 +308,7 @@ static ULONG WINAPI OleObject_Release(IOleObject *iface)
     if(!ref) {
         release_client_site(This);
         ConnectionPointContainer_Destroy(This);
+        destroy_player(This);
         heap_free(This);
     }
 
@@ -898,7 +899,7 @@ HRESULT WINAPI WMPFactory_CreateInstance(IClassFactory *iface, IUnknown *outer,
 
     wmp->ref = 1;
 
-    init_player_ifaces(wmp);
+    init_player(wmp);
 
     ConnectionPointContainer_Init(wmp);
     hdc = GetDC(0);

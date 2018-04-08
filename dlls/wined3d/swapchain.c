@@ -309,7 +309,6 @@ static void swapchain_blit(const struct wined3d_swapchain *swapchain,
         struct wined3d_context *context, const RECT *src_rect, const RECT *dst_rect)
 {
     struct wined3d_texture *texture = swapchain->back_buffers[0];
-    struct wined3d_surface *back_buffer = texture->sub_resources[0].u.surface;
     struct wined3d_device *device = swapchain->device;
     enum wined3d_texture_filter_type filter;
     DWORD location;
@@ -329,8 +328,8 @@ static void swapchain_blit(const struct wined3d_swapchain *swapchain,
         location = WINED3D_LOCATION_RB_RESOLVED;
 
     wined3d_texture_validate_location(texture, 0, WINED3D_LOCATION_DRAWABLE);
-    device->blitter->ops->blitter_blit(device->blitter, WINED3D_BLIT_OP_COLOR_BLIT, context, back_buffer,
-            location, src_rect, back_buffer, WINED3D_LOCATION_DRAWABLE, dst_rect, NULL, filter);
+    device->blitter->ops->blitter_blit(device->blitter, WINED3D_BLIT_OP_COLOR_BLIT, context, texture, 0,
+            location, src_rect, texture, 0, WINED3D_LOCATION_DRAWABLE, dst_rect, NULL, filter);
     wined3d_texture_invalidate_location(texture, 0, WINED3D_LOCATION_DRAWABLE);
 }
 
@@ -386,6 +385,7 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
 {
     struct wined3d_texture *back_buffer = swapchain->back_buffers[0];
     const struct wined3d_fb_state *fb = &swapchain->device->cs->fb;
+    struct wined3d_rendertarget_view *dsv = fb->depth_stencil;
     const struct wined3d_gl_info *gl_info;
     struct wined3d_texture *logo_texture;
     struct wined3d_context *context;
@@ -510,14 +510,13 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
         wined3d_texture_validate_location(swapchain->back_buffers[swapchain->desc.backbuffer_count - 1],
                 0, WINED3D_LOCATION_DISCARDED);
 
-    if (fb->depth_stencil)
+    if (dsv && dsv->resource->type != WINED3D_RTYPE_BUFFER)
     {
-        struct wined3d_surface *ds = wined3d_rendertarget_view_get_surface(fb->depth_stencil);
+        struct wined3d_texture *ds = texture_from_resource(dsv->resource);
 
-        if (ds && (swapchain->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
-                || ds->container->flags & WINED3D_TEXTURE_DISCARD))
-            wined3d_texture_validate_location(ds->container,
-                    fb->depth_stencil->sub_resource_idx, WINED3D_LOCATION_DISCARDED);
+        if ((swapchain->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
+                || ds->flags & WINED3D_TEXTURE_DISCARD))
+            wined3d_texture_validate_location(ds, dsv->sub_resource_idx, WINED3D_LOCATION_DISCARDED);
     }
 
     context_release(context);
@@ -542,7 +541,7 @@ static const struct wined3d_swapchain_ops swapchain_gl_ops =
 
 static void swapchain_gdi_frontbuffer_updated(struct wined3d_swapchain *swapchain)
 {
-    struct wined3d_surface *front;
+    struct wined3d_dc_info *front;
     POINT offset = {0, 0};
     HDC src_dc, dst_dc;
     RECT draw_rect;
@@ -550,11 +549,11 @@ static void swapchain_gdi_frontbuffer_updated(struct wined3d_swapchain *swapchai
 
     TRACE("swapchain %p.\n", swapchain);
 
-    front = swapchain->front_buffer->sub_resources[0].u.surface;
+    front = &swapchain->front_buffer->dc_info[0];
     if (swapchain->palette)
         wined3d_palette_apply_to_dc(swapchain->palette, front->dc);
 
-    if (front->container->resource.map_count)
+    if (swapchain->front_buffer->resource.map_count)
         ERR("Trying to blit a mapped surface.\n");
 
     TRACE("Copying surface %p to screen.\n", front);
@@ -585,26 +584,26 @@ static void swapchain_gdi_frontbuffer_updated(struct wined3d_swapchain *swapchai
 static void swapchain_gdi_present(struct wined3d_swapchain *swapchain,
         const RECT *src_rect, const RECT *dst_rect, DWORD flags)
 {
-    struct wined3d_surface *front, *back;
+    struct wined3d_dc_info *front, *back;
     HBITMAP bitmap;
     void *data;
     HDC dc;
 
-    front = swapchain->front_buffer->sub_resources[0].u.surface;
-    back = swapchain->back_buffers[0]->sub_resources[0].u.surface;
+    front = &swapchain->front_buffer->dc_info[0];
+    back = &swapchain->back_buffers[0]->dc_info[0];
 
     /* Flip the surface data. */
     dc = front->dc;
     bitmap = front->bitmap;
-    data = front->container->resource.heap_memory;
+    data = swapchain->front_buffer->resource.heap_memory;
 
     front->dc = back->dc;
     front->bitmap = back->bitmap;
-    front->container->resource.heap_memory = back->container->resource.heap_memory;
+    swapchain->front_buffer->resource.heap_memory = swapchain->back_buffers[0]->resource.heap_memory;
 
     back->dc = dc;
     back->bitmap = bitmap;
-    back->container->resource.heap_memory = data;
+    swapchain->back_buffers[0]->resource.heap_memory = data;
 
     /* FPS support */
     if (TRACE_ON(fps))
@@ -683,34 +682,13 @@ static void wined3d_swapchain_update_swap_interval_cs(void *object)
     context = context_acquire(swapchain->device, swapchain->front_buffer, 0);
     gl_info = context->gl_info;
 
-    switch (swapchain->desc.swap_interval)
-    {
-        case WINED3DPRESENT_INTERVAL_IMMEDIATE:
-            swap_interval = 0;
-            break;
-        case WINED3DPRESENT_INTERVAL_DEFAULT:
-        case WINED3DPRESENT_INTERVAL_ONE:
-            swap_interval = 1;
-            break;
-        case WINED3DPRESENT_INTERVAL_TWO:
-            swap_interval = 2;
-            break;
-        case WINED3DPRESENT_INTERVAL_THREE:
-            swap_interval = 3;
-            break;
-        case WINED3DPRESENT_INTERVAL_FOUR:
-            swap_interval = 4;
-            break;
-        default:
-            FIXME("Unhandled present interval %#x.\n", swapchain->desc.swap_interval);
-            swap_interval = 1;
-    }
+    swap_interval = swapchain->desc.swap_interval > 4 ? 1 : swapchain->desc.swap_interval;
 
     if (gl_info->supported[WGL_EXT_SWAP_CONTROL])
     {
         if (!GL_EXTCALL(wglSwapIntervalEXT(swap_interval)))
-            ERR("wglSwapIntervalEXT failed to set swap interval %d for context %p, last error %#x\n",
-                swap_interval, context, GetLastError());
+            ERR("wglSwapIntervalEXT failed to set swap interval %d for context %p, last error %#x.\n",
+                    swap_interval, context, GetLastError());
     }
 
     context_release(context);

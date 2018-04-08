@@ -853,6 +853,15 @@ typedef enum _PROCESSINFOCLASS {
     ProcessDebugFlags = 31,
     ProcessHandleTracing = 32,
     ProcessExecuteFlags = 34,
+    ProcessTlsInformation = 35,
+    ProcessCookie = 36,
+    ProcessImageInformation = 37,
+    ProcessCycleTime = 38,
+    ProcessPagePriority = 39,
+    ProcessInstrumentationCallback = 40,
+    ProcessThreadStackAllocation = 41,
+    ProcessWorkingSetWatchEx = 42,
+    ProcessImageFileNameWin32 = 43,
     MaxProcessInfoClass
 } PROCESSINFOCLASS, PROCESS_INFORMATION_CLASS;
 
@@ -2191,6 +2200,13 @@ typedef struct _SYSTEM_MODULE_INFORMATION
     SYSTEM_MODULE       Modules[1]; /* FIXME: should be Modules[0] */
 } SYSTEM_MODULE_INFORMATION, *PSYSTEM_MODULE_INFORMATION;
 
+#define THREAD_CREATE_FLAGS_CREATE_SUSPENDED        0x00000001
+#define THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH      0x00000002
+#define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER      0x00000004
+#define THREAD_CREATE_FLAGS_HAS_SECURITY_DESCRIPTOR 0x00000010
+#define THREAD_CREATE_FLAGS_ACCESS_CHECK_IN_TARGET  0x00000020
+#define THREAD_CREATE_FLAGS_INITIAL_THREAD          0x00000080
+
 /***********************************************************************
  * Function declarations
  */
@@ -2231,7 +2247,7 @@ NTSYSAPI NTSTATUS  WINAPI NtAdjustPrivilegesToken(HANDLE,BOOLEAN,PTOKEN_PRIVILEG
 NTSYSAPI NTSTATUS  WINAPI NtAlertResumeThread(HANDLE,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtAlertThread(HANDLE ThreadHandle);
 NTSYSAPI NTSTATUS  WINAPI NtAllocateLocallyUniqueId(PLUID lpLuid);
-NTSYSAPI NTSTATUS  WINAPI NtAllocateUuids(PULARGE_INTEGER,PULONG,PULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAllocateUuids(PULARGE_INTEGER,PULONG,PULONG,PUCHAR);
 NTSYSAPI NTSTATUS  WINAPI NtAllocateVirtualMemory(HANDLE,PVOID*,ULONG,SIZE_T*,ULONG,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtAreMappedFilesTheSame(PVOID,PVOID);
 NTSYSAPI NTSTATUS  WINAPI NtAssignProcessToJobObject(HANDLE,HANDLE);
@@ -2501,6 +2517,7 @@ NTSYSAPI void      WINAPI RtlClearAllBits(PRTL_BITMAP);
 NTSYSAPI void      WINAPI RtlClearBits(PRTL_BITMAP,ULONG,ULONG);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateActivationContext(HANDLE*,const void*);
 NTSYSAPI PDEBUG_BUFFER WINAPI RtlCreateQueryDebugBuffer(ULONG,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI RtlCreateRegistryKey(ULONG,PWSTR);
 NTSYSAPI ULONG     WINAPI RtlCompactHeap(HANDLE,ULONG);
 NTSYSAPI LONG      WINAPI RtlCompareString(const STRING*,const STRING*,BOOLEAN);
 NTSYSAPI LONG      WINAPI RtlCompareUnicodeString(const UNICODE_STRING*,const UNICODE_STRING*,BOOLEAN);

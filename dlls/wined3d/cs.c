@@ -1011,16 +1011,14 @@ static void wined3d_cs_exec_set_depth_stencil_view(struct wined3d_cs *cs, const 
     struct wined3d_device *device = cs->device;
     struct wined3d_rendertarget_view *prev;
 
-    if ((prev = cs->state.fb->depth_stencil))
+    if ((prev = cs->state.fb->depth_stencil) && prev->resource->type != WINED3D_RTYPE_BUFFER)
     {
-        struct wined3d_surface *prev_surface = wined3d_rendertarget_view_get_surface(prev);
+        struct wined3d_texture *prev_texture = texture_from_resource(prev->resource);
 
-        if (prev_surface && (device->swapchains[0]->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
-                || prev_surface->container->flags & WINED3D_TEXTURE_DISCARD))
-        {
-            wined3d_texture_validate_location(prev_surface->container,
+        if (device->swapchains[0]->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
+                || prev_texture->flags & WINED3D_TEXTURE_DISCARD)
+            wined3d_texture_validate_location(prev_texture,
                     prev->sub_resource_idx, WINED3D_LOCATION_DISCARDED);
-        }
     }
 
     cs->fb.depth_stencil = op->view;
@@ -2048,19 +2046,9 @@ static void wined3d_cs_exec_blt_sub_resource(struct wined3d_cs *cs, const void *
     }
     else if (op->dst_resource->type == WINED3D_RTYPE_TEXTURE_2D)
     {
-        struct wined3d_surface *dst_surface, *src_surface;
-        struct wined3d_texture *dst_texture, *src_texture;
-        RECT dst_rect, src_rect;
-
-        dst_texture = texture_from_resource(op->dst_resource);
-        src_texture = texture_from_resource(op->src_resource);
-        dst_surface = dst_texture->sub_resources[op->dst_sub_resource_idx].u.surface;
-        src_surface = src_texture->sub_resources[op->src_sub_resource_idx].u.surface;
-        SetRect(&dst_rect, op->dst_box.left, op->dst_box.top, op->dst_box.right, op->dst_box.bottom);
-        SetRect(&src_rect, op->src_box.left, op->src_box.top, op->src_box.right, op->src_box.bottom);
-
-        if (FAILED(wined3d_surface_blt(dst_surface, &dst_rect, src_surface,
-                &src_rect, op->flags, &op->fx, op->filter)))
+        if (FAILED(texture2d_blt(texture_from_resource(op->dst_resource), op->dst_sub_resource_idx,
+                &op->dst_box, texture_from_resource(op->src_resource), op->src_sub_resource_idx,
+                &op->src_box, op->flags, &op->fx, op->filter)))
             FIXME("Blit failed.\n");
     }
     else if (op->dst_resource->type == WINED3D_RTYPE_TEXTURE_3D)

@@ -1341,6 +1341,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX550,     "NVIDIA GeForce GTX 550 Ti",        DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT555M,     "NVIDIA GeForce GT 555M",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX560TI,   "NVIDIA GeForce GTX 560 Ti",        DRIVER_NVIDIA_GEFORCE8,  1024},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX560M,    "NVIDIA GeForce GTX 560M",          DRIVER_NVIDIA_GEFORCE8,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX560,     "NVIDIA GeForce GTX 560",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX570,     "NVIDIA GeForce GTX 570",           DRIVER_NVIDIA_GEFORCE8,  1280},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX580,     "NVIDIA GeForce GTX 580",           DRIVER_NVIDIA_GEFORCE8,  1536},
@@ -1394,6 +1395,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX980,     "NVIDIA GeForce GTX 980",           DRIVER_NVIDIA_GEFORCE8,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX980TI,   "NVIDIA GeForce GTX 980 Ti",        DRIVER_NVIDIA_GEFORCE8,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1050,    "NVIDIA GeForce GTX 1050",          DRIVER_NVIDIA_GEFORCE8,  2048},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1050TI,  "NVIDIA GeForce GTX 1050 Ti",       DRIVER_NVIDIA_GEFORCE8,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1060,    "NVIDIA GeForce GTX 1060",          DRIVER_NVIDIA_GEFORCE8,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1070,    "NVIDIA GeForce GTX 1070",          DRIVER_NVIDIA_GEFORCE8,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080,    "NVIDIA GeForce GTX 1080",          DRIVER_NVIDIA_GEFORCE8,  8192},
@@ -1892,6 +1894,7 @@ cards_nvidia_binary[] =
     {"GTX 1080",                    CARD_NVIDIA_GEFORCE_GTX1080},   /* GeForce 1000 - highend */
     {"GTX 1070",                    CARD_NVIDIA_GEFORCE_GTX1070},   /* GeForce 1000 - highend */
     {"GTX 1060",                    CARD_NVIDIA_GEFORCE_GTX1060},   /* GeForce 1000 - midend high */
+    {"GTX 1050 Ti",                 CARD_NVIDIA_GEFORCE_GTX1050TI}, /* GeForce 1000 - midend */
     {"GTX 1050",                    CARD_NVIDIA_GEFORCE_GTX1050},   /* GeForce 1000 - midend */
     {"GTX 980 Ti",                  CARD_NVIDIA_GEFORCE_GTX980TI},  /* GeForce 900 - highend */
     {"GTX 980",                     CARD_NVIDIA_GEFORCE_GTX980},    /* GeForce 900 - highend */
@@ -1945,6 +1948,7 @@ cards_nvidia_binary[] =
     {"GTX 580",                     CARD_NVIDIA_GEFORCE_GTX580},    /* Geforce 500 - highend */
     {"GTX 570",                     CARD_NVIDIA_GEFORCE_GTX570},    /* Geforce 500 - midend high */
     {"GTX 560 Ti",                  CARD_NVIDIA_GEFORCE_GTX560TI},  /* Geforce 500 - midend */
+    {"GTX 560M",                    CARD_NVIDIA_GEFORCE_GTX560M},   /* Geforce 500 - midend mobile */
     {"GTX 560",                     CARD_NVIDIA_GEFORCE_GTX560},    /* Geforce 500 - midend */
     {"GT 555M",                     CARD_NVIDIA_GEFORCE_GT555M},    /* Geforce 500 - midend mobile */
     {"GTX 550 Ti",                  CARD_NVIDIA_GEFORCE_GTX550},    /* Geforce 500 - midend */
@@ -2208,9 +2212,7 @@ cards_intel[] =
     {"830M",                        CARD_INTEL_830M},
 },
 /* 20101109 - These are never returned by current Gallium radeon
- * drivers: R700, RV790, R680, RV535, RV516, R410, RS485, RV360, RV351.
- *
- * These are returned but not handled: RC410, RV380. */
+ * drivers: R700, RV790, R680, RV535, RV516, R410, RS485, RV360, RV351. */
 cards_amd_mesa[] =
 {
     /* Polaris 10/11 */
@@ -2288,10 +2290,12 @@ cards_amd_mesa[] =
     {"RS482",                       CARD_AMD_RADEON_XPRESS_200M},
     {"RS480",                       CARD_AMD_RADEON_XPRESS_200M},
     {"RS400",                       CARD_AMD_RADEON_XPRESS_200M},
+    {"RC410",                       CARD_AMD_RADEON_XPRESS_200M},
     /* R300 */
     {"R360",                        CARD_AMD_RADEON_9500},
     {"R350",                        CARD_AMD_RADEON_9500},
     {"R300",                        CARD_AMD_RADEON_9500},
+    {"RV380",                       CARD_AMD_RADEON_9500},
     {"RV370",                       CARD_AMD_RADEON_9500},
     {"RV360",                       CARD_AMD_RADEON_9500},
     {"RV351",                       CARD_AMD_RADEON_9500},
@@ -5638,9 +5642,6 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
     caps->Caps3                    = WINED3DCAPS3_ALPHA_FULLSCREEN_FLIP_OR_DISCARD |
                                      WINED3DCAPS3_COPY_TO_VIDMEM                   |
                                      WINED3DCAPS3_COPY_TO_SYSTEMMEM;
-
-    caps->PresentationIntervals    = WINED3DPRESENT_INTERVAL_IMMEDIATE  |
-                                     WINED3DPRESENT_INTERVAL_ONE;
 
     caps->CursorCaps               = WINED3DCURSORCAPS_COLOR            |
                                      WINED3DCURSORCAPS_LOWRES;

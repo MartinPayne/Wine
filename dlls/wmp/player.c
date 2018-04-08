@@ -22,6 +22,16 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wmp);
 
+static inline WMPMedia *impl_from_IWMPMedia(IWMPMedia *iface)
+{
+    return CONTAINING_RECORD(iface, WMPMedia, IWMPMedia_iface);
+}
+
+static inline WindowsMediaPlayer *impl_from_IWMPNetwork(IWMPNetwork *iface)
+{
+    return CONTAINING_RECORD(iface, WindowsMediaPlayer, IWMPNetwork_iface);
+}
+
 static inline WindowsMediaPlayer *impl_from_IWMPPlayer4(IWMPPlayer4 *iface)
 {
     return CONTAINING_RECORD(iface, WindowsMediaPlayer, IWMPPlayer4_iface);
@@ -98,15 +108,23 @@ static HRESULT WINAPI WMPPlayer4_close(IWMPPlayer4 *iface)
 static HRESULT WINAPI WMPPlayer4_get_URL(IWMPPlayer4 *iface, BSTR *pbstrURL)
 {
     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
-    FIXME("(%p)->(%p)\n", This, pbstrURL);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, pbstrURL);
+    if(This->wmpmedia == NULL) {
+        return S_FALSE;
+    }
+    return IWMPMedia_get_sourceURL(This->wmpmedia, pbstrURL);
 }
 
 static HRESULT WINAPI WMPPlayer4_put_URL(IWMPPlayer4 *iface, BSTR url)
 {
     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(url));
-    return E_NOTIMPL;
+    IWMPMedia *media;
+    TRACE("(%p)->(%s)\n", This, debugstr_w(url));
+    if(url == NULL) {
+        return E_POINTER;
+    }
+    media = create_media_from_url(url);
+    return IWMPPlayer4_put_currentMedia(iface, media);
 }
 
 static HRESULT WINAPI WMPPlayer4_get_openState(IWMPPlayer4 *iface, WMPOpenState *pwmpos)
@@ -148,15 +166,28 @@ static HRESULT WINAPI WMPPlayer4_get_settings(IWMPPlayer4 *iface, IWMPSettings *
 static HRESULT WINAPI WMPPlayer4_get_currentMedia(IWMPPlayer4 *iface, IWMPMedia **ppMedia)
 {
     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
-    FIXME("(%p)->(%p)\n", This, ppMedia);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, ppMedia);
+    if(This->wmpmedia == NULL) {
+        return S_FALSE;
+    }
+    IWMPMedia_AddRef(This->wmpmedia);
+    *ppMedia = This->wmpmedia;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPPlayer4_put_currentMedia(IWMPPlayer4 *iface, IWMPMedia *pMedia)
 {
     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
-    FIXME("(%p)->(%p)\n", This, pMedia);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, pMedia);
+    if(pMedia == NULL) {
+        return E_POINTER;
+    }
+    if(This->wmpmedia != NULL) {
+        IWMPMedia_Release(This->wmpmedia);
+    }
+    This->wmpmedia = pMedia;
+    IWMPMedia_AddRef(This->wmpmedia);
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPPlayer4_get_mediaCollection(IWMPPlayer4 *iface, IWMPMediaCollection **ppMediaCollection)
@@ -197,8 +228,11 @@ static HRESULT WINAPI WMPPlayer4_launchURL(IWMPPlayer4 *iface, BSTR url)
 static HRESULT WINAPI WMPPlayer4_get_network(IWMPPlayer4 *iface, IWMPNetwork **ppQNI)
 {
     WindowsMediaPlayer *This = impl_from_IWMPPlayer4(iface);
-    FIXME("(%p)->(%p)\n", This, ppQNI);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, ppQNI);
+
+    IWMPNetwork_AddRef(&This->IWMPNetwork_iface);
+    *ppQNI = &This->IWMPNetwork_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPPlayer4_get_currentPlaylist(IWMPPlayer4 *iface, IWMPPlaylist **ppPL)
@@ -756,15 +790,19 @@ static HRESULT WINAPI WMPSettings_get_isAvailable(IWMPSettings *iface, BSTR item
 static HRESULT WINAPI WMPSettings_get_autoStart(IWMPSettings *iface, VARIANT_BOOL *p)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, p);
+    if (!p)
+        return E_POINTER;
+    *p = This->auto_start;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPSettings_put_autoStart(IWMPSettings *iface, VARIANT_BOOL v)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
-    FIXME("(%p)->(%x)\n", This, v);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%x)\n", This, v);
+    This->auto_start = v;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPSettings_get_baseURL(IWMPSettings *iface, BSTR *p)
@@ -798,15 +836,22 @@ static HRESULT WINAPI WMPSettings_put_defaultFrame(IWMPSettings *iface, BSTR v)
 static HRESULT WINAPI WMPSettings_get_invokeURLs(IWMPSettings *iface, VARIANT_BOOL *p)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if (!p)
+        return E_POINTER;
+    *p = This->invoke_urls;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPSettings_put_invokeURLs(IWMPSettings *iface, VARIANT_BOOL v)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
+    /* Leaving as FIXME as we don't currently use this */
     FIXME("(%p)->(%x)\n", This, v);
-    return E_NOTIMPL;
+    This->invoke_urls = v;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPSettings_get_mute(IWMPSettings *iface, VARIANT_BOOL *p)
@@ -896,15 +941,22 @@ static HRESULT WINAPI WMPSettings_setMode(IWMPSettings *iface, BSTR mode, VARIAN
 static HRESULT WINAPI WMPSettings_get_enableErrorDialogs(IWMPSettings *iface, VARIANT_BOOL *p)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if (!p)
+        return E_POINTER;
+    *p = This->enable_error_dialogs;
+    return S_OK;
 }
 
 static HRESULT WINAPI WMPSettings_put_enableErrorDialogs(IWMPSettings *iface, VARIANT_BOOL v)
 {
     WindowsMediaPlayer *This = impl_from_IWMPSettings(iface);
+    /* Leaving as FIXME as we don't currently use this */
     FIXME("(%p)->(%x)\n", This, v);
-    return E_NOTIMPL;
+    This->enable_error_dialogs = v;
+    return S_OK;
 }
 
 static const IWMPSettingsVtbl WMPSettingsVtbl = {
@@ -938,6 +990,301 @@ static const IWMPSettingsVtbl WMPSettingsVtbl = {
     WMPSettings_setMode,
     WMPSettings_get_enableErrorDialogs,
     WMPSettings_put_enableErrorDialogs
+};
+
+static HRESULT WINAPI WMPNetwork_QueryInterface(IWMPNetwork *iface, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(riid, &IID_IDispatch)) {
+        *ppv = iface;
+    }else if(IsEqualGUID(riid, &IID_IWMPNetwork)) {
+        *ppv = iface;
+    }else {
+        WARN("Unsupported interface (%s)\n", wine_dbgstr_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI WMPNetwork_AddRef(IWMPNetwork *iface)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    return IOleObject_AddRef(&This->IOleObject_iface);
+}
+
+static ULONG WINAPI WMPNetwork_Release(IWMPNetwork *iface)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    return IOleObject_Release(&This->IOleObject_iface);
+}
+
+static HRESULT WINAPI WMPNetwork_GetTypeInfoCount(IWMPNetwork *iface, UINT *pctinfo)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, pctinfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_GetTypeInfo(IWMPNetwork *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%u %d %p)\n", This, iTInfo, lcid, ppTInfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_GetIDsOfNames(IWMPNetwork *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s %p %u %d %p)\n", This, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_Invoke(IWMPNetwork *iface, DISPID dispIdMember,
+        REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
+        EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%d %s %d %x %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid), lcid,
+          wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_bandWidth(IWMPNetwork *iface, LONG *plBandwidth)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBandwidth);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_recoveredPackets(IWMPNetwork *iface, LONG *plRecoveredPackets)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plRecoveredPackets);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_sourceProtocol(IWMPNetwork *iface, BSTR *pbstrSourceProtocol)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, pbstrSourceProtocol);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_receivedPackets(IWMPNetwork *iface, LONG *plReceivedPackets)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plReceivedPackets);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_lostPackets(IWMPNetwork *iface, LONG *plLostPackets)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plLostPackets);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_receptionQuality(IWMPNetwork *iface, LONG *plReceptionQuality)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plReceptionQuality);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_bufferingCount(IWMPNetwork *iface, LONG *plBufferingCount)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBufferingCount);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_bufferingProgress(IWMPNetwork *iface, LONG *plBufferingProgress)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBufferingProgress);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_bufferingTime(IWMPNetwork *iface, LONG *plBufferingTime)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBufferingTime);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_put_bufferingTime(IWMPNetwork *iface, LONG lBufferingTime)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%d)\n", This, lBufferingTime);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_frameRate(IWMPNetwork *iface, LONG *plFrameRate)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plFrameRate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_maxBitRate(IWMPNetwork *iface, LONG *plBitRate)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBitRate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_bitRate(IWMPNetwork *iface, LONG *plBitRate)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plBitRate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_getProxySettings(IWMPNetwork *iface, BSTR bstrProtocol, LONG *plProxySetting)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrProtocol), plProxySetting);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_setProxySettings(IWMPNetwork *iface, BSTR bstrProtocol, LONG lProxySetting)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %d)\n", This, debugstr_w(bstrProtocol), lProxySetting);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_getProxyName(IWMPNetwork *iface, BSTR bstrProtocol, BSTR *pbstrProxyName)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrProtocol), pbstrProxyName);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_setProxyName(IWMPNetwork *iface, BSTR bstrProtocol, BSTR bstrProxyName)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %s)\n", This, debugstr_w(bstrProtocol), debugstr_w(bstrProxyName));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_getProxyPort(IWMPNetwork *iface, BSTR bstrProtocol, LONG *plProxyPort)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrProtocol), plProxyPort);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_setProxyPort(IWMPNetwork *iface, BSTR bstrProtocol, LONG lProxyPort)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %d)\n", This, debugstr_w(bstrProtocol), lProxyPort);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_getProxyExceptionList(IWMPNetwork *iface, BSTR bstrProtocol, BSTR *pbstrExceptionList)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrProtocol), pbstrExceptionList);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_setProxyExceptionList(IWMPNetwork *iface, BSTR bstrProtocol, BSTR bstrExceptionList)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %s)\n", This, debugstr_w(bstrProtocol), debugstr_w(bstrExceptionList));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_getProxyBypassForLocal(IWMPNetwork *iface, BSTR bstrProtocol, VARIANT_BOOL *pfBypassForLocal)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrProtocol), pfBypassForLocal);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_setProxyBypassForLocal(IWMPNetwork *iface, BSTR bstrProtocol, VARIANT_BOOL fBypassForLocal)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%s, %d)\n", This, debugstr_w(bstrProtocol), fBypassForLocal);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_maxBandwidth(IWMPNetwork *iface, LONG *plMaxBandwidth)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plMaxBandwidth);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_put_maxBandwidth(IWMPNetwork *iface, LONG lMaxBandwidth)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%d)\n", This, lMaxBandwidth);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_downloadProgress(IWMPNetwork *iface, LONG *plDownloadProgress)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plDownloadProgress);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_encodedFrameRate(IWMPNetwork *iface, LONG *plFrameRate)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plFrameRate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPNetwork_get_framesSkipped(IWMPNetwork *iface, LONG *plFrames)
+{
+    WindowsMediaPlayer *This = impl_from_IWMPNetwork(iface);
+    FIXME("(%p)->(%p)\n", This, plFrames);
+    return E_NOTIMPL;
+}
+
+static const IWMPNetworkVtbl WMPNetworkVtbl = {
+    WMPNetwork_QueryInterface,
+    WMPNetwork_AddRef,
+    WMPNetwork_Release,
+    WMPNetwork_GetTypeInfoCount,
+    WMPNetwork_GetTypeInfo,
+    WMPNetwork_GetIDsOfNames,
+    WMPNetwork_Invoke,
+    WMPNetwork_get_bandWidth,
+    WMPNetwork_get_recoveredPackets,
+    WMPNetwork_get_sourceProtocol,
+    WMPNetwork_get_receivedPackets,
+    WMPNetwork_get_lostPackets,
+    WMPNetwork_get_receptionQuality,
+    WMPNetwork_get_bufferingCount,
+    WMPNetwork_get_bufferingProgress,
+    WMPNetwork_get_bufferingTime,
+    WMPNetwork_put_bufferingTime,
+    WMPNetwork_get_frameRate,
+    WMPNetwork_get_maxBitRate,
+    WMPNetwork_get_bitRate,
+    WMPNetwork_getProxySettings,
+    WMPNetwork_setProxySettings,
+    WMPNetwork_getProxyName,
+    WMPNetwork_setProxyName,
+    WMPNetwork_getProxyPort,
+    WMPNetwork_setProxyPort,
+    WMPNetwork_getProxyExceptionList,
+    WMPNetwork_setProxyExceptionList,
+    WMPNetwork_getProxyBypassForLocal,
+    WMPNetwork_setProxyBypassForLocal,
+    WMPNetwork_get_maxBandwidth,
+    WMPNetwork_put_maxBandwidth,
+    WMPNetwork_get_downloadProgress,
+    WMPNetwork_get_encodedFrameRate,
+    WMPNetwork_get_framesSkipped,
 };
 
 static HRESULT WINAPI WMPControls_QueryInterface(IWMPControls *iface, REFIID riid, void **ppv)
@@ -1139,10 +1486,271 @@ static const IWMPControlsVtbl WMPControlsVtbl = {
     WMPControls_playItem,
 };
 
-void init_player_ifaces(WindowsMediaPlayer *wmp)
+static HRESULT WINAPI WMPMedia_QueryInterface(IWMPMedia *iface, REFIID riid, void **ppv)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    TRACE("(%p)\n", This);
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IWMPMedia_iface;
+    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
+        TRACE("(%p)->(IID_IDispatch %p)\n", This, ppv);
+        *ppv = &This->IWMPMedia_iface;
+    }else if(IsEqualGUID(&IID_IWMPMedia, riid)) {
+        TRACE("(%p)->(IID_IWMPMedia %p)\n", This, ppv);
+        *ppv = &This->IWMPMedia_iface;
+    }else {
+        WARN("Unsupported interface %s\n", debugstr_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI WMPMedia_AddRef(IWMPMedia *iface)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI WMPMedia_Release(IWMPMedia *iface)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref) {
+        heap_free(This->url);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI WMPMedia_GetTypeInfoCount(IWMPMedia *iface, UINT *pctinfo)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pctinfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_GetTypeInfo(IWMPMedia *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%u %d %p)\n", This, iTInfo, lcid, ppTInfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_GetIDsOfNames(IWMPMedia *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%s %p %u %d %p)\n", This, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_Invoke(IWMPMedia *iface, DISPID dispIdMember,
+        REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
+        EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%d %s %d %x %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid), lcid,
+          wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_isIdentical(IWMPMedia *iface, IWMPMedia *other, VARIANT_BOOL *pvBool)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p, %p)\n", This, other, pvBool);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_sourceURL(IWMPMedia *iface, BSTR *pbstrSourceUrl)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    BSTR url;
+    TRACE("(%p)->(%p)\n", This, pbstrSourceUrl);
+    url = SysAllocString(This->url);
+    if (url) {
+        *pbstrSourceUrl = url;
+        return S_OK;
+    }
+    return E_OUTOFMEMORY;
+}
+
+static HRESULT WINAPI WMPMedia_get_name(IWMPMedia *iface, BSTR *pbstrName)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pbstrName);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_put_name(IWMPMedia *iface, BSTR pbstrName)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(pbstrName));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_imageSourceWidth(IWMPMedia *iface, LONG *pWidth)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pWidth);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_imageSourceHeight(IWMPMedia *iface, LONG *pHeight)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pHeight);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_markerCount(IWMPMedia *iface, LONG* pMarkerCount)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pMarkerCount);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_getMarkerTime(IWMPMedia *iface, LONG MarkerNum, DOUBLE *pMarkerTime)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%d, %p)\n", This, MarkerNum, pMarkerTime);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_getMarkerName(IWMPMedia *iface, LONG MarkerNum, BSTR *pbstrMarkerName)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%d, %p)\n", This, MarkerNum, pbstrMarkerName);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_duration(IWMPMedia *iface, DOUBLE *pDuration)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pDuration);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_durationString(IWMPMedia *iface, BSTR *pbstrDuration)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, pbstrDuration);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_get_attributeCount(IWMPMedia *iface, LONG *plCount)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p)\n", This, plCount);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_getAttributeName(IWMPMedia *iface, LONG lIndex, BSTR *pbstrItemName)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%d, %p)\n", This, lIndex, pbstrItemName);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_getItemInfo(IWMPMedia *iface, BSTR bstrItemName, BSTR *pbstrVal)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrItemName), pbstrVal);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_setItemInfo(IWMPMedia *iface, BSTR bstrItemName, BSTR bstrVal)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%s, %s)\n", This, debugstr_w(bstrItemName), debugstr_w(bstrVal));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_getItemInfoByAtom(IWMPMedia *iface, LONG lAtom, BSTR *pbstrVal)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%d, %p)\n", This, lAtom, pbstrVal);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_isMemberOf(IWMPMedia *iface, IWMPPlaylist *pPlaylist, VARIANT_BOOL *pvarfIsMemberOf)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%p, %p)\n", This, pPlaylist, pvarfIsMemberOf);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WMPMedia_isReadOnlyItem(IWMPMedia *iface, BSTR bstrItemName, VARIANT_BOOL *pvarfIsReadOnly)
+{
+    WMPMedia *This = impl_from_IWMPMedia(iface);
+    FIXME("(%p)->(%s, %p)\n", This, debugstr_w(bstrItemName), pvarfIsReadOnly);
+    return E_NOTIMPL;
+}
+
+static const IWMPMediaVtbl WMPMediaVtbl = {
+    WMPMedia_QueryInterface,
+    WMPMedia_AddRef,
+    WMPMedia_Release,
+    WMPMedia_GetTypeInfoCount,
+    WMPMedia_GetTypeInfo,
+    WMPMedia_GetIDsOfNames,
+    WMPMedia_Invoke,
+    WMPMedia_get_isIdentical,
+    WMPMedia_get_sourceURL,
+    WMPMedia_get_name,
+    WMPMedia_put_name,
+    WMPMedia_get_imageSourceWidth,
+    WMPMedia_get_imageSourceHeight,
+    WMPMedia_get_markerCount,
+    WMPMedia_getMarkerTime,
+    WMPMedia_getMarkerName,
+    WMPMedia_get_duration,
+    WMPMedia_get_durationString,
+    WMPMedia_get_attributeCount,
+    WMPMedia_getAttributeName,
+    WMPMedia_getItemInfo,
+    WMPMedia_setItemInfo,
+    WMPMedia_getItemInfoByAtom,
+    WMPMedia_isMemberOf,
+    WMPMedia_isReadOnlyItem
+};
+
+void init_player(WindowsMediaPlayer *wmp)
 {
     wmp->IWMPPlayer4_iface.lpVtbl = &WMPPlayer4Vtbl;
     wmp->IWMPPlayer_iface.lpVtbl = &WMPPlayerVtbl;
     wmp->IWMPSettings_iface.lpVtbl = &WMPSettingsVtbl;
     wmp->IWMPControls_iface.lpVtbl = &WMPControlsVtbl;
+    wmp->IWMPNetwork_iface.lpVtbl = &WMPNetworkVtbl;
+
+    wmp->invoke_urls = VARIANT_TRUE;
+    wmp->auto_start = VARIANT_TRUE;
+}
+
+void destroy_player(WindowsMediaPlayer *wmp)
+{
+    if(wmp->wmpmedia)
+        IWMPMedia_Release(wmp->wmpmedia);
+}
+
+IWMPMedia* create_media_from_url(BSTR url){
+
+    WMPMedia *media = heap_alloc_zero(sizeof(WMPMedia));
+    media->IWMPMedia_iface.lpVtbl = &WMPMediaVtbl;
+    media->url = heap_strdupW(url);
+    media->ref = 1;
+
+    return &media->IWMPMedia_iface;
 }

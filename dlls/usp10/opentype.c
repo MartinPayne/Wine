@@ -2565,6 +2565,23 @@ unsigned int OpenType_apply_GPOS_lookup(const ScriptCache *script_cache, const O
             lookup_index, glyphs, glyph_index, glyph_count, goffset);
 }
 
+static LoadedScript *usp10_script_cache_add_script(ScriptCache *script_cache, OPENTYPE_TAG tag)
+{
+    LoadedScript *script;
+
+    if (!usp10_array_reserve((void **)&script_cache->scripts, &script_cache->scripts_size,
+            script_cache->script_count + 1, sizeof(*script_cache->scripts)))
+    {
+        ERR("Failed to grow scripts array.\n");
+        return NULL;
+    }
+
+    script = &script_cache->scripts[script_cache->script_count++];
+    script->tag = tag;
+
+    return script;
+}
+
 static LoadedScript *usp10_script_cache_get_script(ScriptCache *script_cache, OPENTYPE_TAG tag)
 {
     size_t i;
@@ -2580,81 +2597,64 @@ static LoadedScript *usp10_script_cache_get_script(ScriptCache *script_cache, OP
 
 static void GSUB_initialize_script_cache(ScriptCache *psc)
 {
-    int i;
+    const OT_ScriptList *script;
+    const GSUB_Header *header;
+    SIZE_T i;
 
-    if (psc->GSUB_Table)
+    if (!(header = psc->GSUB_Table))
+        return;
+
+    script = (const OT_ScriptList *)((const BYTE *)header + GET_BE_WORD(header->ScriptList));
+    psc->script_count = GET_BE_WORD(script->ScriptCount);
+
+    TRACE("Initialising %li scripts in this font.\n", psc->script_count);
+
+    if (!psc->script_count)
+        return;
+
+    if (!usp10_array_reserve((void **)&psc->scripts, &psc->scripts_size, psc->script_count, sizeof(*psc->scripts)))
+        ERR("Failed to allocate script array.\n");
+
+    for (i = 0; i < psc->script_count; ++i)
     {
-        const OT_ScriptList *script;
-        const GSUB_Header* header = (const GSUB_Header*)psc->GSUB_Table;
-        script = (const OT_ScriptList*)((const BYTE*)header + GET_BE_WORD(header->ScriptList));
-        psc->script_count = GET_BE_WORD(script->ScriptCount);
-        TRACE("initializing %li scripts in this font\n",psc->script_count);
-        if (psc->script_count)
-        {
-            psc->scripts = heap_alloc_zero(psc->script_count * sizeof(*psc->scripts));
-            for (i = 0; i < psc->script_count; i++)
-            {
-                int offset = GET_BE_WORD(script->ScriptRecord[i].Script);
-                psc->scripts[i].tag = MS_MAKE_TAG(script->ScriptRecord[i].ScriptTag[0], script->ScriptRecord[i].ScriptTag[1], script->ScriptRecord[i].ScriptTag[2], script->ScriptRecord[i].ScriptTag[3]);
-                psc->scripts[i].gsub_table = ((const BYTE*)script + offset);
-            }
-        }
+        psc->scripts[i].tag = MS_MAKE_TAG(script->ScriptRecord[i].ScriptTag[0],
+                script->ScriptRecord[i].ScriptTag[1],
+                script->ScriptRecord[i].ScriptTag[2],
+                script->ScriptRecord[i].ScriptTag[3]);
+        psc->scripts[i].gsub_table = (const BYTE *)script + GET_BE_WORD(script->ScriptRecord[i].Script);
     }
 }
 
 static void GPOS_expand_script_cache(ScriptCache *psc)
 {
-    int i, count;
-    const OT_ScriptList *script;
-    const GPOS_Header* header = (const GPOS_Header*)psc->GPOS_Table;
-    LoadedScript *loaded_script;
+    SIZE_T initial_count, count, i;
+    const OT_ScriptList *list;
+    const GPOS_Header *header;
+    LoadedScript *script;
+    OPENTYPE_TAG tag;
 
-    if (!header)
+    if (!(header = psc->GPOS_Table))
         return;
 
-    script = (const OT_ScriptList*)((const BYTE*)header + GET_BE_WORD(header->ScriptList));
-    count = GET_BE_WORD(script->ScriptCount);
-
-    if (!count)
+    list = (const OT_ScriptList *)((const BYTE *)header + GET_BE_WORD(header->ScriptList));
+    if (!(count = GET_BE_WORD(list->ScriptCount)))
         return;
 
-    if (!psc->script_count)
-    {
-        psc->script_count = count;
-        TRACE("initializing %li scripts in this font\n",psc->script_count);
-        if (psc->script_count)
-        {
-            psc->scripts = heap_alloc_zero(psc->script_count * sizeof(*psc->scripts));
-            for (i = 0; i < psc->script_count; i++)
-            {
-                int offset = GET_BE_WORD(script->ScriptRecord[i].Script);
-                psc->scripts[i].tag = MS_MAKE_TAG(script->ScriptRecord[i].ScriptTag[0], script->ScriptRecord[i].ScriptTag[1], script->ScriptRecord[i].ScriptTag[2], script->ScriptRecord[i].ScriptTag[3]);
-                psc->scripts[i].gpos_table = ((const BYTE*)script + offset);
-            }
-        }
-    }
-    else
-    {
-        for (i = 0; i < count; i++)
-        {
-            int offset = GET_BE_WORD(script->ScriptRecord[i].Script);
-            OPENTYPE_TAG tag = MS_MAKE_TAG(script->ScriptRecord[i].ScriptTag[0], script->ScriptRecord[i].ScriptTag[1], script->ScriptRecord[i].ScriptTag[2], script->ScriptRecord[i].ScriptTag[3]);
+    TRACE("Initialising %lu scripts in this font.\n", count);
 
-            if (!(loaded_script = usp10_script_cache_get_script(psc, tag)))
-            {
-                if (!usp10_array_reserve((void **)&psc->scripts, &psc->scripts_size,
-                        psc->script_count + 1, sizeof(*psc->scripts)))
-                {
-                    ERR("Failed grow scripts array.\n");
-                    return;
-                }
+    initial_count = psc->script_count;
+    for (i = 0; i < count; ++i)
+    {
+        tag = MS_MAKE_TAG(list->ScriptRecord[i].ScriptTag[0],
+                list->ScriptRecord[i].ScriptTag[1],
+                list->ScriptRecord[i].ScriptTag[2],
+                list->ScriptRecord[i].ScriptTag[3]);
 
-                loaded_script = &psc->scripts[psc->script_count];
-                ++psc->script_count;
-                loaded_script->tag = tag;
-            }
-            loaded_script->gpos_table = (const BYTE *)script + offset;
-        }
+        if (!(initial_count && (script = usp10_script_cache_get_script(psc, tag)))
+                && !(script = usp10_script_cache_add_script(psc, tag)))
+            return;
+
+        script->gpos_table = (const BYTE *)list + GET_BE_WORD(list->ScriptRecord[i].Script);
     }
 }
 

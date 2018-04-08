@@ -11424,9 +11424,10 @@ static void test_resource_priority(void)
 static void test_swapchain_parameters(void)
 {
     IDirect3DDevice9 *device;
+    HRESULT hr, expected_hr;
     IDirect3D9 *d3d;
+    D3DCAPS9 caps;
     HWND window;
-    HRESULT hr;
     unsigned int i;
     D3DPRESENT_PARAMETERS present_parameters, present_parameters_windowed = {0}, present_parameters2;
     IDirect3DSwapChain9 *swapchain;
@@ -11490,6 +11491,9 @@ static void test_swapchain_parameters(void)
         DestroyWindow(window);
         return;
     }
+    memset(&caps, 0, sizeof(caps));
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(hr == D3D_OK, "Failed to get device caps, hr %#x.\n", hr);
     IDirect3DDevice9_Release(device);
 
     present_parameters_windowed.BackBufferWidth = registry_mode.dmPelsWidth;
@@ -11557,6 +11561,54 @@ static void test_swapchain_parameters(void)
             hr = IDirect3DDevice9_Reset(device, &present_parameters_windowed);
             ok(SUCCEEDED(hr), "Failed to reset device, hr %#x, test %u.\n", hr, i);
         }
+        IDirect3DDevice9_Release(device);
+    }
+
+    for (i = 0; i < 10; ++i)
+    {
+        memset(&present_parameters, 0, sizeof(present_parameters));
+        present_parameters.BackBufferWidth = registry_mode.dmPelsWidth;
+        present_parameters.BackBufferHeight = registry_mode.dmPelsHeight;
+        present_parameters.hDeviceWindow = window;
+        present_parameters.BackBufferFormat = D3DFMT_X8R8G8B8;
+        present_parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+        present_parameters.Windowed = FALSE;
+        present_parameters.BackBufferCount = 2;
+
+        present_parameters.PresentationInterval = i;
+        switch (present_parameters.PresentationInterval)
+        {
+            case D3DPRESENT_INTERVAL_ONE:
+            case D3DPRESENT_INTERVAL_TWO:
+            case D3DPRESENT_INTERVAL_THREE:
+            case D3DPRESENT_INTERVAL_FOUR:
+                if (!(caps.PresentationIntervals & present_parameters.PresentationInterval))
+                    continue;
+                /* Fall through */
+            case D3DPRESENT_INTERVAL_DEFAULT:
+                expected_hr = D3D_OK;
+                break;
+            default:
+                expected_hr = D3DERR_INVALIDCALL;
+                break;
+        }
+
+        hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+                D3DCREATE_SOFTWARE_VERTEXPROCESSING, &present_parameters, &device);
+        ok(hr == expected_hr, "Got unexpected hr %#x, test %u.\n", hr, i);
+        if (FAILED(hr))
+            continue;
+
+        hr = IDirect3DDevice9_GetSwapChain(device, 0, &swapchain);
+        ok(SUCCEEDED(hr), "Failed to get swapchain, hr %#x, test %u.\n", hr, i);
+
+        hr = IDirect3DSwapChain9_GetPresentParameters(swapchain, &present_parameters2);
+        ok(SUCCEEDED(hr), "Failed to get present parameters, hr %#x, test %u.\n", hr, i);
+        ok(present_parameters2.PresentationInterval == i,
+                "Got presentation interval %#x, expected %#x.\n",
+                present_parameters2.PresentationInterval, i);
+
+        IDirect3DSwapChain9_Release(swapchain);
         IDirect3DDevice9_Release(device);
     }
 
@@ -12418,6 +12470,144 @@ static void test_stretch_rect(void)
     DestroyWindow(window);
 }
 
+static void test_device_caps(void)
+{
+    IDirect3DDevice9 *device;
+    IDirect3D9 *d3d;
+    ULONG refcount;
+    D3DCAPS9 caps;
+    HWND window;
+    HRESULT hr;
+
+    window = CreateWindowA("d3d9_test_wc", "d3d9_test", WS_OVERLAPPEDWINDOW,
+            0, 0, 640, 480, 0, 0, 0, 0);
+    d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    ok(!!d3d, "Failed to create a D3D object.\n");
+
+    if (!(device = create_device(d3d, window, NULL)))
+    {
+        skip("Failed to create a D3D device.\n");
+        IDirect3D9_Release(d3d);
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(SUCCEEDED(hr), "Failed to get caps, hr %#x.\n", hr);
+
+    ok(!(caps.Caps & ~D3DCAPS_READ_SCANLINE), "Caps field has unexpected flags %#x.\n", caps.Caps);
+    ok(!(caps.Caps2 & ~(D3DCAPS2_NO2DDURING3DSCENE | D3DCAPS2_FULLSCREENGAMMA
+            | D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANCALIBRATEGAMMA | D3DCAPS2_RESERVED
+            | D3DCAPS2_CANMANAGERESOURCE | D3DCAPS2_DYNAMICTEXTURES | D3DCAPS2_CANAUTOGENMIPMAP
+            | D3DCAPS2_CANSHARERESOURCE)),
+            "Caps2 field has unexpected flags %#x.\n", caps.Caps2);
+    /* AMD doesn't filter all the ddraw / d3d9 caps. Consider that behavior
+     * broken. */
+    ok(!(caps.Caps3 & ~(D3DCAPS3_ALPHA_FULLSCREEN_FLIP_OR_DISCARD
+            | D3DCAPS3_LINEAR_TO_SRGB_PRESENTATION | D3DCAPS3_COPY_TO_VIDMEM
+            | D3DCAPS3_COPY_TO_SYSTEMMEM | D3DCAPS3_DXVAHD | D3DCAPS3_DXVAHD_LIMITED
+            | D3DCAPS3_RESERVED)),
+            "Caps3 field has unexpected flags %#x.\n", caps.Caps3);
+    ok(!(caps.PrimitiveMiscCaps & ~(D3DPMISCCAPS_MASKZ | D3DPMISCCAPS_LINEPATTERNREP
+            | D3DPMISCCAPS_CULLNONE | D3DPMISCCAPS_CULLCW | D3DPMISCCAPS_CULLCCW
+            | D3DPMISCCAPS_COLORWRITEENABLE | D3DPMISCCAPS_CLIPPLANESCALEDPOINTS
+            | D3DPMISCCAPS_CLIPTLVERTS | D3DPMISCCAPS_TSSARGTEMP | D3DPMISCCAPS_BLENDOP
+            | D3DPMISCCAPS_NULLREFERENCE | D3DPMISCCAPS_INDEPENDENTWRITEMASKS
+            | D3DPMISCCAPS_PERSTAGECONSTANT | D3DPMISCCAPS_FOGANDSPECULARALPHA
+            | D3DPMISCCAPS_SEPARATEALPHABLEND | D3DPMISCCAPS_MRTINDEPENDENTBITDEPTHS
+            | D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING | D3DPMISCCAPS_FOGVERTEXCLAMPED
+            | D3DPMISCCAPS_POSTBLENDSRGBCONVERT)),
+            "PrimitiveMiscCaps field has unexpected flags %#x.\n", caps.PrimitiveMiscCaps);
+    ok(!(caps.RasterCaps & ~(D3DPRASTERCAPS_DITHER | D3DPRASTERCAPS_PAT | D3DPRASTERCAPS_ZTEST
+            | D3DPRASTERCAPS_FOGVERTEX | D3DPRASTERCAPS_FOGTABLE | D3DPRASTERCAPS_ANTIALIASEDGES
+            | D3DPRASTERCAPS_MIPMAPLODBIAS | D3DPRASTERCAPS_ZBIAS | D3DPRASTERCAPS_ZBUFFERLESSHSR
+            | D3DPRASTERCAPS_FOGRANGE | D3DPRASTERCAPS_ANISOTROPY | D3DPRASTERCAPS_WBUFFER
+            | D3DPRASTERCAPS_WFOG | D3DPRASTERCAPS_ZFOG | D3DPRASTERCAPS_COLORPERSPECTIVE
+            | D3DPRASTERCAPS_SCISSORTEST | D3DPRASTERCAPS_SLOPESCALEDEPTHBIAS
+            | D3DPRASTERCAPS_DEPTHBIAS | D3DPRASTERCAPS_MULTISAMPLE_TOGGLE)),
+            "RasterCaps field has unexpected flags %#x.\n", caps.RasterCaps);
+    /* D3DPBLENDCAPS_SRCCOLOR2 and D3DPBLENDCAPS_INVSRCCOLOR2 are only
+     * advertised on the reference rasterizer and WARP. */
+    ok(!(caps.SrcBlendCaps & ~(D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCCOLOR
+            | D3DPBLENDCAPS_INVSRCCOLOR | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA
+            | D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA | D3DPBLENDCAPS_DESTCOLOR
+            | D3DPBLENDCAPS_INVDESTCOLOR | D3DPBLENDCAPS_SRCALPHASAT | D3DPBLENDCAPS_BOTHSRCALPHA
+            | D3DPBLENDCAPS_BOTHINVSRCALPHA | D3DPBLENDCAPS_BLENDFACTOR))
+            || broken(!(caps.SrcBlendCaps & ~(D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCCOLOR
+            | D3DPBLENDCAPS_INVSRCCOLOR | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA
+            | D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA | D3DPBLENDCAPS_DESTCOLOR
+            | D3DPBLENDCAPS_INVDESTCOLOR | D3DPBLENDCAPS_SRCALPHASAT | D3DPBLENDCAPS_BOTHSRCALPHA
+            | D3DPBLENDCAPS_BOTHINVSRCALPHA | D3DPBLENDCAPS_BLENDFACTOR
+            | D3DPBLENDCAPS_SRCCOLOR2 | D3DPBLENDCAPS_INVSRCCOLOR2))),
+            "SrcBlendCaps field has unexpected flags %#x.\n", caps.SrcBlendCaps);
+    ok(!(caps.DestBlendCaps & ~(D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCCOLOR
+            | D3DPBLENDCAPS_INVSRCCOLOR | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA
+            | D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA | D3DPBLENDCAPS_DESTCOLOR
+            | D3DPBLENDCAPS_INVDESTCOLOR | D3DPBLENDCAPS_SRCALPHASAT | D3DPBLENDCAPS_BOTHSRCALPHA
+            | D3DPBLENDCAPS_BOTHINVSRCALPHA | D3DPBLENDCAPS_BLENDFACTOR))
+            || broken(!(caps.SrcBlendCaps & ~(D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCCOLOR
+            | D3DPBLENDCAPS_INVSRCCOLOR | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA
+            | D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA | D3DPBLENDCAPS_DESTCOLOR
+            | D3DPBLENDCAPS_INVDESTCOLOR | D3DPBLENDCAPS_SRCALPHASAT | D3DPBLENDCAPS_BOTHSRCALPHA
+            | D3DPBLENDCAPS_BOTHINVSRCALPHA | D3DPBLENDCAPS_BLENDFACTOR
+            | D3DPBLENDCAPS_SRCCOLOR2 | D3DPBLENDCAPS_INVSRCCOLOR2))),
+            "DestBlendCaps field has unexpected flags %#x.\n", caps.DestBlendCaps);
+    ok(!(caps.TextureCaps & ~(D3DPTEXTURECAPS_PERSPECTIVE | D3DPTEXTURECAPS_POW2
+            | D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_SQUAREONLY
+            | D3DPTEXTURECAPS_TEXREPEATNOTSCALEDBYSIZE | D3DPTEXTURECAPS_ALPHAPALETTE
+            | D3DPTEXTURECAPS_NONPOW2CONDITIONAL | D3DPTEXTURECAPS_PROJECTED
+            | D3DPTEXTURECAPS_CUBEMAP | D3DPTEXTURECAPS_VOLUMEMAP | D3DPTEXTURECAPS_MIPMAP
+            | D3DPTEXTURECAPS_MIPVOLUMEMAP | D3DPTEXTURECAPS_MIPCUBEMAP
+            | D3DPTEXTURECAPS_CUBEMAP_POW2 | D3DPTEXTURECAPS_VOLUMEMAP_POW2
+            | D3DPTEXTURECAPS_NOPROJECTEDBUMPENV)),
+            "TextureCaps field has unexpected flags %#x.\n", caps.TextureCaps);
+    ok(!(caps.TextureFilterCaps & ~(D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR
+            | D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MINFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MINFGAUSSIANQUAD | D3DPTFILTERCAPS_MIPFPOINT
+            | D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_CONVOLUTIONMONO
+            | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR
+            | D3DPTFILTERCAPS_MAGFANISOTROPIC | D3DPTFILTERCAPS_MAGFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MAGFGAUSSIANQUAD)),
+            "TextureFilterCaps field has unexpected flags %#x.\n", caps.TextureFilterCaps);
+    ok(!(caps.CubeTextureFilterCaps & ~(D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR
+            | D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MINFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MINFGAUSSIANQUAD | D3DPTFILTERCAPS_MIPFPOINT
+            | D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR
+            | D3DPTFILTERCAPS_MAGFANISOTROPIC | D3DPTFILTERCAPS_MAGFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MAGFGAUSSIANQUAD)),
+            "CubeTextureFilterCaps field has unexpected flags %#x.\n", caps.CubeTextureFilterCaps);
+    ok(!(caps.VolumeTextureFilterCaps & ~(D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR
+            | D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MINFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MINFGAUSSIANQUAD | D3DPTFILTERCAPS_MIPFPOINT
+            | D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR
+            | D3DPTFILTERCAPS_MAGFANISOTROPIC | D3DPTFILTERCAPS_MAGFPYRAMIDALQUAD
+            | D3DPTFILTERCAPS_MAGFGAUSSIANQUAD)),
+            "VolumeTextureFilterCaps field has unexpected flags %#x.\n", caps.VolumeTextureFilterCaps);
+    ok(!(caps.LineCaps & ~(D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND
+            | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG | D3DLINECAPS_ANTIALIAS)),
+            "LineCaps field has unexpected flags %#x.\n", caps.LineCaps);
+    ok(!(caps.StencilCaps & ~(D3DSTENCILCAPS_KEEP | D3DSTENCILCAPS_ZERO | D3DSTENCILCAPS_REPLACE
+            | D3DSTENCILCAPS_INCRSAT | D3DSTENCILCAPS_DECRSAT | D3DSTENCILCAPS_INVERT
+            | D3DSTENCILCAPS_INCR | D3DSTENCILCAPS_DECR | D3DSTENCILCAPS_TWOSIDED)),
+            "StencilCaps field has unexpected flags %#x.\n", caps.StencilCaps);
+    ok(!(caps.VertexProcessingCaps & ~(D3DVTXPCAPS_TEXGEN | D3DVTXPCAPS_MATERIALSOURCE7
+            | D3DVTXPCAPS_DIRECTIONALLIGHTS | D3DVTXPCAPS_POSITIONALLIGHTS | D3DVTXPCAPS_LOCALVIEWER
+            | D3DVTXPCAPS_TWEENING | D3DVTXPCAPS_TEXGEN_SPHEREMAP
+            | D3DVTXPCAPS_NO_TEXGEN_NONLOCALVIEWER)),
+            "VertexProcessingCaps field has unexpected flags %#x.\n", caps.VertexProcessingCaps);
+    /* Both Nvidia and AMD give 10 here. */
+    ok(caps.MaxActiveLights <= 10,
+            "MaxActiveLights field has unexpected value %u.\n", caps.MaxActiveLights);
+    /* AMD gives 6, Nvidia returns 8. */
+    ok(caps.MaxUserClipPlanes <= 8,
+            "MaxUserClipPlanes field has unexpected value %u.\n", caps.MaxUserClipPlanes);
+
+    refcount = IDirect3DDevice9_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+    IDirect3D9_Release(d3d);
+    DestroyWindow(window);
+}
+
 START_TEST(device)
 {
     WNDCLASSA wc = {0};
@@ -12541,6 +12731,7 @@ START_TEST(device)
     test_clip_planes_limits();
     test_swapchain_multisample_reset();
     test_stretch_rect();
+    test_device_caps();
 
     UnregisterClassA("d3d9_test_wc", GetModuleHandleA(NULL));
 }
