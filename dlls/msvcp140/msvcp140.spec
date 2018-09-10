@@ -1621,8 +1621,8 @@
 @ stub -arch=win32 ?_Src@?1??_Getifld@?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@ABAHPADAAV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@3@1HABVlocale@3@@Z@4QBDB
 @ stub -arch=win64 ?_Src@?1??_Getifld@?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@AEBAHPEADAEAV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@3@1HAEBVlocale@3@@Z@4QBDB
 @ extern ?_Sync@ios_base@std@@0_NA ios_base_Sync
-@ stub -arch=win32 ?_Syserror_map@std@@YAPBDH@Z
-@ stub -arch=win64 ?_Syserror_map@std@@YAPEBDH@Z
+@ cdecl -arch=win32 ?_Syserror_map@std@@YAPBDH@Z(long) _Syserror_map
+@ cdecl -arch=win64 ?_Syserror_map@std@@YAPEBDH@Z(long) _Syserror_map
 @ stub ?_Throw_C_error@std@@YAXH@Z
 @ stub ?_Throw_Cpp_error@std@@YAXH@Z
 @ stub -arch=win32 ?_Throw_future_error@std@@YAXABVerror_code@1@@Z
@@ -3694,7 +3694,7 @@
 @ cdecl -ret64 _Query_perf_frequency()
 @ cdecl _Read_dir(ptr ptr ptr) tr2_sys__Read_dir_wchar
 @ cdecl _Remove_dir(wstr) tr2_sys__Remove_dir_wchar
-@ stub _Rename
+@ cdecl _Rename(wstr wstr) tr2_sys__Rename_wchar
 @ stub _Resize
 @ stub _Set_last_write_time
 @ stub _Sinh
@@ -3718,7 +3718,7 @@
 @ stub _Strxfrm
 @ cdecl _Symlink(wstr wstr) tr2_sys__Symlink_wchar
 @ stub _Symlink_get
-@ stub _Temp_get
+@ cdecl _Temp_get(ptr)
 @ stub _Thrd_abort
 @ cdecl _Thrd_create(ptr ptr ptr) _Thrd_create
 @ cdecl -norelay _Thrd_current()

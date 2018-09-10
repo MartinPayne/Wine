@@ -762,6 +762,9 @@ case $host_os in
 
   darwin*|macosx*)
     AC_CHECK_HEADERS(libunwind.h)
+    AC_LANG_PUSH([Objective C])
+        AC_CHECK_HEADERS(Metal/Metal.h)
+    AC_LANG_POP([Objective C])
     LIBEXT="dylib"
     DLLFLAGS="$DLLFLAGS -fPIC"
     LDRPATH_INSTALL="-Wl,-rpath,@loader_path/\`\$(MAKEDEP) -R \${bindir} \${libdir}\`"
@@ -845,6 +848,10 @@ case $host_os in
     if test "$ac_cv_header_Carbon_Carbon_h" = "yes"
     then
         AC_SUBST(CARBON_LIBS,"-framework Carbon")
+    fi
+    if test "$ac_cv_header_Metal_Metal_h" = "yes"
+    then
+        AC_SUBST(METAL_LIBS,"-framework Metal -framework QuartzCore")
     fi
 
     dnl Enable Mac driver on Mac OS X 10.6 or later
@@ -1851,9 +1858,13 @@ dnl *** Check for Vulkan ***
 if test "x$with_vulkan" != "xno"
 then
     WINE_CHECK_SONAME(vulkan, vkGetInstanceProcAddr)
+    if test "x$ac_cv_lib_soname_vulkan" = "x"
+    then
+        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr)
+    fi
 fi
-WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x"],
-                 [libvulkan ${notice_platform}development files not found, Vulkan won't be supported.])
+WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
+                 [libvulkan and libMoltenVK ${notice_platform}development files not found, Vulkan won't be supported.])
 
 dnl **** Check for vkd3d ****
 if test "x$with_vkd3d" != "xno"

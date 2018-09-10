@@ -86,7 +86,7 @@ struct VkInstance_T
      * dispatchable objects.
      */
     struct VkPhysicalDevice_T **phys_devs;
-    uint32_t num_phys_devs;
+    uint32_t phys_dev_count;
 
     unsigned int quirks;
 };
@@ -106,6 +106,8 @@ struct VkQueue_T
     struct wine_vk_base base;
     struct VkDevice_T *device; /* parent */
     VkQueue queue; /* native queue */
+
+    VkDeviceQueueCreateFlags flags;
 };
 
 void *wine_vk_get_device_proc_addr(const char *name) DECLSPEC_HIDDEN;

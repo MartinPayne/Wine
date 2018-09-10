@@ -179,7 +179,7 @@ static void update_visible_region( struct dce *dce )
         }
     }
 
-    if (!surface) top_rect = get_virtual_screen_rect();
+    if (!surface) SetRectEmpty( &top_rect );
     __wine_set_visible_region( dce->hdc, vis_rgn, &win_rect, &top_rect, surface );
     if (surface) window_surface_release( surface );
 }
@@ -652,12 +652,12 @@ static HRGN send_ncpaint( HWND hwnd, HWND *child, UINT *flags )
 
     if (whole_rgn)
     {
-        RECT client, update;
+        RECT client, window, update;
         INT type;
 
         /* check if update rgn overlaps with nonclient area */
         type = GetRgnBox( whole_rgn, &update );
-        WIN_GetRectangles( hwnd, COORDS_SCREEN, 0, &client );
+        WIN_GetRectangles( hwnd, COORDS_SCREEN, &window, &client );
 
         if ((*flags & UPDATE_NONCLIENT) ||
             update.left < client.left || update.top < client.top ||
@@ -667,15 +667,10 @@ static HRGN send_ncpaint( HWND hwnd, HWND *child, UINT *flags )
             CombineRgn( client_rgn, client_rgn, whole_rgn, RGN_AND );
 
             /* check if update rgn contains complete nonclient area */
-            if (type == SIMPLEREGION)
+            if (type == SIMPLEREGION && EqualRect( &window, &update ))
             {
-                RECT window;
-                GetWindowRect( hwnd, &window );
-                if (EqualRect( &window, &update ))
-                {
-                    DeleteObject( whole_rgn );
-                    whole_rgn = (HRGN)1;
-                }
+                DeleteObject( whole_rgn );
+                whole_rgn = (HRGN)1;
             }
         }
         else

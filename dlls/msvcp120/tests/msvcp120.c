@@ -1474,9 +1474,8 @@ static void test_tr2_sys__Rename(void)
     BY_HANDLE_FILE_INFORMATION info1, info2;
     char temp_path[MAX_PATH], current_path[MAX_PATH];
     LARGE_INTEGER file_size;
-    WCHAR testW[] = {'t','r','2','_','t','e','s','t','_','d','i','r','/','f','1',0};
-    WCHAR testW2[] = {'t','r','2','_','t','e','s','t','_','d','i','r','/','f','w',0};
-    struct {
+    static const WCHAR testW[] = {'t','r','2','_','t','e','s','t','_','d','i','r','/','f','1',0};
+    static const struct {
         char const *old_path;
         char const *new_path;
         int val;
@@ -1487,6 +1486,29 @@ static void test_tr2_sys__Rename(void)
         { NULL, "tr2_test_dir\\NULL_rename", ERROR_INVALID_PARAMETER },
         { "tr2_test_dir\\f1_rename", "tr2_test_dir\\??invalid_name>>", ERROR_INVALID_NAME },
         { "tr2_test_dir\\not_exist_file", "tr2_test_dir\\not_exist_rename", ERROR_FILE_NOT_FOUND }
+    };
+    static const WCHAR f1_renameW[] =
+            {'t','r','2','_','t','e','s','t','_','d','i','r','\\','f','1','_','r','e','n','a','m','e',0};
+    static const WCHAR f1_rename2W[] =
+            {'t','r','2','_','t','e','s','t','_','d','i','r','\\','f','1','_','r','e','n','a','m','e','2',0};
+    static const WCHAR not_existW[] =
+            {'t','r','2','_','t','e','s','t','_','d','i','r','\\','n','o','t','_','e','x','i','s','t',0};
+    static const WCHAR not_exist2W[] =
+            {'t','r','2','_','t','e','s','t','_','d','i','r','\\','n','o','t','_','e','x','i','s','t','2',0};
+    static const WCHAR invalidW[] =
+            {'t','r','2','_','t','e','s','t','_','d','i','r','\\','?','?','i','n','v','a','l','i','d','>',0};
+    static const struct {
+        const WCHAR *old_path;
+        const WCHAR *new_path;
+        int val;
+    } testsW[] = {
+        { testW, f1_renameW, ERROR_SUCCESS },
+        { testW, NULL, ERROR_FILE_NOT_FOUND }, /* Differs from the A version */
+        { testW, f1_renameW, ERROR_FILE_NOT_FOUND },
+        { NULL, f1_rename2W, ERROR_PATH_NOT_FOUND }, /* Differs from the A version */
+        { f1_renameW, invalidW, ERROR_INVALID_NAME },
+        { not_existW, not_exist2W, ERROR_FILE_NOT_FOUND },
+        { not_existW, invalidW, ERROR_FILE_NOT_FOUND }
     };
 
     memset(current_path, 0, MAX_PATH);
@@ -1538,10 +1560,34 @@ static void test_tr2_sys__Rename(void)
     ok(ret == ERROR_ALREADY_EXISTS, "test_tr2_sys__Rename(): expect: ERROR_ALREADY_EXISTS, got %d\n", ret);
     ok(p_tr2_sys__File_size("tr2_test_dir\\f1") == 7, "test_tr2_sys__Rename(): expect: 7, got %s\n", wine_dbgstr_longlong(p_tr2_sys__File_size("tr2_test_dir\\f1")));
     ok(p_tr2_sys__File_size("tr2_test_dir\\f1_rename") == 0, "test_tr2_sys__Rename(): expect: 0, got %s\n",wine_dbgstr_longlong(p_tr2_sys__File_size("tr2_test_dir\\f1_rename")));
-    ret = p_tr2_sys__Rename_wchar(testW, testW2);
-    ok(ret == ERROR_SUCCESS, "tr2_sys__Rename_wchar(): expect: ERROR_SUCCESS, got %d\n",  ret);
 
-    ok(DeleteFileW(testW2), "expect fw to exist\n");
+    ok(DeleteFileA("tr2_test_dir\\f1_rename"), "expect f1_rename to exist\n");
+
+    for(i=0; i<ARRAY_SIZE(testsW); i++) {
+        errno = 0xdeadbeef;
+        if(testsW[i].val == ERROR_SUCCESS) {
+            h1 = CreateFileW(testsW[i].old_path, 0, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    NULL, OPEN_EXISTING, 0, 0);
+            ok(h1 != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
+            ok(GetFileInformationByHandle(h1, &info1), "GetFileInformationByHandle failed\n");
+            CloseHandle(h1);
+        }
+        SetLastError(0xdeadbeef);
+        ret = p_tr2_sys__Rename_wchar(testsW[i].old_path, testsW[i].new_path);
+        ok(ret == testsW[i].val, "test_tr2_sys__Rename_wchar(): test %d expect: %d, got %d\n", i+1, testsW[i].val, ret);
+        ok(errno == 0xdeadbeef, "test_tr2_sys__Rename_wchar(): test %d errno expect 0xdeadbeef, got %d\n", i+1, errno);
+        if(ret == ERROR_SUCCESS) {
+            h2 = CreateFileW(testsW[i].new_path, 0, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    NULL, OPEN_EXISTING, 0, 0);
+            ok(h2 != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
+            ok(GetFileInformationByHandle(h2, &info2), "GetFileInformationByHandle failed\n");
+            CloseHandle(h2);
+            ok(info1.nFileIndexHigh == info2.nFileIndexHigh
+                    && info1.nFileIndexLow == info2.nFileIndexLow,
+                    "test_tr2_sys__Rename_wchar(): test %d expect two files equivalent\n", i+1);
+        }
+    }
+
     ok(DeleteFileA("tr2_test_dir\\f1_rename"), "expect f1_rename to exist\n");
     ret = p_tr2_sys__Remove_dir("tr2_test_dir");
     ok(ret == 1, "test_tr2_sys__Remove_dir(): expect %d got %d\n", 1, ret);
@@ -2576,10 +2622,14 @@ static void concurrent_vector_int_dtor(vector_base_v4 *this)
 
     blocks = (size_t)call_func2(p_vector_base_v4__Internal_clear,
             this, concurrent_vector_int_destroy);
-    while(this->first_block && blocks >= this->first_block) {
+    for(blocks--; blocks >= this->first_block; blocks--) {
         vector_alloc_count--;
-        free(this->segment[blocks - this->first_block]);
-        blocks--;
+        free(this->segment[blocks]);
+    }
+
+    if(this->first_block) {
+        vector_alloc_count--;
+        free(this->segment[0]);
     }
 
     call_func1(p_vector_base_v4_dtor, this);
@@ -2884,6 +2934,7 @@ static void test_vector_base_v4(void)
     size = (size_t)call_func2(p_vector_base_v4__Internal_clear,
             &v2, concurrent_vector_int_destroy);
     CHECK_CALLED(concurrent_vector_int_destroy);
+    ok(size == 3, "_Internal_clear returned %ld expected 3\n", (long)size);
     concurrent_vector_int_dtor(&v2);
 
     concurrent_vector_int_ctor(&v2);
@@ -2917,6 +2968,7 @@ static void test_vector_base_v4(void)
     size = (size_t)call_func2(p_vector_base_v4__Internal_clear,
             &v2, concurrent_vector_int_destroy);
     CHECK_CALLED(concurrent_vector_int_destroy);
+    ok(size == 3, "_Internal_clear returned %ld expected 3\n", (long)size);
     concurrent_vector_int_dtor(&v2);
 
     concurrent_vector_int_ctor(&v2);
@@ -2950,6 +3002,7 @@ static void test_vector_base_v4(void)
     size = (size_t)call_func2(p_vector_base_v4__Internal_clear,
             &v2, concurrent_vector_int_destroy);
     CHECK_CALLED(concurrent_vector_int_destroy);
+    ok(size == 2, "_Internal_clear returned %ld expected 2\n", (long)size);
     concurrent_vector_int_dtor(&v2);
 
     /* test for _Internal_compact */
@@ -3028,6 +3081,7 @@ static void test_vector_base_v4(void)
     size = (size_t)call_func2(p_vector_base_v4__Internal_clear,
             &v2, concurrent_vector_int_destroy);
     CHECK_CALLED(concurrent_vector_int_destroy);
+    ok(size == 4, "_Internal_clear returned %ld expected 4\n", (long)size);
     concurrent_vector_int_dtor(&v2);
 
     /* test for Internal_grow_by */

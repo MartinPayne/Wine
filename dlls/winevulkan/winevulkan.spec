@@ -36,16 +36,16 @@
 
 @ stdcall vk_icdGetInstanceProcAddr(ptr str) wine_vk_icdGetInstanceProcAddr
 @ stdcall vk_icdNegotiateLoaderICDInterfaceVersion(ptr) wine_vk_icdNegotiateLoaderICDInterfaceVersion
-@ stub vkAcquireNextImage2KHR
+@ stdcall wine_vkAcquireNextImage2KHR(ptr ptr ptr)
 @ stdcall wine_vkAcquireNextImageKHR(ptr int64 int64 int64 int64 ptr)
 @ stdcall wine_vkAllocateCommandBuffers(ptr ptr ptr)
 @ stdcall wine_vkAllocateDescriptorSets(ptr ptr ptr)
 @ stdcall wine_vkAllocateMemory(ptr ptr ptr ptr)
 @ stdcall wine_vkBeginCommandBuffer(ptr ptr)
 @ stdcall wine_vkBindBufferMemory(ptr int64 int64 int64)
-@ stub vkBindBufferMemory2
+@ stdcall wine_vkBindBufferMemory2(ptr long ptr)
 @ stdcall wine_vkBindImageMemory(ptr int64 int64 int64)
-@ stub vkBindImageMemory2
+@ stdcall wine_vkBindImageMemory2(ptr long ptr)
 @ stdcall wine_vkCmdBeginQuery(ptr int64 long long)
 @ stdcall wine_vkCmdBeginRenderPass(ptr ptr long)
 @ stdcall wine_vkCmdBindDescriptorSets(ptr long int64 long long ptr long ptr)
@@ -62,7 +62,7 @@
 @ stdcall wine_vkCmdCopyImageToBuffer(ptr int64 long int64 long ptr)
 @ stdcall wine_vkCmdCopyQueryPoolResults(ptr int64 long long int64 int64 int64 long)
 @ stdcall wine_vkCmdDispatch(ptr long long long)
-@ stub vkCmdDispatchBase
+@ stdcall wine_vkCmdDispatchBase(ptr long long long long long long)
 @ stdcall wine_vkCmdDispatchIndirect(ptr int64 int64)
 @ stdcall wine_vkCmdDraw(ptr long long long long)
 @ stdcall wine_vkCmdDrawIndexed(ptr long long long long long)
@@ -81,7 +81,7 @@
 @ stdcall wine_vkCmdSetBlendConstants(ptr ptr)
 @ stdcall wine_vkCmdSetDepthBias(ptr float float float)
 @ stdcall wine_vkCmdSetDepthBounds(ptr float float)
-@ stub vkCmdSetDeviceMask
+@ stdcall wine_vkCmdSetDeviceMask(ptr long)
 @ stdcall wine_vkCmdSetEvent(ptr int64 long)
 @ stdcall wine_vkCmdSetLineWidth(ptr float)
 @ stdcall wine_vkCmdSetScissor(ptr long long ptr)
@@ -98,7 +98,7 @@
 @ stdcall wine_vkCreateComputePipelines(ptr int64 long ptr ptr ptr)
 @ stdcall wine_vkCreateDescriptorPool(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateDescriptorSetLayout(ptr ptr ptr ptr)
-@ stub vkCreateDescriptorUpdateTemplate
+@ stdcall wine_vkCreateDescriptorUpdateTemplate(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateDevice(ptr ptr ptr ptr)
 @ stub vkCreateDisplayModeKHR
 @ stub vkCreateDisplayPlaneSurfaceKHR
@@ -114,7 +114,7 @@
 @ stdcall wine_vkCreateQueryPool(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateRenderPass(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateSampler(ptr ptr ptr ptr)
-@ stub vkCreateSamplerYcbcrConversion
+@ stdcall wine_vkCreateSamplerYcbcrConversion(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateSemaphore(ptr ptr ptr ptr)
 @ stdcall wine_vkCreateShaderModule(ptr ptr ptr ptr)
 @ stub vkCreateSharedSwapchainsKHR
@@ -125,7 +125,7 @@
 @ stdcall wine_vkDestroyCommandPool(ptr int64 ptr)
 @ stdcall wine_vkDestroyDescriptorPool(ptr int64 ptr)
 @ stdcall wine_vkDestroyDescriptorSetLayout(ptr int64 ptr)
-@ stub vkDestroyDescriptorUpdateTemplate
+@ stdcall wine_vkDestroyDescriptorUpdateTemplate(ptr int64 ptr)
 @ stdcall wine_vkDestroyDevice(ptr ptr)
 @ stdcall wine_vkDestroyEvent(ptr int64 ptr)
 @ stdcall wine_vkDestroyFence(ptr int64 ptr)
@@ -139,7 +139,7 @@
 @ stdcall wine_vkDestroyQueryPool(ptr int64 ptr)
 @ stdcall wine_vkDestroyRenderPass(ptr int64 ptr)
 @ stdcall wine_vkDestroySampler(ptr int64 ptr)
-@ stub vkDestroySamplerYcbcrConversion
+@ stdcall wine_vkDestroySamplerYcbcrConversion(ptr int64 ptr)
 @ stdcall wine_vkDestroySemaphore(ptr int64 ptr)
 @ stdcall wine_vkDestroyShaderModule(ptr int64 ptr)
 @ stdcall wine_vkDestroySurfaceKHR(ptr int64 ptr)
@@ -149,32 +149,33 @@
 @ stdcall wine_vkEnumerateDeviceExtensionProperties(ptr str ptr ptr)
 @ stdcall wine_vkEnumerateDeviceLayerProperties(ptr ptr ptr)
 @ stdcall wine_vkEnumerateInstanceExtensionProperties(str ptr ptr)
-@ stub vkEnumerateInstanceVersion
-@ stub vkEnumeratePhysicalDeviceGroups
+@ stdcall wine_vkEnumerateInstanceLayerProperties(ptr ptr)
+@ stdcall wine_vkEnumerateInstanceVersion(ptr)
+@ stdcall wine_vkEnumeratePhysicalDeviceGroups(ptr ptr ptr)
 @ stdcall wine_vkEnumeratePhysicalDevices(ptr ptr ptr)
 @ stdcall wine_vkFlushMappedMemoryRanges(ptr long ptr)
 @ stdcall wine_vkFreeCommandBuffers(ptr int64 long ptr)
 @ stdcall wine_vkFreeDescriptorSets(ptr int64 long ptr)
 @ stdcall wine_vkFreeMemory(ptr int64 ptr)
 @ stdcall wine_vkGetBufferMemoryRequirements(ptr int64 ptr)
-@ stub vkGetBufferMemoryRequirements2
-@ stub vkGetDescriptorSetLayoutSupport
-@ stub vkGetDeviceGroupPeerMemoryFeatures
-@ stub vkGetDeviceGroupPresentCapabilitiesKHR
-@ stub vkGetDeviceGroupSurfacePresentModesKHR
+@ stdcall wine_vkGetBufferMemoryRequirements2(ptr ptr ptr)
+@ stdcall wine_vkGetDescriptorSetLayoutSupport(ptr ptr ptr)
+@ stdcall wine_vkGetDeviceGroupPeerMemoryFeatures(ptr long long long long)
+@ stdcall wine_vkGetDeviceGroupPresentCapabilitiesKHR(ptr ptr)
+@ stdcall wine_vkGetDeviceGroupSurfacePresentModesKHR(ptr int64 long)
 @ stdcall wine_vkGetDeviceMemoryCommitment(ptr int64 ptr)
 @ stdcall wine_vkGetDeviceProcAddr(ptr str)
 @ stdcall wine_vkGetDeviceQueue(ptr long long ptr)
-@ stub vkGetDeviceQueue2
+@ stdcall wine_vkGetDeviceQueue2(ptr ptr ptr)
 @ stub vkGetDisplayModePropertiesKHR
 @ stub vkGetDisplayPlaneCapabilitiesKHR
 @ stub vkGetDisplayPlaneSupportedDisplaysKHR
 @ stdcall wine_vkGetEventStatus(ptr int64)
 @ stdcall wine_vkGetFenceStatus(ptr int64)
 @ stdcall wine_vkGetImageMemoryRequirements(ptr int64 ptr)
-@ stub vkGetImageMemoryRequirements2
+@ stdcall wine_vkGetImageMemoryRequirements2(ptr ptr ptr)
 @ stdcall wine_vkGetImageSparseMemoryRequirements(ptr int64 ptr ptr)
-@ stub vkGetImageSparseMemoryRequirements2
+@ stdcall wine_vkGetImageSparseMemoryRequirements2(ptr ptr ptr ptr)
 @ stdcall wine_vkGetImageSubresourceLayout(ptr int64 ptr ptr)
 @ stdcall wine_vkGetInstanceProcAddr(ptr str)
 @ stub vkGetPhysicalDeviceDisplayPlanePropertiesKHR
@@ -183,20 +184,20 @@
 @ stub vkGetPhysicalDeviceExternalFenceProperties
 @ stub vkGetPhysicalDeviceExternalSemaphoreProperties
 @ stdcall wine_vkGetPhysicalDeviceFeatures(ptr ptr)
-@ stub vkGetPhysicalDeviceFeatures2
+@ stdcall wine_vkGetPhysicalDeviceFeatures2(ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceFormatProperties(ptr long ptr)
-@ stub vkGetPhysicalDeviceFormatProperties2
+@ stdcall wine_vkGetPhysicalDeviceFormatProperties2(ptr long ptr)
 @ stdcall wine_vkGetPhysicalDeviceImageFormatProperties(ptr long long long long long ptr)
-@ stub vkGetPhysicalDeviceImageFormatProperties2
+@ stdcall wine_vkGetPhysicalDeviceImageFormatProperties2(ptr ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceMemoryProperties(ptr ptr)
-@ stub vkGetPhysicalDeviceMemoryProperties2
-@ stub vkGetPhysicalDevicePresentRectanglesKHR
+@ stdcall wine_vkGetPhysicalDeviceMemoryProperties2(ptr ptr)
+@ stdcall wine_vkGetPhysicalDevicePresentRectanglesKHR(ptr int64 ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceProperties(ptr ptr)
-@ stub vkGetPhysicalDeviceProperties2
+@ stdcall wine_vkGetPhysicalDeviceProperties2(ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceQueueFamilyProperties(ptr ptr ptr)
-@ stub vkGetPhysicalDeviceQueueFamilyProperties2
+@ stdcall wine_vkGetPhysicalDeviceQueueFamilyProperties2(ptr ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceSparseImageFormatProperties(ptr long long long long long ptr ptr)
-@ stub vkGetPhysicalDeviceSparseImageFormatProperties2
+@ stdcall wine_vkGetPhysicalDeviceSparseImageFormatProperties2(ptr ptr ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ptr int64 ptr)
 @ stdcall wine_vkGetPhysicalDeviceSurfaceFormatsKHR(ptr int64 ptr ptr)
 @ stdcall wine_vkGetPhysicalDeviceSurfacePresentModesKHR(ptr int64 ptr long)
@@ -219,8 +220,8 @@
 @ stdcall wine_vkResetEvent(ptr int64)
 @ stdcall wine_vkResetFences(ptr long ptr)
 @ stdcall wine_vkSetEvent(ptr int64)
-@ stub vkTrimCommandPool
+@ stdcall wine_vkTrimCommandPool(ptr int64 long)
 @ stdcall wine_vkUnmapMemory(ptr int64)
-@ stub vkUpdateDescriptorSetWithTemplate
+@ stdcall wine_vkUpdateDescriptorSetWithTemplate(ptr int64 int64 ptr)
 @ stdcall wine_vkUpdateDescriptorSets(ptr long ptr long ptr)
 @ stdcall wine_vkWaitForFences(ptr long ptr long int64)

@@ -42,6 +42,8 @@ static const UINT DIALOG_MIN_WIDTH = 240;
 static const UINT DIALOG_SPACING = 5;
 static const UINT DIALOG_BUTTON_WIDTH = 50;
 static const UINT DIALOG_BUTTON_HEIGHT = 14;
+static const UINT DIALOG_EXPANDO_ICON_WIDTH = 10;
+static const UINT DIALOG_EXPANDO_ICON_HEIGHT = 10;
 static const UINT DIALOG_TIMER_MS = 200;
 
 static const UINT ID_TIMER = 1;
@@ -62,6 +64,11 @@ struct taskdialog_info
     INT radio_button_count;
     HWND *command_links;
     INT command_link_count;
+    HWND expanded_info;
+    HWND expando_button;
+    HWND verification_box;
+    HWND footer_icon;
+    HWND footer_text;
     HWND *buttons;
     INT button_count;
     HWND default_button;
@@ -74,6 +81,10 @@ struct taskdialog_info
         LONG v_spacing;
     } m;
     INT selected_radio_id;
+    BOOL verification_checked;
+    BOOL expanded;
+    WCHAR *expanded_text;
+    WCHAR *collapsed_text;
 };
 
 struct button_layout_info
@@ -81,6 +92,9 @@ struct button_layout_info
     LONG width;
     LONG line;
 };
+
+static void taskdialog_on_button_click(struct taskdialog_info *dialog_info, HWND hwnd);
+static void taskdialog_layout(struct taskdialog_info *dialog_info);
 
 static void taskdialog_du_to_px(struct taskdialog_info *dialog_info, LONG *width, LONG *height)
 {
@@ -191,6 +205,13 @@ static void taskdialog_enable_button(const struct taskdialog_info *dialog_info, 
     if (hwnd) EnableWindow(hwnd, enable);
 }
 
+static void taskdialog_click_button(struct taskdialog_info *dialog_info, INT id)
+{
+    HWND hwnd = taskdialog_find_button(dialog_info->command_links, dialog_info->command_link_count, id);
+    if (!hwnd) hwnd = taskdialog_find_button(dialog_info->buttons, dialog_info->button_count, id);
+    if (hwnd) taskdialog_on_button_click(dialog_info, hwnd);
+}
+
 static void taskdialog_enable_radio_button(const struct taskdialog_info *dialog_info, INT id, BOOL enable)
 {
     HWND hwnd = taskdialog_find_button(dialog_info->radio_buttons, dialog_info->radio_button_count, id);
@@ -211,9 +232,31 @@ static HRESULT taskdialog_notify(struct taskdialog_info *dialog_info, UINT notif
                : S_OK;
 }
 
-static void taskdialog_on_button_click(struct taskdialog_info *dialog_info, INT command_id)
+static void taskdialog_toggle_expando_control(struct taskdialog_info *dialog_info)
 {
+    dialog_info->expanded = !dialog_info->expanded;
+    ShowWindow(dialog_info->expanded_info, dialog_info->expanded ? SW_SHOWDEFAULT : SW_HIDE);
+    taskdialog_layout(dialog_info);
+}
+
+static void taskdialog_on_button_click(struct taskdialog_info *dialog_info, HWND hwnd)
+{
+    INT command_id = GetWindowLongW(hwnd, GWLP_ID);
     HWND radio_button;
+
+    if (hwnd == dialog_info->expando_button)
+    {
+        taskdialog_toggle_expando_control(dialog_info);
+        taskdialog_notify(dialog_info, TDN_EXPANDO_BUTTON_CLICKED, dialog_info->expanded, 0);
+        return;
+    }
+
+    if (hwnd == dialog_info->verification_box)
+    {
+        dialog_info->verification_checked = !dialog_info->verification_checked;
+        taskdialog_notify(dialog_info, TDN_VERIFICATION_CLICKED, dialog_info->verification_checked, 0);
+        return;
+    }
 
     radio_button = taskdialog_find_button(dialog_info->radio_buttons, dialog_info->radio_button_count, command_id);
     if (radio_button)
@@ -316,8 +359,8 @@ static void taskdialog_get_radio_button_size(struct taskdialog_info *dialog_info
     hfont = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
     old_hfont = SelectObject(hdc, hfont);
 
-    radio_box_width = 12 * GetDeviceCaps(hdc, LOGPIXELSX) / 96 + 1;
-    radio_box_height = 12 * GetDeviceCaps(hdc, LOGPIXELSY) / 96 + 1;
+    radio_box_width = 12 * GetDpiForWindow(hwnd) / 96 + 1;
+    radio_box_height = 12 * GetDpiForWindow(hwnd) / 96 + 1;
     GetCharWidthW(hdc, '0', '0', &text_offset);
     text_offset /= 2;
 
@@ -345,6 +388,49 @@ static void taskdialog_get_radio_button_size(struct taskdialog_info *dialog_info
     ReleaseDC(hwnd, hdc);
 }
 
+static void taskdialog_get_expando_size(struct taskdialog_info *dialog_info, HWND hwnd, SIZE *size)
+{
+    DWORD style = DT_EXPANDTABS | DT_CALCRECT | DT_WORDBREAK;
+    HFONT hfont, old_hfont;
+    HDC hdc;
+    RECT rect = {0};
+    LONG icon_width, icon_height, text_offset;
+    LONG max_width, max_text_height;
+
+    hdc = GetDC(hwnd);
+    hfont = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+    old_hfont = SelectObject(hdc, hfont);
+
+    icon_width = DIALOG_EXPANDO_ICON_WIDTH;
+    icon_height = DIALOG_EXPANDO_ICON_HEIGHT;
+    taskdialog_du_to_px(dialog_info, &icon_width, &icon_height);
+
+    GetCharWidthW(hdc, '0', '0', &text_offset);
+    text_offset /= 2;
+
+    if (dialog_info->taskconfig->dwFlags & TDF_RTL_LAYOUT)
+        style |= DT_RIGHT | DT_RTLREADING;
+    else
+        style |= DT_LEFT;
+
+    max_width = DIALOG_MIN_WIDTH / 2;
+    taskdialog_du_to_px(dialog_info, &max_width, NULL);
+
+    rect.right = max_width - icon_width - text_offset;
+    max_text_height = DrawTextW(hdc, dialog_info->expanded_text, -1, &rect, style);
+    size->cy = max(max_text_height, icon_height);
+    size->cx = rect.right - rect.left;
+
+    rect.right = max_width - icon_width - text_offset;
+    max_text_height = DrawTextW(hdc, dialog_info->collapsed_text, -1, &rect, style);
+    size->cy = max(size->cy, max_text_height);
+    size->cx = max(size->cx, rect.right - rect.left);
+    size->cx = min(size->cx, max_width);
+
+    if (old_hfont) SelectObject(hdc, old_hfont);
+    ReleaseDC(hwnd, hdc);
+}
+
 static ULONG_PTR taskdialog_get_standard_icon(LPCWSTR icon)
 {
     if (icon == TD_WARNING_ICON)
@@ -362,17 +448,24 @@ static ULONG_PTR taskdialog_get_standard_icon(LPCWSTR icon)
 static void taskdialog_set_icon(struct taskdialog_info *dialog_info, INT element, HICON icon)
 {
     DWORD flags = dialog_info->taskconfig->dwFlags;
+    INT cx = 0, cy = 0;
     HICON hicon;
 
     if (!icon) return;
 
-    if ((flags & TDF_USE_HICON_MAIN) && element == TDIE_ICON_MAIN)
+    if (((flags & TDF_USE_HICON_MAIN) && element == TDIE_ICON_MAIN)
+        || ((flags & TDF_USE_HICON_FOOTER) && element == TDIE_ICON_FOOTER))
         hicon = icon;
     else
     {
-        hicon = LoadImageW(dialog_info->taskconfig->hInstance, (LPCWSTR)icon, IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
+        if (element == TDIE_ICON_FOOTER)
+        {
+            cx = GetSystemMetrics(SM_CXSMICON);
+            cy = GetSystemMetrics(SM_CYSMICON);
+        }
+        hicon = LoadImageW(dialog_info->taskconfig->hInstance, (LPCWSTR)icon, IMAGE_ICON, cx, cy, LR_SHARED | LR_DEFAULTSIZE);
         if (!hicon)
-            hicon = LoadImageW(NULL, (LPCWSTR)taskdialog_get_standard_icon((LPCWSTR)icon), IMAGE_ICON, 0, 0,
+            hicon = LoadImageW(NULL, (LPCWSTR)taskdialog_get_standard_icon((LPCWSTR)icon), IMAGE_ICON, cx, cy,
                                LR_SHARED | LR_DEFAULTSIZE);
     }
 
@@ -383,13 +476,14 @@ static void taskdialog_set_icon(struct taskdialog_info *dialog_info, INT element
         SendMessageW(dialog_info->hwnd, WM_SETICON, (WPARAM)ICON_BIG, (LPARAM)hicon);
         SendMessageW(dialog_info->main_icon, STM_SETICON, (WPARAM)hicon, 0);
     }
+    else if (element == TDIE_ICON_FOOTER)
+        SendMessageW(dialog_info->footer_icon, STM_SETICON, (WPARAM)hicon, 0);
 }
 
 static void taskdialog_check_default_radio_buttons(struct taskdialog_info *dialog_info)
 {
     const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
     HWND default_button;
-    INT id;
 
     if (!dialog_info->radio_button_count) return;
 
@@ -402,8 +496,7 @@ static void taskdialog_check_default_radio_buttons(struct taskdialog_info *dialo
     if (default_button)
     {
         SendMessageW(default_button, BM_SETCHECK, BST_CHECKED, 0);
-        id = GetWindowLongW(default_button, GWLP_ID);
-        taskdialog_on_button_click(dialog_info, id);
+        taskdialog_on_button_click(dialog_info, default_button);
     }
 }
 
@@ -429,7 +522,7 @@ static HWND taskdialog_create_label(struct taskdialog_info *dialog_info, const W
     if (syslink) style |= WS_TABSTOP;
     textW = taskdialog_gettext(dialog_info, TRUE, text);
     hwnd = CreateWindowW(class, textW, style, 0, 0, 0, 0, dialog_info->hwnd, NULL, 0, NULL);
-    if (textW) Free(textW);
+    Free(textW);
 
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, 0);
     return hwnd;
@@ -522,6 +615,67 @@ static void taskdialog_add_command_links(struct taskdialog_info *dialog_info)
     }
 }
 
+static void taskdialog_add_expanded_info(struct taskdialog_info *dialog_info)
+{
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+
+    if (!taskconfig->pszExpandedInformation) return;
+
+    dialog_info->expanded = taskconfig->dwFlags & TDF_EXPANDED_BY_DEFAULT;
+    dialog_info->expanded_info = taskdialog_create_label(dialog_info, taskconfig->pszExpandedInformation,
+                                                         dialog_info->font, taskdialog_hyperlink_enabled(dialog_info));
+    ShowWindow(dialog_info->expanded_info, dialog_info->expanded ? SW_SHOWDEFAULT : SW_HIDE);
+}
+
+static void taskdialog_add_expando_button(struct taskdialog_info *dialog_info)
+{
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+    const WCHAR *textW;
+
+    if (!taskconfig->pszExpandedInformation) return;
+
+    if (!taskconfig->pszCollapsedControlText && !taskconfig->pszExpandedControlText)
+    {
+        dialog_info->expanded_text = taskdialog_gettext(dialog_info, FALSE, MAKEINTRESOURCEW(IDS_TD_EXPANDED));
+        dialog_info->collapsed_text = taskdialog_gettext(dialog_info, FALSE, MAKEINTRESOURCEW(IDS_TD_COLLAPSED));
+    }
+    else
+    {
+        textW = taskconfig->pszExpandedControlText ? taskconfig->pszExpandedControlText
+                                                   : taskconfig->pszCollapsedControlText;
+        dialog_info->expanded_text = taskdialog_gettext(dialog_info, TRUE, textW);
+        textW = taskconfig->pszCollapsedControlText ? taskconfig->pszCollapsedControlText
+                                                    : taskconfig->pszExpandedControlText;
+        dialog_info->collapsed_text = taskdialog_gettext(dialog_info, TRUE, textW);
+    }
+
+    textW = dialog_info->expanded ? dialog_info->expanded_text : dialog_info->collapsed_text;
+
+    dialog_info->expando_button = CreateWindowW(WC_BUTTONW, textW, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0,
+                                                0, 0, 0, dialog_info->hwnd, 0, 0, 0);
+    SendMessageW(dialog_info->expando_button, WM_SETFONT, (WPARAM)dialog_info->font, 0);
+}
+
+static void taskdialog_add_verification_box(struct taskdialog_info *dialog_info)
+{
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+    static const DWORD style = BS_AUTOCHECKBOX | BS_MULTILINE | BS_LEFT | BS_TOP | WS_CHILD | WS_VISIBLE | WS_TABSTOP;
+    WCHAR *textW;
+
+    /* TDF_VERIFICATION_FLAG_CHECKED works even if pszVerificationText is not set */
+    if (taskconfig->dwFlags & TDF_VERIFICATION_FLAG_CHECKED) dialog_info->verification_checked = TRUE;
+
+    if (!taskconfig->pszVerificationText) return;
+
+    textW = taskdialog_gettext(dialog_info, TRUE, taskconfig->pszVerificationText);
+    dialog_info->verification_box = CreateWindowW(WC_BUTTONW, textW, style, 0, 0, 0, 0, dialog_info->hwnd, 0, 0, 0);
+    SendMessageW(dialog_info->verification_box, WM_SETFONT, (WPARAM)dialog_info->font, 0);
+    Free(textW);
+
+    if (taskconfig->dwFlags & TDF_VERIFICATION_FLAG_CHECKED)
+        SendMessageW(dialog_info->verification_box, BM_SETCHECK, BST_CHECKED, 0);
+}
+
 static void taskdialog_add_button(struct taskdialog_info *dialog_info, HWND *button, INT_PTR id, const WCHAR *text,
                                   BOOL custom_button)
 {
@@ -575,6 +729,21 @@ static void taskdialog_add_buttons(struct taskdialog_info *dialog_info)
     dialog_info->button_count = count;
 }
 
+static void taskdialog_add_footer_icon(struct taskdialog_info *dialog_info)
+{
+    if (!dialog_info->taskconfig->u2.hFooterIcon) return;
+
+    dialog_info->footer_icon =
+        CreateWindowW(WC_STATICW, NULL, WS_CHILD | WS_VISIBLE | SS_ICON, 0, 0, 0, 0, dialog_info->hwnd, NULL, 0, 0);
+    taskdialog_set_icon(dialog_info, TDIE_ICON_FOOTER, dialog_info->taskconfig->u2.hFooterIcon);
+}
+
+static void taskdialog_add_footer_text(struct taskdialog_info *dialog_info)
+{
+    dialog_info->footer_text = taskdialog_create_label(dialog_info, dialog_info->taskconfig->pszFooter,
+                                                       dialog_info->font, taskdialog_hyperlink_enabled(dialog_info));
+}
+
 static void taskdialog_label_layout(struct taskdialog_info *dialog_info, HWND hwnd, INT start_x, LONG dialog_width,
                                     LONG *dialog_height, BOOL syslink)
 {
@@ -600,9 +769,11 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     LONG screen_width, dialog_width, dialog_height = 0;
     LONG h_spacing, v_spacing;
     LONG main_icon_right, main_icon_bottom;
+    LONG expando_right, expando_bottom;
     struct button_layout_info *button_layout_infos;
     LONG button_min_width, button_height;
     LONG *line_widths, line_count, align;
+    LONG footer_icon_right, footer_icon_bottom;
     LONG x, y;
     SIZE size;
     INT i;
@@ -635,6 +806,11 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
 
     /* Content */
     taskdialog_label_layout(dialog_info, dialog_info->content, main_icon_right, dialog_width, &dialog_height, syslink);
+
+    /* Expanded information */
+    if (!(taskconfig->dwFlags & TDF_EXPAND_FOOTER_AREA) && dialog_info->expanded)
+        taskdialog_label_layout(dialog_info, dialog_info->expanded_info, main_icon_right, dialog_width, &dialog_height,
+                                syslink);
 
     /* Progress bar */
     if (dialog_info->progress_bar)
@@ -673,6 +849,32 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
 
     dialog_height = max(dialog_height, main_icon_bottom);
 
+    expando_right = 0;
+    expando_bottom = dialog_height;
+    /* Expando control */
+    if (dialog_info->expando_button)
+    {
+        x = h_spacing;
+        y = dialog_height + v_spacing;
+        taskdialog_get_expando_size(dialog_info, dialog_info->expando_button, &size);
+        SetWindowPos(dialog_info->expando_button, 0, x, y, size.cx, size.cy, SWP_NOZORDER);
+        expando_right = x + size.cx;
+        expando_bottom = y + size.cy;
+    }
+
+    /* Verification box */
+    if (dialog_info->verification_box)
+    {
+        x = h_spacing;
+        y = expando_bottom + v_spacing;
+        size.cx = DIALOG_MIN_WIDTH / 2;
+        taskdialog_du_to_px(dialog_info, &size.cx, NULL);
+        taskdialog_get_radio_button_size(dialog_info, dialog_info->verification_box, size.cx, &size);
+        SetWindowPos(dialog_info->verification_box, 0, x, y, size.cx, size.cy, SWP_NOZORDER);
+        expando_right = max(expando_right, x + size.cx);
+        expando_bottom = y + size.cy;
+    }
+
     /* Common and custom buttons */
     button_layout_infos = Alloc(dialog_info->button_count * sizeof(*button_layout_infos));
     line_widths = Alloc(dialog_info->button_count * sizeof(*line_widths));
@@ -682,12 +884,13 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     taskdialog_du_to_px(dialog_info, &button_min_width, &button_height);
     for (i = 0; i < dialog_info->button_count; i++)
     {
-        taskdialog_get_label_size(dialog_info, dialog_info->buttons[i], dialog_width - h_spacing * 2, &size, FALSE);
+        taskdialog_get_label_size(dialog_info, dialog_info->buttons[i], dialog_width - expando_right - h_spacing * 2,
+                                  &size, FALSE);
         button_layout_infos[i].width = max(size.cx, button_min_width);
     }
 
     /* Separate buttons into lines */
-    x = h_spacing;
+    x = expando_right + h_spacing;
     for (i = 0, line_count = 0; i < dialog_info->button_count; i++)
     {
         button_layout_infos[i].line = line_count;
@@ -696,7 +899,7 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
 
         if ((i + 1 < dialog_info->button_count) && (x + button_layout_infos[i + 1].width + h_spacing >= dialog_width))
         {
-            x = h_spacing;
+            x = expando_right + h_spacing;
             line_count++;
         }
     }
@@ -751,9 +954,33 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
 
     /* Add height for last row button and spacing */
     dialog_height += size.cy + v_spacing;
+    dialog_height = max(dialog_height, expando_bottom);
 
     Free(button_layout_infos);
     Free(line_widths);
+
+    /* Footer icon */
+    footer_icon_right = 0;
+    footer_icon_bottom = dialog_height;
+    if (dialog_info->footer_icon)
+    {
+        x = h_spacing;
+        y = dialog_height + v_spacing;
+        size.cx = GetSystemMetrics(SM_CXSMICON);
+        size.cy = GetSystemMetrics(SM_CYSMICON);
+        SetWindowPos(dialog_info->footer_icon, 0, x, y, size.cx, size.cy, SWP_NOZORDER);
+        footer_icon_right = x + size.cx;
+        footer_icon_bottom = y + size.cy;
+    }
+
+    /* Footer text */
+    taskdialog_label_layout(dialog_info, dialog_info->footer_text, footer_icon_right, dialog_width, &dialog_height,
+                            syslink);
+    dialog_height = max(dialog_height, footer_icon_bottom);
+
+    /* Expanded information */
+    if ((taskconfig->dwFlags & TDF_EXPAND_FOOTER_AREA) && dialog_info->expanded)
+        taskdialog_label_layout(dialog_info, dialog_info->expanded_info, 0, dialog_width, &dialog_height, syslink);
 
     /* Add height for spacing, title height and frame height */
     dialog_height += v_spacing;
@@ -769,6 +996,41 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     }
     else
         SetWindowPos(dialog_info->hwnd, 0, 0, 0, dialog_width, dialog_height, SWP_NOMOVE | SWP_NOZORDER);
+}
+
+static void taskdialog_draw_expando_control(struct taskdialog_info *dialog_info, LPDRAWITEMSTRUCT dis)
+{
+    HWND hwnd;
+    HDC hdc;
+    RECT rect = {0};
+    WCHAR *text;
+    LONG icon_width, icon_height, text_offset;
+    UINT style = DFCS_FLAT;
+    BOOL draw_focus;
+
+    hdc = dis->hDC;
+    hwnd = dis->hwndItem;
+
+    SendMessageW(hwnd, WM_ERASEBKGND, (WPARAM)hdc, 0);
+
+    icon_width = DIALOG_EXPANDO_ICON_WIDTH;
+    icon_height = DIALOG_EXPANDO_ICON_HEIGHT;
+    taskdialog_du_to_px(dialog_info, &icon_width, &icon_height);
+    rect.right = icon_width;
+    rect.bottom = icon_height;
+    style |= dialog_info->expanded ? DFCS_SCROLLUP : DFCS_SCROLLDOWN;
+    DrawFrameControl(hdc, &rect, DFC_SCROLL, style);
+
+    GetCharWidthW(hdc, '0', '0', &text_offset);
+    text_offset /= 2;
+
+    rect = dis->rcItem;
+    rect.left += icon_width + text_offset;
+    text = dialog_info->expanded ? dialog_info->expanded_text : dialog_info->collapsed_text;
+    DrawTextW(hdc, text, -1, &rect, DT_WORDBREAK | DT_END_ELLIPSIS | DT_EXPANDTABS);
+
+    draw_focus = (dis->itemState & ODS_FOCUS) && !(dis->itemState & ODS_NOFOCUSRECT);
+    if(draw_focus) DrawFocusRect(hdc, &rect);
 }
 
 static void taskdialog_init(struct taskdialog_info *dialog_info, HWND hwnd)
@@ -804,10 +1066,15 @@ static void taskdialog_init(struct taskdialog_info *dialog_info, HWND hwnd)
     taskdialog_add_main_icon(dialog_info);
     taskdialog_add_main_instruction(dialog_info);
     taskdialog_add_content(dialog_info);
+    taskdialog_add_expanded_info(dialog_info);
     taskdialog_add_progress_bar(dialog_info);
     taskdialog_add_radio_buttons(dialog_info);
     taskdialog_add_command_links(dialog_info);
+    taskdialog_add_expando_button(dialog_info);
+    taskdialog_add_verification_box(dialog_info);
     taskdialog_add_buttons(dialog_info);
+    taskdialog_add_footer_icon(dialog_info);
+    taskdialog_add_footer_text(dialog_info);
 
     /* Set default button */
     if (!dialog_info->default_button && dialog_info->command_links)
@@ -825,9 +1092,11 @@ static void taskdialog_destroy(struct taskdialog_info *dialog_info)
     if (dialog_info->taskconfig->dwFlags & TDF_CALLBACK_TIMER) KillTimer(dialog_info->hwnd, ID_TIMER);
     if (dialog_info->font) DeleteObject(dialog_info->font);
     if (dialog_info->main_instruction_font) DeleteObject(dialog_info->main_instruction_font);
-    if (dialog_info->buttons) Free(dialog_info->buttons);
-    if (dialog_info->radio_buttons) Free(dialog_info->radio_buttons);
-    if (dialog_info->command_links) Free(dialog_info->command_links);
+    Free(dialog_info->buttons);
+    Free(dialog_info->radio_buttons);
+    Free(dialog_info->command_links);
+    Free(dialog_info->expanded_text);
+    Free(dialog_info->collapsed_text);
 }
 
 static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -844,7 +1113,7 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     switch (msg)
     {
         case TDM_CLICK_BUTTON:
-            taskdialog_on_button_click(dialog_info, LOWORD(wParam));
+            taskdialog_click_button(dialog_info, wParam);
             break;
         case TDM_ENABLE_BUTTON:
             taskdialog_enable_button(dialog_info, wParam, lParam);
@@ -885,6 +1154,19 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case TDM_ENABLE_RADIO_BUTTON:
             taskdialog_enable_radio_button(dialog_info, wParam, lParam);
             break;
+        case TDM_CLICK_VERIFICATION:
+        {
+            BOOL checked = (BOOL)wParam;
+            BOOL focused = (BOOL)lParam;
+            dialog_info->verification_checked = checked;
+            if (dialog_info->verification_box)
+            {
+                SendMessageW(dialog_info->verification_box, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+                taskdialog_notify(dialog_info, TDN_VERIFICATION_CLICKED, checked, 0);
+                if (focused) SetFocus(dialog_info->verification_box);
+            }
+            break;
+        }
         case WM_INITDIALOG:
             dialog_info = (struct taskdialog_info *)lParam;
 
@@ -899,7 +1181,7 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case WM_COMMAND:
             if (HIWORD(wParam) == BN_CLICKED)
             {
-                taskdialog_on_button_click(dialog_info, LOWORD(wParam));
+                taskdialog_on_button_click(dialog_info, (HWND)lParam);
                 break;
             }
             return FALSE;
@@ -918,10 +1200,23 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         {
             PNMLINK pnmLink = (PNMLINK)lParam;
             HWND hwndFrom = pnmLink->hdr.hwndFrom;
-            if ((taskdialog_hyperlink_enabled(dialog_info)) && (hwndFrom == dialog_info->content)
+            if ((taskdialog_hyperlink_enabled(dialog_info))
+                && (hwndFrom == dialog_info->content || hwndFrom == dialog_info->expanded_info
+                    || hwndFrom == dialog_info->footer_text)
                 && (pnmLink->hdr.code == NM_CLICK || pnmLink->hdr.code == NM_RETURN))
             {
                 taskdialog_notify(dialog_info, TDN_HYPERLINK_CLICKED, 0, (LPARAM)pnmLink->item.szUrl);
+                break;
+            }
+            return FALSE;
+        }
+        case WM_DRAWITEM:
+        {
+            LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;
+            if (dis->hwndItem == dialog_info->expando_button)
+            {
+                taskdialog_draw_expando_control(dialog_info, dis);
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
                 break;
             }
             return FALSE;
@@ -961,7 +1256,7 @@ HRESULT WINAPI TaskDialogIndirect(const TASKDIALOGCONFIG *taskconfig, int *butto
 
     if (button) *button = ret;
     if (radio_button) *radio_button = dialog_info.selected_radio_id;
-    if (verification_flag_checked) *verification_flag_checked = TRUE;
+    if (verification_flag_checked) *verification_flag_checked = dialog_info.verification_checked;
 
     return S_OK;
 }

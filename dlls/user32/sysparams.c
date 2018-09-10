@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,7 @@
 #include "winerror.h"
 
 #include "controls.h"
+#include "win.h"
 #include "user_private.h"
 #include "wine/gdi_driver.h"
 #include "wine/unicode.h"
@@ -458,20 +460,26 @@ static void SYSPARAMS_NonClientMetrics32ATo32W( const NONCLIENTMETRICSA* lpnm32A
 struct monitor_info
 {
     int count;
+    RECT primary_rect;
     RECT virtual_rect;
 };
 
 static BOOL CALLBACK monitor_info_proc( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lp )
 {
+    MONITORINFO mi;
     struct monitor_info *info = (struct monitor_info *)lp;
     info->count++;
     UnionRect( &info->virtual_rect, &info->virtual_rect, rect );
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW( monitor, &mi ) && (mi.dwFlags & MONITORINFOF_PRIMARY))
+        info->primary_rect = mi.rcMonitor;
     return TRUE;
 }
 
 static void get_monitors_info( struct monitor_info *info )
 {
     info->count = 0;
+    SetRectEmpty( &info->primary_rect );
     SetRectEmpty( &info->virtual_rect );
     EnumDisplayMonitors( 0, NULL, monitor_info_proc, (LPARAM)info );
 }
@@ -2527,6 +2535,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
  */
 INT WINAPI GetSystemMetrics( INT index )
 {
+    struct monitor_info info;
     NONCLIENTMETRICSW ncm;
     MINIMIZEDMETRICS mm;
     ICONMETRICSW im;
@@ -2536,16 +2545,6 @@ INT WINAPI GetSystemMetrics( INT index )
     /* some metrics are dynamic */
     switch (index)
     {
-    case SM_CXSCREEN:
-        hdc = get_display_dc();
-        ret = GetDeviceCaps( hdc, HORZRES );
-        release_display_dc( hdc );
-        return ret;
-    case SM_CYSCREEN:
-        hdc = get_display_dc();
-        ret = GetDeviceCaps( hdc, VERTRES );
-        release_display_dc( hdc );
-        return ret;
     case SM_CXVSCROLL:
     case SM_CYHSCROLL:
         ncm.cbSize = sizeof(ncm);
@@ -2749,32 +2748,27 @@ INT WINAPI GetSystemMetrics( INT index )
         return 0;  /* FIXME */
     case SM_MOUSEWHEELPRESENT:
         return 1;
+    case SM_CXSCREEN:
+        get_monitors_info( &info );
+        return info.primary_rect.right - info.primary_rect.left;
+    case SM_CYSCREEN:
+        get_monitors_info( &info );
+        return info.primary_rect.bottom - info.primary_rect.top;
     case SM_XVIRTUALSCREEN:
-    {
-        RECT rect = get_virtual_screen_rect();
-        return rect.left;
-    }
+        get_monitors_info( &info );
+        return info.virtual_rect.left;
     case SM_YVIRTUALSCREEN:
-    {
-        RECT rect = get_virtual_screen_rect();
-        return rect.top;
-    }
+        get_monitors_info( &info );
+        return info.virtual_rect.top;
     case SM_CXVIRTUALSCREEN:
-    {
-        RECT rect = get_virtual_screen_rect();
-        return rect.right - rect.left;
-    }
+        get_monitors_info( &info );
+        return info.virtual_rect.right - info.virtual_rect.left;
     case SM_CYVIRTUALSCREEN:
-    {
-        RECT rect = get_virtual_screen_rect();
-        return rect.bottom - rect.top;
-    }
+        get_monitors_info( &info );
+        return info.virtual_rect.bottom - info.virtual_rect.top;
     case SM_CMONITORS:
-    {
-        struct monitor_info info;
         get_monitors_info( &info );
         return info.count;
-    }
     case SM_SAMEDISPLAYFORMAT:
         return 1;
     case SM_IMMENABLED:
@@ -3199,7 +3193,16 @@ BOOL WINAPI EnumDisplaySettingsExW(LPCWSTR lpszDeviceName, DWORD iModeNum,
 /**********************************************************************
  *              get_monitor_dpi
  */
-UINT get_monitor_dpi( HWND hwnd )
+UINT get_monitor_dpi( HMONITOR monitor )
+{
+    /* FIXME: use the monitor DPI instead */
+    return system_dpi;
+}
+
+/**********************************************************************
+ *              get_win_monitor_dpi
+ */
+UINT get_win_monitor_dpi( HWND hwnd )
 {
     /* FIXME: use the monitor DPI instead */
     return system_dpi;
@@ -3331,12 +3334,22 @@ UINT WINAPI GetDpiForSystem(void)
  */
 BOOL WINAPI GetDpiForMonitorInternal( HMONITOR monitor, UINT type, UINT *x, UINT *y )
 {
-    UINT dpi = system_dpi;
-
-    WARN( "(%p, %u, %p, %p): semi-stub\n", monitor, type, x, y );
-
-    if (x) *x = dpi;
-    if (y) *y = dpi;
+    if (type > 2)
+    {
+        SetLastError( ERROR_BAD_ARGUMENTS );
+        return FALSE;
+    }
+    if (!x || !y)
+    {
+        SetLastError( ERROR_INVALID_ADDRESS );
+        return FALSE;
+    }
+    switch (GetAwarenessFromDpiAwarenessContext( GetThreadDpiAwarenessContext() ))
+    {
+    case DPI_AWARENESS_UNAWARE:      *x = *y = USER_DEFAULT_SCREEN_DPI; break;
+    case DPI_AWARENESS_SYSTEM_AWARE: *x = *y = system_dpi; break;
+    default:                         *x = *y = get_monitor_dpi( monitor ); break;
+    }
     return TRUE;
 }
 
@@ -3411,6 +3424,241 @@ BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI( HWND hwnd, POINT *pt )
     return TRUE;
 }
 
+struct monitor_enum_info
+{
+    RECT     rect;
+    UINT     max_area;
+    UINT     min_distance;
+    HMONITOR primary;
+    HMONITOR nearest;
+    HMONITOR ret;
+};
+
+/* helper callback for MonitorFromRect */
+static BOOL CALLBACK monitor_enum( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lp )
+{
+    struct monitor_enum_info *info = (struct monitor_enum_info *)lp;
+    RECT intersect;
+
+    if (IntersectRect( &intersect, rect, &info->rect ))
+    {
+        /* check for larger intersecting area */
+        UINT area = (intersect.right - intersect.left) * (intersect.bottom - intersect.top);
+        if (area > info->max_area)
+        {
+            info->max_area = area;
+            info->ret = monitor;
+        }
+    }
+    else if (!info->max_area)  /* if not intersecting, check for min distance */
+    {
+        UINT distance;
+        UINT x, y;
+
+        if (info->rect.right <= rect->left) x = rect->left - info->rect.right;
+        else if (rect->right <= info->rect.left) x = info->rect.left - rect->right;
+        else x = 0;
+        if (info->rect.bottom <= rect->top) y = rect->top - info->rect.bottom;
+        else if (rect->bottom <= info->rect.top) y = info->rect.top - rect->bottom;
+        else y = 0;
+        distance = x * x + y * y;
+        if (distance < info->min_distance)
+        {
+            info->min_distance = distance;
+            info->nearest = monitor;
+        }
+    }
+    if (!info->primary)
+    {
+        MONITORINFO mon_info;
+        mon_info.cbSize = sizeof(mon_info);
+        GetMonitorInfoW( monitor, &mon_info );
+        if (mon_info.dwFlags & MONITORINFOF_PRIMARY) info->primary = monitor;
+    }
+    return TRUE;
+}
+
+/***********************************************************************
+ *		MonitorFromRect (USER32.@)
+ */
+HMONITOR WINAPI MonitorFromRect( const RECT *rect, DWORD flags )
+{
+    struct monitor_enum_info info;
+
+    info.rect         = *rect;
+    info.max_area     = 0;
+    info.min_distance = ~0u;
+    info.primary      = 0;
+    info.nearest      = 0;
+    info.ret          = 0;
+
+    if (IsRectEmpty(&info.rect))
+    {
+        info.rect.right = info.rect.left + 1;
+        info.rect.bottom = info.rect.top + 1;
+    }
+
+    if (!EnumDisplayMonitors( 0, NULL, monitor_enum, (LPARAM)&info )) return 0;
+    if (!info.ret)
+    {
+        if (flags & MONITOR_DEFAULTTOPRIMARY) info.ret = info.primary;
+        else if (flags & MONITOR_DEFAULTTONEAREST) info.ret = info.nearest;
+    }
+
+    TRACE( "%s flags %x returning %p\n", wine_dbgstr_rect(rect), flags, info.ret );
+    return info.ret;
+}
+
+/***********************************************************************
+ *		MonitorFromPoint (USER32.@)
+ */
+HMONITOR WINAPI MonitorFromPoint( POINT pt, DWORD flags )
+{
+    RECT rect;
+
+    SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
+    return MonitorFromRect( &rect, flags );
+}
+
+/***********************************************************************
+ *		MonitorFromWindow (USER32.@)
+ */
+HMONITOR WINAPI MonitorFromWindow(HWND hWnd, DWORD dwFlags)
+{
+    RECT rect;
+    WINDOWPLACEMENT wp;
+
+    TRACE("(%p, 0x%08x)\n", hWnd, dwFlags);
+
+    wp.length = sizeof(wp);
+    if (IsIconic(hWnd) && GetWindowPlacement(hWnd, &wp))
+        return MonitorFromRect( &wp.rcNormalPosition, dwFlags );
+
+    if (GetWindowRect( hWnd, &rect ))
+        return MonitorFromRect( &rect, dwFlags );
+
+    if (!(dwFlags & (MONITOR_DEFAULTTOPRIMARY|MONITOR_DEFAULTTONEAREST))) return 0;
+    /* retrieve the primary */
+    SetRect( &rect, 0, 0, 1, 1 );
+    return MonitorFromRect( &rect, dwFlags );
+}
+
+/***********************************************************************
+ *		GetMonitorInfoA (USER32.@)
+ */
+BOOL WINAPI GetMonitorInfoA( HMONITOR monitor, LPMONITORINFO info )
+{
+    MONITORINFOEXW miW;
+    BOOL ret;
+
+    if (info->cbSize == sizeof(MONITORINFO)) return GetMonitorInfoW( monitor, info );
+    if (info->cbSize != sizeof(MONITORINFOEXA)) return FALSE;
+
+    miW.cbSize = sizeof(miW);
+    ret = GetMonitorInfoW( monitor, (MONITORINFO *)&miW );
+    if (ret)
+    {
+        MONITORINFOEXA *miA = (MONITORINFOEXA *)info;
+        miA->rcMonitor = miW.rcMonitor;
+        miA->rcWork = miW.rcWork;
+        miA->dwFlags = miW.dwFlags;
+        WideCharToMultiByte(CP_ACP, 0, miW.szDevice, -1, miA->szDevice, sizeof(miA->szDevice), NULL, NULL);
+    }
+    return ret;
+}
+
+/***********************************************************************
+ *		GetMonitorInfoW (USER32.@)
+ */
+BOOL WINAPI GetMonitorInfoW( HMONITOR monitor, LPMONITORINFO info )
+{
+    BOOL ret;
+
+    if (info->cbSize != sizeof(MONITORINFOEXW) && info->cbSize != sizeof(MONITORINFO)) return FALSE;
+
+    ret = USER_Driver->pGetMonitorInfo( monitor, info );
+    if (ret)
+        TRACE( "flags %04x, monitor %s, work %s\n", info->dwFlags,
+               wine_dbgstr_rect(&info->rcMonitor), wine_dbgstr_rect(&info->rcWork));
+    return ret;
+}
+
+struct enum_mon_data
+{
+    MONITORENUMPROC proc;
+    LPARAM lparam;
+    HDC hdc;
+    POINT origin;
+    RECT limit;
+};
+
+#ifdef __i386__
+/* Some apps pass a non-stdcall callback to EnumDisplayMonitors,
+ * so we need a small assembly wrapper to call it.
+ * MJ's Help Diagnostic expects that %ecx contains the address to the rect.
+ */
+extern BOOL enum_mon_callback_wrapper( HMONITOR monitor, LPRECT rect, struct enum_mon_data *data );
+__ASM_GLOBAL_FUNC( enum_mon_callback_wrapper,
+    "pushl %ebp\n\t"
+    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+    "movl %esp,%ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+    "subl $8,%esp\n\t"
+    "movl 16(%ebp),%eax\n\t"    /* data */
+    "movl 12(%ebp),%ecx\n\t"    /* rect */
+    "pushl 4(%eax)\n\t"         /* data->lparam */
+    "pushl %ecx\n\t"            /* rect */
+    "pushl 8(%eax)\n\t"         /* data->hdc */
+    "pushl 8(%ebp)\n\t"         /* monitor */
+    "call *(%eax)\n\t"          /* data->proc */
+    "leave\n\t"
+    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+    __ASM_CFI(".cfi_same_value %ebp\n\t")
+    "ret" )
+#endif /* __i386__ */
+
+static BOOL CALLBACK enum_mon_callback( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lp )
+{
+    struct enum_mon_data *data = (struct enum_mon_data *)lp;
+    RECT monrect = *rect;
+
+    OffsetRect( &monrect, -data->origin.x, -data->origin.y );
+    if (!IntersectRect( &monrect, &monrect, &data->limit )) return TRUE;
+#ifdef __i386__
+    return enum_mon_callback_wrapper( monitor, &monrect, data );
+#else
+    return data->proc( monitor, data->hdc, &monrect, data->lparam );
+#endif
+}
+
+/***********************************************************************
+ *		EnumDisplayMonitors (USER32.@)
+ */
+BOOL WINAPI EnumDisplayMonitors( HDC hdc, LPRECT rect, MONITORENUMPROC proc, LPARAM lp )
+{
+    struct enum_mon_data data;
+
+    data.proc = proc;
+    data.lparam = lp;
+    data.hdc = hdc;
+
+    if (hdc)
+    {
+        if (!GetDCOrgEx( hdc, &data.origin )) return FALSE;
+        if (GetClipBox( hdc, &data.limit ) == ERROR) return FALSE;
+    }
+    else
+    {
+        data.origin.x = data.origin.y = 0;
+        data.limit.left = data.limit.top = INT_MIN;
+        data.limit.right = data.limit.bottom = INT_MAX;
+    }
+    if (rect && !IntersectRect( &data.limit, &data.limit, rect )) return TRUE;
+    return USER_Driver->pEnumDisplayMonitors( 0, NULL, enum_mon_callback, (LPARAM)&data );
+}
+
+
 /**********************************************************************
  *              GetAutoRotationState [USER32.@]
  */
@@ -3435,5 +3683,39 @@ BOOL WINAPI GetDisplayAutoRotationPreferences( ORIENTATION_PREFERENCE *orientati
 {
     FIXME("(%p): stub\n", orientation);
     *orientation = ORIENTATION_PREFERENCE_NONE;
+    return TRUE;
+}
+
+/* physical<->logical mapping functions from win8 that are nops in later versions */
+
+/***********************************************************************
+ *              GetPhysicalCursorPos   (USER32.@)
+ */
+BOOL WINAPI GetPhysicalCursorPos( POINT *point )
+{
+    return GetCursorPos( point );
+}
+
+/***********************************************************************
+ *              SetPhysicalCursorPos   (USER32.@)
+ */
+BOOL WINAPI SetPhysicalCursorPos( INT x, INT y )
+{
+    return SetCursorPos( x, y );
+}
+
+/***********************************************************************
+ *		LogicalToPhysicalPoint (USER32.@)
+ */
+BOOL WINAPI LogicalToPhysicalPoint( HWND hwnd, POINT *point )
+{
+    return TRUE;
+}
+
+/***********************************************************************
+ *		PhysicalToLogicalPoint (USER32.@)
+ */
+BOOL WINAPI PhysicalToLogicalPoint( HWND hwnd, POINT *point )
+{
     return TRUE;
 }

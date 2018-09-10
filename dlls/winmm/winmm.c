@@ -915,10 +915,11 @@ typedef struct WINE_MIDIStream {
     CRITICAL_SECTION		lock;
     DWORD			dwTempo;
     DWORD			dwTimeDiv;
-    DWORD			dwPositionMS;
+    ULONGLONG			position_usec;
     DWORD			dwPulses;
     DWORD			dwStartTicks;
     DWORD			dwElapsedMS;
+    DWORD			dwLastPositionMS;
     WORD			wFlags;
     WORD			status;
     HANDLE			hEvent;
@@ -965,13 +966,13 @@ static	DWORD	MMSYSTEM_MidiStream_Convert(WINE_MIDIStream* lpMidiStrm, DWORD puls
     } else if (lpMidiStrm->dwTimeDiv > 0x8000) { /* SMPTE, unchecked FIXME? */
 	int	nf = 256 - HIBYTE(lpMidiStrm->dwTimeDiv);	/* number of frames     */
 	int	nsf = LOBYTE(lpMidiStrm->dwTimeDiv);		/* number of sub-frames */
-	ret = (pulse * 1000) / (nf * nsf);
+	ret = (pulse * 1000000) / (nf * nsf);
     } else {
-	ret = (DWORD)((double)pulse * ((double)lpMidiStrm->dwTempo / 1000) /
+	ret = (DWORD)((double)pulse * (double)lpMidiStrm->dwTempo /
 		      (double)lpMidiStrm->dwTimeDiv);
     }
 
-    return ret;
+    return ret; /* in microseconds */
 }
 
 static DWORD midistream_get_playing_position(WINE_MIDIStream* lpMidiStrm)
@@ -1007,6 +1008,8 @@ static	BOOL	MMSYSTEM_MidiStream_MessageHandler(WINE_MIDIStream* lpMidiStrm, LPWI
             lpMidiStrm->status = MSM_STATUS_STOPPED;
             lpMidiStrm->dwPulses = 0;
             lpMidiStrm->dwElapsedMS = 0;
+            lpMidiStrm->position_usec = 0;
+            lpMidiStrm->dwLastPositionMS = 0;
             LeaveCriticalSection(&lpMidiStrm->lock);
             /* this is not quite what MS doc says... */
             midiOutReset(lpMidiStrm->hDevice);
@@ -1179,11 +1182,10 @@ start_header:
 	/* do we have to wait ? */
 	if (me->dwDeltaTime) {
 	    EnterCriticalSection(&lpMidiStrm->lock);
-	    lpMidiStrm->dwPositionMS += MMSYSTEM_MidiStream_Convert(lpMidiStrm, me->dwDeltaTime);
-	    lpMidiStrm->dwPulses += me->dwDeltaTime;
+	    lpMidiStrm->position_usec += MMSYSTEM_MidiStream_Convert(lpMidiStrm, me->dwDeltaTime);
 	    LeaveCriticalSection(&lpMidiStrm->lock);
 
-	    dwToGo = lpMidiStrm->dwStartTicks + lpMidiStrm->dwPositionMS;
+	    dwToGo = lpMidiStrm->dwStartTicks + lpMidiStrm->position_usec / 1000;
 
 	    TRACE("%u/%u/%u\n", dwToGo, GetTickCount(), me->dwDeltaTime);
 	    while (dwToGo - (dwCurrTC = GetTickCount()) <= MAXLONG) {
@@ -1198,12 +1200,16 @@ start_header:
 			}
 		    }
 		    /* reset dwToGo because dwStartTicks might be updated */
-		    dwToGo = lpMidiStrm->dwStartTicks + lpMidiStrm->dwPositionMS;
+		    dwToGo = lpMidiStrm->dwStartTicks + lpMidiStrm->position_usec / 1000;
 		} else {
 		    /* timeout, so me->dwDeltaTime is elapsed, can break the while loop */
 		    break;
 		}
 	    }
+	    EnterCriticalSection(&lpMidiStrm->lock);
+	    lpMidiStrm->dwPulses += me->dwDeltaTime;
+	    lpMidiStrm->dwLastPositionMS = midistream_get_playing_position(lpMidiStrm);
+	    LeaveCriticalSection(&lpMidiStrm->lock);
 	}
 	switch (MEVT_EVENTTYPE(me->dwEvent & ~MEVT_F_CALLBACK)) {
 	case MEVT_COMMENT:
@@ -1328,9 +1334,10 @@ MMRESULT WINAPI midiStreamOpen(HMIDISTRM* lphMidiStrm, LPUINT lpuDeviceID,
     if (!lpMidiStrm)
 	return MMSYSERR_NOMEM;
 
-    lpMidiStrm->dwTempo = 500000;  /* micro seconds per quarter note, i.e. 120 BPM */
+    lpMidiStrm->dwTempo = 500000;  /* microseconds per quarter note, i.e. 120 BPM */
     lpMidiStrm->dwTimeDiv = 24;    /* ticks per quarter note */
-    lpMidiStrm->dwPositionMS = 0;
+    lpMidiStrm->position_usec = 0;
+    lpMidiStrm->dwLastPositionMS = 0;
     lpMidiStrm->status = MSM_STATUS_PAUSED;
     lpMidiStrm->dwElapsedMS = 0;
 
@@ -1466,6 +1473,24 @@ MMRESULT WINAPI midiStreamPause(HMIDISTRM hMidiStrm)
     return midistream_post_message_and_wait(lpMidiStrm, WINE_MSM_PAUSE, 0);
 }
 
+static DWORD midistream_get_current_pulse(WINE_MIDIStream* lpMidiStrm)
+{
+    DWORD pulses = 0;
+    DWORD now = midistream_get_playing_position(lpMidiStrm);
+    DWORD delta = now - lpMidiStrm->dwLastPositionMS;
+    if (lpMidiStrm->dwTimeDiv > 0x8000) {
+        /* SMPTE, unchecked FIXME */
+        BYTE nf = 256 - HIBYTE(lpMidiStrm->dwTimeDiv);
+        BYTE nsf = LOBYTE(lpMidiStrm->dwTimeDiv);
+        pulses = (delta * nf * nsf) / 1000;
+    }
+    else if (lpMidiStrm->dwTimeDiv) {
+        pulses = (DWORD)((double)(delta * lpMidiStrm->dwTimeDiv) *
+                         1000.0 / (double)lpMidiStrm->dwTempo);
+    }
+    return lpMidiStrm->dwPulses + pulses;
+}
+
 /**************************************************************************
  * 				midiStreamPosition		[WINMM.@]
  */
@@ -1483,9 +1508,17 @@ MMRESULT WINAPI midiStreamPosition(HMIDISTRM hMidiStrm, LPMMTIME lpMMT, UINT cbm
     } else {
 	EnterCriticalSection(&lpMidiStrm->lock);
 	switch (lpMMT->wType) {
-	default:
-	    FIXME("Unsupported time type %x\n", lpMMT->wType);
-        /* fall through */
+	case TIME_MIDI:
+	    if (lpMidiStrm->dwTimeDiv < 0x8000) {
+		DWORD tdiv, pulses;
+		tdiv = (lpMidiStrm->dwTimeDiv > 24) ? lpMidiStrm->dwTimeDiv : 24;
+		pulses = midistream_get_current_pulse(lpMidiStrm);
+		lpMMT->u.midi.songptrpos = (pulses + tdiv/8) / (tdiv/4);
+		if (!lpMMT->u.midi.songptrpos && pulses) lpMMT->u.midi.songptrpos++;
+		TRACE("=> song position %d (pulses %u, tdiv %u)\n", lpMMT->u.midi.songptrpos, pulses, tdiv);
+		break;
+	    }
+	/* fall through */
 	case TIME_BYTES:
 	case TIME_SAMPLES:
 	    lpMMT->wType = TIME_MS;
@@ -1495,8 +1528,15 @@ MMRESULT WINAPI midiStreamPosition(HMIDISTRM hMidiStrm, LPMMTIME lpMMT, UINT cbm
 	    TRACE("=> %d ms\n", lpMMT->u.ms);
 	    break;
 	case TIME_TICKS:
-	    lpMMT->u.ticks = lpMidiStrm->dwPulses;
+	    lpMMT->u.ticks = midistream_get_current_pulse(lpMidiStrm);
 	    TRACE("=> %d ticks\n", lpMMT->u.ticks);
+	    break;
+	default:
+	    FIXME("Unsupported time type %x\n", lpMMT->wType);
+	    /* use TIME_MS instead */
+	    lpMMT->wType = TIME_MS;
+	    lpMMT->u.ms = midistream_get_playing_position(lpMidiStrm);
+	    TRACE("=> %d ms\n", lpMMT->u.ms);
 	    break;
 	}
 	LeaveCriticalSection(&lpMidiStrm->lock);
@@ -1539,9 +1579,13 @@ MMRESULT WINAPI midiStreamProperty(HMIDISTRM hMidiStrm, LPBYTE lpPropData, DWORD
 	    ret = MMSYSERR_INVALPARAM;
 	} else if (dwProperty & MIDIPROP_SET) {
 	    EnterCriticalSection(&lpMidiStrm->lock);
-	    lpMidiStrm->dwTimeDiv = mptd->dwTimeDiv;
+	    if (lpMidiStrm->status != MSM_STATUS_PLAYING) {
+		lpMidiStrm->dwTimeDiv = mptd->dwTimeDiv;
+		TRACE("Setting time div to %d\n", mptd->dwTimeDiv);
+	    }
+	    else
+		ret = MMSYSERR_INVALPARAM;
 	    LeaveCriticalSection(&lpMidiStrm->lock);
-	    TRACE("Setting time div to %d\n", mptd->dwTimeDiv);
 	} else if (dwProperty & MIDIPROP_GET) {
 	    mptd->dwTimeDiv = lpMidiStrm->dwTimeDiv;
 	    TRACE("Getting time div <= %d\n", mptd->dwTimeDiv);

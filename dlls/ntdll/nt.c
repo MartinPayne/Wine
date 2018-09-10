@@ -66,6 +66,66 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
+#include "pshpack1.h"
+
+struct smbios_prologue {
+    BYTE calling_method;
+    BYTE major_version;
+    BYTE minor_version;
+    BYTE revision;
+    DWORD length;
+};
+
+struct smbios_bios {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE version;
+    WORD start;
+    BYTE date;
+    BYTE size;
+    UINT64 characteristics;
+};
+
+struct smbios_system {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE product;
+    BYTE version;
+    BYTE serial;
+};
+
+struct smbios_board {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE product;
+    BYTE version;
+    BYTE serial;
+};
+
+struct smbios_chassis {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE shape;
+    BYTE version;
+    BYTE serial;
+    BYTE asset_tag;
+};
+
+#include "poppack.h"
+
+/* Firmware table providers */
+#define ACPI 0x41435049
+#define FIRM 0x4649524D
+#define RSMB 0x52534D42
+
 /*
  *	Token
  */
@@ -1898,6 +1958,200 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
 }
 #endif
 
+#ifdef linux
+
+static inline void copy_smbios_string(char **buffer, char *s, size_t len)
+{
+    if (!len) return;
+    memcpy(*buffer, s, len + 1);
+    *buffer += len + 1;
+}
+
+static size_t get_smbios_string(const char *path, char *str, size_t size)
+{
+    FILE *file;
+    size_t len;
+
+    if (!(file = fopen(path, "r")))
+        return 0;
+
+    len = fread(str, 1, size - 1, file);
+    fclose(file);
+
+    if (len >= 1 && str[len - 1] == '\n')
+        len--;
+
+    str[len] = 0;
+
+    return len;
+}
+
+static NTSTATUS get_firmware_info(SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len, ULONG *required_len)
+{
+    switch (sfti->ProviderSignature)
+    {
+    case RSMB:
+        {
+            char bios_vendor[128], bios_version[128], bios_date[128];
+            size_t bios_vendor_len, bios_version_len, bios_date_len;
+            char system_vendor[128], system_product[128], system_version[128], system_serial[128];
+            size_t system_vendor_len, system_product_len, system_version_len, system_serial_len;
+            char board_vendor[128], board_product[128], board_version[128], board_serial[128];
+            size_t board_vendor_len, board_product_len, board_version_len, board_serial_len;
+            char chassis_vendor[128], chassis_version[128], chassis_serial[128], chassis_asset_tag[128];
+            size_t chassis_vendor_len, chassis_version_len, chassis_serial_len, chassis_asset_tag_len;
+            char *buffer = (char*)sfti->TableBuffer;
+            BYTE string_count;
+            struct smbios_prologue *prologue;
+            struct smbios_bios *bios;
+            struct smbios_system *system;
+            struct smbios_board *board;
+            struct smbios_chassis *chassis;
+
+#define S(s) s, sizeof(s)
+            bios_vendor_len = get_smbios_string("/sys/class/dmi/id/bios_vendor", S(bios_vendor));
+            bios_version_len = get_smbios_string("/sys/class/dmi/id/bios_version", S(bios_version));
+            bios_date_len = get_smbios_string("/sys/class/dmi/id/bios_date", S(bios_date));
+            system_vendor_len = get_smbios_string("/sys/class/dmi/id/sys_vendor", S(system_vendor));
+            system_product_len = get_smbios_string("/sys/class/dmi/id/product", S(system_product));
+            system_version_len = get_smbios_string("/sys/class/dmi/id/product_version", S(system_version));
+            system_serial_len = get_smbios_string("/sys/class/dmi/id/product_serial", S(system_serial));
+            board_vendor_len = get_smbios_string("/sys/class/dmi/id/board_vendor", S(board_vendor));
+            board_product_len = get_smbios_string("/sys/class/dmi/id/board_name", S(board_product));
+            board_version_len = get_smbios_string("/sys/class/dmi/id/board_version", S(board_version));
+            board_serial_len = get_smbios_string("/sys/class/dmi/id/board_serial", S(board_serial));
+            chassis_vendor_len = get_smbios_string("/sys/class/dmi/id/chassis_vendor", S(chassis_vendor));
+            chassis_version_len = get_smbios_string("/sys/class/dmi/id/chassis_version", S(chassis_version));
+            chassis_serial_len = get_smbios_string("/sys/class/dmi/id/chassis_serial", S(chassis_serial));
+            chassis_asset_tag_len = get_smbios_string("/sys/class/dmi/id/chassis_tag", S(chassis_asset_tag));
+#undef S
+
+            *required_len = sizeof(struct smbios_prologue);
+
+            *required_len += sizeof(struct smbios_bios);
+            *required_len += max(bios_vendor_len + bios_version_len + bios_date_len + 4, 2);
+
+            *required_len += sizeof(struct smbios_system);
+            *required_len += max(system_vendor_len + system_product_len + system_version_len +
+                                 system_serial_len + 5, 2);
+
+            *required_len += sizeof(struct smbios_board);
+            *required_len += max(board_vendor_len + board_product_len + board_version_len + board_serial_len + 5, 2);
+
+            *required_len += sizeof(struct smbios_chassis);
+            *required_len += max(chassis_vendor_len + chassis_version_len + chassis_serial_len +
+                                 chassis_asset_tag_len + 5, 2);
+
+            sfti->TableBufferLength = *required_len;
+
+            *required_len += FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
+
+            if (available_len < *required_len)
+                return STATUS_BUFFER_TOO_SMALL;
+
+            prologue = (struct smbios_prologue*)buffer;
+            prologue->calling_method = 0;
+            prologue->major_version = 2;
+            prologue->minor_version = 0;
+            prologue->revision = 0;
+            prologue->length = sfti->TableBufferLength - sizeof(struct smbios_prologue);
+            buffer += sizeof(struct smbios_prologue);
+
+            string_count = 0;
+            bios = (struct smbios_bios*)buffer;
+            bios->type = 0;
+            bios->length = sizeof(struct smbios_bios);
+            bios->handle = 0;
+            bios->vendor = bios_vendor_len ? ++string_count : 0;
+            bios->version = bios_version_len ? ++string_count : 0;
+            bios->start = 0;
+            bios->date = bios_date_len ? ++string_count : 0;
+            bios->size = 0;
+            bios->characteristics = 0x4; /* not supported */
+            buffer += sizeof(struct smbios_bios);
+
+            copy_smbios_string(&buffer, bios_vendor, bios_vendor_len);
+            copy_smbios_string(&buffer, bios_version, bios_version_len);
+            copy_smbios_string(&buffer, bios_date, bios_date_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            system = (struct smbios_system*)buffer;
+            system->type = 1;
+            system->length = sizeof(struct smbios_system);
+            system->handle = 0;
+            system->vendor = system_vendor_len ? ++string_count : 0;
+            system->product = system_product_len ? ++string_count : 0;
+            system->version = system_version_len ? ++string_count : 0;
+            system->serial = system_serial_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_system);
+
+            copy_smbios_string(&buffer, system_vendor, system_vendor_len);
+            copy_smbios_string(&buffer, system_product, system_product_len);
+            copy_smbios_string(&buffer, system_version, system_version_len);
+            copy_smbios_string(&buffer, system_serial, system_serial_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            board = (struct smbios_board*)buffer;
+            board->type = 2;
+            board->length = sizeof(struct smbios_board);
+            board->handle = 0;
+            board->vendor = board_vendor_len ? ++string_count : 0;
+            board->product = board_product_len ? ++string_count : 0;
+            board->version = board_version_len ? ++string_count : 0;
+            board->serial = board_serial_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_board);
+
+            copy_smbios_string(&buffer, board_vendor, board_vendor_len);
+            copy_smbios_string(&buffer, board_product, board_product_len);
+            copy_smbios_string(&buffer, board_version, board_version_len);
+            copy_smbios_string(&buffer, board_serial, board_serial_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            chassis = (struct smbios_chassis*)buffer;
+            chassis->type = 3;
+            chassis->length = sizeof(struct smbios_chassis);
+            chassis->handle = 0;
+            chassis->vendor = chassis_vendor_len ? ++string_count : 0;
+            chassis->shape = 0x2; /* unknown */
+            chassis->version = chassis_version_len ? ++string_count : 0;
+            chassis->serial = chassis_serial_len ? ++string_count : 0;
+            chassis->asset_tag = chassis_asset_tag_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_chassis);
+
+            copy_smbios_string(&buffer, chassis_vendor, chassis_vendor_len);
+            copy_smbios_string(&buffer, chassis_version, chassis_version_len);
+            copy_smbios_string(&buffer, chassis_serial, chassis_serial_len);
+            copy_smbios_string(&buffer, chassis_asset_tag, chassis_asset_tag_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            return STATUS_SUCCESS;
+        }
+    default:
+        {
+            FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION provider %08x\n", sfti->ProviderSignature);
+            return STATUS_NOT_IMPLEMENTED;
+        }
+    }
+}
+
+#else
+
+static NTSTATUS get_firmware_info(SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len, ULONG *required_len)
+{
+    FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION\n");
+    sfti->TableBufferLength = 0;
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+#endif
+
 /******************************************************************************
  * NtQuerySystemInformation [NTDLL.@]
  * ZwQuerySystemInformation [NTDLL.@]
@@ -2405,6 +2659,28 @@ NTSTATUS WINAPI NtQuerySystemInformation(
                 else *((DWORD *)SystemInformation) = 64;
             }
             else ret = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        break;
+    case SystemFirmwareTableInformation:
+        {
+            SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti = (SYSTEM_FIRMWARE_TABLE_INFORMATION*)SystemInformation;
+            len = FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
+            if (Length < len)
+            {
+                ret = STATUS_INFO_LENGTH_MISMATCH;
+                break;
+            }
+
+            switch (sfti->Action)
+            {
+            case SystemFirmwareTable_Get:
+                ret = get_firmware_info(sfti, Length, &len);
+                break;
+            default:
+                len = 0;
+                ret = STATUS_NOT_IMPLEMENTED;
+                FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION action %d\n", sfti->Action);
+            }
         }
         break;
     default:

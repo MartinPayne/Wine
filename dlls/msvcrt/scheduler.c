@@ -1063,6 +1063,7 @@ _Scheduler* __cdecl _CurrentScheduler__Get(_Scheduler *ret)
 unsigned int __cdecl _CurrentScheduler__GetNumberOfVirtualProcessors(void)
 {
     TRACE("()\n");
+    get_current_scheduler();
     return CurrentScheduler_GetNumberOfVirtualProcessors();
 }
 
@@ -1070,6 +1071,7 @@ unsigned int __cdecl _CurrentScheduler__GetNumberOfVirtualProcessors(void)
 unsigned int __cdecl _CurrentScheduler__Id(void)
 {
     TRACE("()\n");
+    get_current_scheduler();
     return CurrentScheduler_Id();
 }
 

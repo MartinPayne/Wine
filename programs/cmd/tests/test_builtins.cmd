@@ -418,6 +418,7 @@ if 1==1 (echo n1) else echo n2|echo n3
 if 1==1 (echo o1) else echo o2&&echo o3
 if 1==1 (echo p1) else echo p2||echo p3
 if 1==1 (echo q1) else echo q2&echo q3
+echo ---
 echo --- chain else (if false)
 if 1==0 echo a1 else echo a2
 if 1==0 echo b1|echo b2 else echo b3
@@ -1371,6 +1372,39 @@ for /L %%i in (2,2,1) do (
   echo %%i
   echo FAILED
 )
+echo --- ifs inside for loops
+for %%i in (test) do (
+    echo a1
+    if 1==1 (
+        echo b1
+    ) else (
+        echo c1
+    )
+    echo d1
+)
+for %%i in (test) do (
+    echo a2
+    if 1==1 (
+        echo b2
+    ) else echo c2
+    echo d2
+)
+for %%i in (test) do (
+    echo a3
+    if 1==0 (
+        echo b3
+    ) else echo c3
+    echo d3
+)
+for %%i in (test) do (
+    echo a4
+    if 1==0 (
+        echo b4
+    ) else (
+        echo c4
+    )
+    echo d4
+)
 echo --- set /a
 goto :testseta
 
@@ -1744,6 +1778,12 @@ for /f "tokens=1,2,3*" %%i in ("a b c d e f g") do echo h=%%h i=%%i j=%%j k=%%k 
 for /f "tokens=1,1,3*" %%i in ("a b c d e f g") do echo h=%%h i=%%i j=%%j k=%%k l=%%l m=%%m n=%%n o=%%o
 for /f "tokens=2,2,3*" %%i in ("a b c d e f g") do echo h=%%h i=%%i j=%%j k=%%k l=%%l m=%%m n=%%n o=%%o
 for /f "tokens=3,2,3*" %%i in ("a b c d e f g") do echo h=%%h i=%%i j=%%j k=%%k l=%%l m=%%m n=%%n o=%%o
+rem Special case tokens=*
+echo 3.14>testfile
+FOR /F "tokens=*"  %%A IN (testfile) DO @echo 1:%%A,%%B
+FOR /F "tokens=1*" %%A IN (testfile) DO @echo 2:%%A,%%B
+FOR /F "tokens=2*" %%A IN (testfile) DO @echo 3:%%A,%%B
+del testfile
 cd ..
 rd /s/q foobar
 echo ------ parameter splitting
@@ -1756,6 +1796,12 @@ goto :forFParameterSplittingEnd
 echo %~0 %~1 %~2 %~3 %~4 %~5
 goto :eof
 :forFParameterSplittingEnd
+echo 3.14>testfile
+FOR /F "delims=. tokens=*"  %%A IN (testfile) DO @echo 4:%%A,%%B
+FOR /F "delims=. tokens=1*" %%A IN (testfile) DO @echo 5:%%A,%%B
+FOR /F "delims=. tokens=2*" %%A IN (testfile) DO @echo 6:%%A,%%B
+FOR /F "delims=. tokens=3*" %%A IN (testfile) DO @echo 7:%%A,%%B
+del testfile
 
 echo ------------ Testing del ------------
 echo abc > file

@@ -8823,9 +8823,6 @@ fpos_mbstatet* __thiscall basic_istream_char_tellg(basic_istream_char *this, fpo
     if(basic_istream_char_sentry_create(this, TRUE)) {
         basic_streambuf_char_pubseekoff(basic_ios_char_rdbuf_get(base),
                 ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-        if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-            basic_ios_char_setstate(base, IOSTATE_failbit);
     }else {
         ret->off = -1;
         ret->pos = 0;
@@ -8842,9 +8839,6 @@ fpos_mbstatet* __thiscall basic_istream_char_tellg(basic_istream_char *this, fpo
 
     basic_streambuf_char_pubseekoff(basic_ios_char_rdbuf_get(base),
             ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-    if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-        basic_ios_char_setstate(base, IOSTATE_failbit);
 #endif
 
     return ret;
@@ -10398,9 +10392,6 @@ fpos_mbstatet* __thiscall basic_istream_wchar_tellg(basic_istream_wchar *this, f
     if(basic_istream_wchar_sentry_create(this, TRUE)) {
         basic_streambuf_wchar_pubseekoff(basic_ios_wchar_rdbuf_get(base),
                 ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-        if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-            basic_ios_wchar_setstate(base, IOSTATE_failbit);
     }else {
         ret->off = -1;
         ret->pos = 0;
@@ -10417,8 +10408,6 @@ fpos_mbstatet* __thiscall basic_istream_wchar_tellg(basic_istream_wchar *this, f
 
     basic_streambuf_wchar_pubseekoff(basic_ios_wchar_rdbuf_get(base),
             ret, 0, SEEKDIR_cur, OPENMODE_in);
-    if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-        basic_ios_wchar_setstate(base, IOSTATE_failbit);
 #endif
     return ret;
 }
@@ -15641,9 +15630,6 @@ int __cdecl tr2_sys__Rename_wchar(WCHAR const* old_path, WCHAR const* new_path)
 {
     TRACE("(%s %s)\n", debugstr_w(old_path), debugstr_w(new_path));
 
-    if(!old_path || !new_path)
-        return ERROR_INVALID_PARAMETER;
-
     if(MoveFileExW(old_path, new_path, MOVEFILE_COPY_ALLOWED))
         return ERROR_SUCCESS;
     return GetLastError();
@@ -15743,6 +15729,12 @@ enum file_type __cdecl tr2_sys__Lstat_wchar(WCHAR const* path, int* err_code)
 enum file_type __cdecl _Lstat(WCHAR const* path, int* permissions)
 {
     return _Stat(path, permissions);
+}
+
+WCHAR * __cdecl _Temp_get(WCHAR *dst)
+{
+    GetTempPathW(MAX_PATH, dst);
+    return dst;
 }
 
 /* ??1_Winit@std@@QAE@XZ */

@@ -1571,10 +1571,12 @@ static void WCMD_part_execute(CMD_LIST **cmdList, const WCHAR *firstcmd,
       /* execute all appropriate commands */
       curPosition = *cmdList;
 
-      WINE_TRACE("Processing cmdList(%p) - delim(%d) bd(%d / %d)\n",
+      WINE_TRACE("Processing cmdList(%p) - delim(%d) bd(%d / %d) processThese(%d)\n",
                  *cmdList,
                  (*cmdList)->prevDelim,
-                 (*cmdList)->bracketDepth, myDepth);
+                 (*cmdList)->bracketDepth,
+                 myDepth,
+                 processThese);
 
       /* Execute any statements appended to the line */
       /* FIXME: Only if previous call worked for && or failed for || */
@@ -1613,6 +1615,18 @@ static void WCMD_part_execute(CMD_LIST **cmdList, const WCHAR *firstcmd,
             if (*cmd) {
               WCMD_execute (cmd, (*cmdList)->redirects, cmdList, FALSE);
             }
+          } else {
+              /* Loop skipping all commands until we get back to the current
+                 depth, including skipping commands and their subsequent
+                 pipes (eg cmd | prog)                                       */
+              do {
+                *cmdList = (*cmdList)->nextcommand;
+              } while (*cmdList &&
+                      ((*cmdList)->bracketDepth > myDepth ||
+                      (*cmdList)->prevDelim));
+
+              /* After the else is complete, we need to now process subsequent commands */
+              processThese = TRUE;
           }
           if (curPosition == *cmdList) *cmdList = (*cmdList)->nextcommand;
         } else if (!processThese) {
@@ -1831,6 +1845,14 @@ static int WCMD_for_nexttoken(int lasttoken, WCHAR *tokenstr,
     int nextnumber1, nextnumber2 = -1;
     WCHAR *nextchar;
 
+    /* It is valid syntax tokens=* which just means get whole line */
+    if (*pos == '*') {
+      if (doall) *doall = TRUE;
+      if (totalfound) (*totalfound)++;
+      nexttoken = 0;
+      break;
+    }
+
     /* Get the next number */
     nextnumber1 = strtoulW(pos, &nextchar, 10);
 
@@ -1959,22 +1981,22 @@ static void WCMD_parse_line(CMD_LIST    *cmdStart,
    */
   lasttoken = -1;
   nexttoken = WCMD_for_nexttoken(lasttoken, forf_tokens, &totalfound,
-                                 NULL, &thisduplicate);
+                                 &starfound, &thisduplicate);
   varidx = FOR_VAR_IDX(variable);
 
   /* Empty out variables */
   for (varoffset=0;
-       varidx >= 0 && varoffset<totalfound && ((varidx+varoffset)%26);
+       varidx >= 0 && varoffset<totalfound && (((varidx%26) + varoffset) < 26);
        varoffset++) {
     forloopcontext.variable[varidx + varoffset] = (WCHAR *)nullW;
-    /* Stop if we walk beyond z or Z */
-    if (((varidx+varoffset) % 26) == 0) break;
   }
 
-  /* Loop extracting the tokens */
+  /* Loop extracting the tokens
+     Note: nexttoken of 0 means there were no tokens requested, to handle
+           the special case of tokens=*                                   */
   varoffset = 0;
   WINE_TRACE("Parsing buffer into tokens: '%s'\n", wine_dbgstr_w(buffer));
-  while (varidx >= 0 && (nexttoken > lasttoken)) {
+  while (varidx >= 0 && (nexttoken > 0 && (nexttoken > lasttoken))) {
     anyduplicates |= thisduplicate;
 
     /* Extract the token number requested and set into the next variable context */
@@ -1982,9 +2004,9 @@ static void WCMD_parse_line(CMD_LIST    *cmdStart,
     WINE_TRACE("Parsed token %d(%d) as parameter %s\n", nexttoken,
                varidx + varoffset, wine_dbgstr_w(parm));
     if (varidx >=0) {
-      forloopcontext.variable[varidx + varoffset] = heap_strdupW(parm);
+      if (parm) forloopcontext.variable[varidx + varoffset] = heap_strdupW(parm);
       varoffset++;
-      if (((varidx + varoffset) %26) == 0) break;
+      if (((varidx%26)+varoffset) >= 26) break;
     }
 
     /* Find the next token */
@@ -1995,12 +2017,12 @@ static void WCMD_parse_line(CMD_LIST    *cmdStart,
 
   /* If all the rest of the tokens were requested, and there is still space in
      the variable range, write them now                                        */
-  if (!anyduplicates && starfound && varidx >= 0 && ((varidx+varoffset) % 26)) {
+  if (!anyduplicates && starfound && varidx >= 0 && (((varidx%26) + varoffset) < 26)) {
     nexttoken++;
     WCMD_parameter_with_delims(buffer, (nexttoken-1), &parm, FALSE, FALSE, forf_delims);
     WINE_TRACE("Parsed allremaining tokens (%d) as parameter %s\n",
                varidx + varoffset, wine_dbgstr_w(parm));
-    forloopcontext.variable[varidx + varoffset] = heap_strdupW(parm);
+    if (parm) forloopcontext.variable[varidx + varoffset] = heap_strdupW(parm);
   }
 
   /* Execute the body of the foor loop with these values */
@@ -2844,7 +2866,7 @@ void WCMD_if (WCHAR *p, CMD_LIST **cmdList)
     WIN32_FIND_DATAW fd;
     HANDLE hff = FindFirstFileW(WCMD_parameter(p, 1+negate, NULL, FALSE, FALSE), &fd);
     test = (hff != INVALID_HANDLE_VALUE );
-    if (!test) FindClose(hff);
+    if (test) FindClose(hff);
 
     WCMD_parameter(p, 2+negate, &command, FALSE, FALSE);
   }

@@ -30,7 +30,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 /* For now default to 4 as it felt like a reasonable version feature wise to support.
  * Don't support the optional vk_icdGetPhysicalDeviceProcAddr introduced in this version
  * as it is unlikely we will implement physical device extensions, which the loader is not
- * aware off. Version 5 adds more extensive version checks. Something to tackle later.
+ * aware of. Version 5 adds more extensive version checks. Something to tackle later.
  */
 #define WINE_VULKAN_ICD_VERSION 4
 
@@ -38,12 +38,27 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 struct wine_vk_structure_header
 {
     VkStructureType sType;
-    const void *pNext;
+    void *pNext;
 };
+
+#define wine_vk_find_struct(s, t) wine_vk_find_struct_((void *)s, VK_STRUCTURE_TYPE_##t)
+static void *wine_vk_find_struct_(void *s, VkStructureType t)
+{
+    struct wine_vk_structure_header *header;
+
+    for (header = s; header; header = header->pNext)
+    {
+        if (header->sType == t)
+            return header;
+    }
+
+    return NULL;
+}
 
 static void *wine_vk_get_global_proc_addr(const char *name);
 
 static const struct vulkan_funcs *vk_funcs;
+static VkResult (*p_vkEnumerateInstanceVersion)(uint32_t *version);
 
 static void wine_vk_physical_device_free(struct VkPhysicalDevice_T *phys_dev)
 {
@@ -154,7 +169,7 @@ static void wine_vk_command_buffers_free(struct VkDevice_T *device, VkCommandPoo
 
 /* Helper function to create queues for a given family index. */
 static struct VkQueue_T *wine_vk_device_alloc_queues(struct VkDevice_T *device,
-        uint32_t family_index, uint32_t queue_count)
+        uint32_t family_index, uint32_t queue_count, VkDeviceQueueCreateFlags flags)
 {
     struct VkQueue_T *queues;
     unsigned int i;
@@ -168,22 +183,44 @@ static struct VkQueue_T *wine_vk_device_alloc_queues(struct VkDevice_T *device,
     for (i = 0; i < queue_count; i++)
     {
         struct VkQueue_T *queue = &queues[i];
+
+        queue->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
         queue->device = device;
+        queue->flags = flags;
 
         /* The native device was already allocated with the required number of queues,
          * so just fetch them from there.
          */
         device->funcs.p_vkGetDeviceQueue(device->device, family_index, i, &queue->queue);
-
-        /* Set special header for ICD loader. */
-        queue->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
     }
 
     return queues;
 }
 
-/* Helper function to convert win32 VkDeviceCreateInfo to host compatible. */
-static void wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
+static VkDeviceGroupDeviceCreateInfo *convert_VkDeviceGroupDeviceCreateInfo(const void *src)
+{
+    const VkDeviceGroupDeviceCreateInfo *in = src;
+    VkDeviceGroupDeviceCreateInfo *out;
+    VkPhysicalDevice *physical_devices;
+    unsigned int i;
+
+    if (!(out = heap_alloc(sizeof(*out))))
+        return NULL;
+
+    *out = *in;
+    if (!(physical_devices = heap_calloc(in->physicalDeviceCount, sizeof(*physical_devices))))
+    {
+        heap_free(out);
+        return NULL;
+    }
+    for (i = 0; i < in->physicalDeviceCount; ++i)
+        physical_devices[i] = in->pPhysicalDevices[i]->phys_dev;
+    out->pPhysicalDevices = physical_devices;
+
+    return out;
+}
+
+static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
         VkDeviceCreateInfo *dst)
 {
     unsigned int i;
@@ -192,13 +229,13 @@ static void wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
 
     /* Application and loader can pass in a chain of extensions through pNext.
      * We can't blindly pass these through as often these contain callbacks or
-     * they can even be pass structures for loader / ICD internal use. For now
-     * we ignore everything in pNext chain, but we print FIXMEs.
+     * they can even be pass structures for loader / ICD internal use.
      */
     if (src->pNext)
     {
         const struct wine_vk_structure_header *header;
 
+        dst->pNext = NULL;
         for (header = src->pNext; header; header = header->pNext)
         {
             switch (header->sType)
@@ -209,23 +246,41 @@ static void wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src,
                      */
                     break;
 
+                case VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO:
+                    if (!(dst->pNext = convert_VkDeviceGroupDeviceCreateInfo(header)))
+                        return VK_ERROR_OUT_OF_HOST_MEMORY;
+                    break;
+
                 default:
                     FIXME("Application requested a linked structure of type %#x.\n", header->sType);
             }
         }
     }
-    /* For now don't support anything. */
-    dst->pNext = NULL;
 
     /* Should be filtered out by loader as ICDs don't support layers. */
     dst->enabledLayerCount = 0;
     dst->ppEnabledLayerNames = NULL;
 
-    TRACE("Enabled extensions: %u\n", dst->enabledExtensionCount);
+    TRACE("Enabled extensions: %u.\n", dst->enabledExtensionCount);
     for (i = 0; i < dst->enabledExtensionCount; i++)
     {
-        TRACE("Extension %u: %s\n", i, debugstr_a(dst->ppEnabledExtensionNames[i]));
+        TRACE("Extension %u: %s.\n", i, debugstr_a(dst->ppEnabledExtensionNames[i]));
     }
+
+    return VK_SUCCESS;
+}
+
+static void wine_vk_device_free_create_info(VkDeviceCreateInfo *create_info)
+{
+    VkDeviceGroupDeviceCreateInfo *group_info;
+
+    if ((group_info = wine_vk_find_struct(create_info, DEVICE_GROUP_DEVICE_CREATE_INFO)))
+    {
+        heap_free((void *)group_info->pPhysicalDevices);
+        heap_free(group_info);
+    }
+
+    create_info->pNext = NULL;
 }
 
 /* Helper function used for freeing a device structure. This function supports full
@@ -268,6 +323,8 @@ static BOOL wine_vk_init(void)
         return FALSE;
     }
 
+    p_vkEnumerateInstanceVersion = vk_funcs->p_vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion");
+
     return TRUE;
 }
 
@@ -288,7 +345,7 @@ static void wine_vk_instance_convert_create_info(const VkInstanceCreateInfo *src
         TRACE("Application name %s, application version %#x\n",
                 debugstr_a(app_info->pApplicationName), app_info->applicationVersion);
         TRACE("Engine name %s, engine version %#x\n", debugstr_a(app_info->pEngineName),
-                 app_info->engineVersion);
+                app_info->engineVersion);
         TRACE("API version %#x\n", app_info->apiVersion);
     }
 
@@ -336,34 +393,31 @@ static void wine_vk_instance_convert_create_info(const VkInstanceCreateInfo *src
 /* Helper function which stores wrapped physical devices in the instance object. */
 static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *instance)
 {
-    VkResult res;
-    struct VkPhysicalDevice_T **tmp_phys_devs;
-    uint32_t num_phys_devs = 0;
+    VkPhysicalDevice *tmp_phys_devs;
+    uint32_t phys_dev_count;
     unsigned int i;
+    VkResult res;
 
-    res = instance->funcs.p_vkEnumeratePhysicalDevices(instance->instance, &num_phys_devs, NULL);
+    res = instance->funcs.p_vkEnumeratePhysicalDevices(instance->instance, &phys_dev_count, NULL);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to enumerate physical devices, res=%d\n", res);
         return res;
     }
+    if (!phys_dev_count)
+        return res;
 
-    /* Don't bother with any of the rest if the system just lacks devices. */
-    if (num_phys_devs == 0)
-        return VK_SUCCESS;
-
-    tmp_phys_devs = heap_calloc(num_phys_devs, sizeof(*tmp_phys_devs));
-    if (!tmp_phys_devs)
+    if (!(tmp_phys_devs = heap_calloc(phys_dev_count, sizeof(*tmp_phys_devs))))
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-    res = instance->funcs.p_vkEnumeratePhysicalDevices(instance->instance, &num_phys_devs, tmp_phys_devs);
+    res = instance->funcs.p_vkEnumeratePhysicalDevices(instance->instance, &phys_dev_count, tmp_phys_devs);
     if (res != VK_SUCCESS)
     {
         heap_free(tmp_phys_devs);
         return res;
     }
 
-    instance->phys_devs = heap_calloc(num_phys_devs, sizeof(*instance->phys_devs));
+    instance->phys_devs = heap_calloc(phys_dev_count, sizeof(*instance->phys_devs));
     if (!instance->phys_devs)
     {
         heap_free(tmp_phys_devs);
@@ -371,7 +425,7 @@ static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *inst
     }
 
     /* Wrap each native physical device handle into a dispatchable object for the ICD loader. */
-    for (i = 0; i < num_phys_devs; i++)
+    for (i = 0; i < phys_dev_count; i++)
     {
         struct VkPhysicalDevice_T *phys_dev = wine_vk_physical_device_alloc(instance, tmp_phys_devs[i]);
         if (!phys_dev)
@@ -382,12 +436,28 @@ static VkResult wine_vk_instance_load_physical_devices(struct VkInstance_T *inst
         }
 
         instance->phys_devs[i] = phys_dev;
-        instance->num_phys_devs = i + 1;
+        instance->phys_dev_count = i + 1;
     }
-    instance->num_phys_devs = num_phys_devs;
+    instance->phys_dev_count = phys_dev_count;
 
     heap_free(tmp_phys_devs);
     return VK_SUCCESS;
+}
+
+static struct VkPhysicalDevice_T *wine_vk_instance_wrap_physical_device(struct VkInstance_T *instance,
+        VkPhysicalDevice physical_device)
+{
+    unsigned int i;
+
+    for (i = 0; i < instance->phys_dev_count; ++i)
+    {
+        struct VkPhysicalDevice_T *current = instance->phys_devs[i];
+        if (current->phys_dev == physical_device)
+            return current;
+    }
+
+    ERR("Unrecognized physical device %p.\n", physical_device);
+    return NULL;
 }
 
 /* Helper function used for freeing an instance structure. This function supports full
@@ -402,7 +472,7 @@ static void wine_vk_instance_free(struct VkInstance_T *instance)
     {
         unsigned int i;
 
-        for (i = 0; i < instance->num_phys_devs; i++)
+        for (i = 0; i < instance->phys_dev_count; i++)
         {
             wine_vk_physical_device_free(instance->phys_devs[i]);
         }
@@ -507,24 +577,30 @@ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
     VkDeviceCreateInfo create_info_host;
     uint32_t max_queue_families;
     struct VkDevice_T *object;
-    VkResult res;
     unsigned int i;
+    VkResult res;
 
-    TRACE("%p %p %p %p\n", phys_dev, create_info, allocator, device);
+    TRACE("%p, %p, %p, %p\n", phys_dev, create_info, allocator, device);
 
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
 
-    object = heap_alloc_zero(sizeof(*object));
-    if (!object)
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     object->base.loader_magic = VULKAN_ICD_MAGIC_VALUE;
 
-    wine_vk_device_convert_create_info(create_info, &create_info_host);
+    res = wine_vk_device_convert_create_info(create_info, &create_info_host);
+    if (res != VK_SUCCESS)
+    {
+        ERR("Failed to convert VkDeviceCreateInfo, res=%d.\n", res);
+        wine_vk_device_free(object);
+        return res;
+    }
 
     res = phys_dev->instance->funcs.p_vkCreateDevice(phys_dev->phys_dev,
             &create_info_host, NULL /* allocator */, &object->device);
+    wine_vk_device_free_create_info(&create_info_host);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to create device.\n");
@@ -560,12 +636,14 @@ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
 
     for (i = 0; i < create_info_host.queueCreateInfoCount; i++)
     {
+        uint32_t flags = create_info_host.pQueueCreateInfos[i].flags;
         uint32_t family_index = create_info_host.pQueueCreateInfos[i].queueFamilyIndex;
         uint32_t queue_count = create_info_host.pQueueCreateInfos[i].queueCount;
 
         TRACE("queueFamilyIndex %u, queueCount %u\n", family_index, queue_count);
 
-        object->queues[family_index] = wine_vk_device_alloc_queues(object, family_index, queue_count);
+        object->queues[family_index] = wine_vk_device_alloc_queues(object, family_index,
+                queue_count, flags);
         if (!object->queues[family_index])
         {
             ERR("Failed to allocate memory for queues\n");
@@ -577,6 +655,7 @@ VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice phys_dev,
     object->quirks = phys_dev->instance->quirks;
 
     *device = object;
+    TRACE("Created device %p (native device %p).\n", object, object->device);
     return VK_SUCCESS;
 }
 
@@ -640,7 +719,7 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
     }
 
     *instance = object;
-    TRACE("Done, instance=%p native_instance=%p\n", object, object->instance);
+    TRACE("Created instance %p (native instance %p).\n", object, object->instance);
     return VK_SUCCESS;
 }
 
@@ -692,17 +771,16 @@ VkResult WINAPI wine_vkEnumerateDeviceExtensionProperties(VkPhysicalDevice phys_
 VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_name,
         uint32_t *count, VkExtensionProperties *properties)
 {
-    VkResult res;
-    uint32_t num_properties = 0, num_host_properties = 0;
-    VkExtensionProperties *host_properties = NULL;
+    uint32_t num_properties = 0, num_host_properties;
+    VkExtensionProperties *host_properties;
     unsigned int i, j;
+    VkResult res;
 
-    TRACE("%p %p %p\n", layer_name, count, properties);
+    TRACE("%p, %p, %p\n", layer_name, count, properties);
 
-    /* This shouldn't get called with layer_name set, the ICD loader prevents it. */
     if (layer_name)
     {
-        ERR("Layer enumeration not supported from ICD.\n");
+        WARN("Layer enumeration not supported from ICD.\n");
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
 
@@ -710,14 +788,13 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
     if (res != VK_SUCCESS)
         return res;
 
-    host_properties = heap_calloc(num_host_properties, sizeof(*host_properties));
-    if (!host_properties)
+    if (!(host_properties = heap_calloc(num_host_properties, sizeof(*host_properties))))
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     res = vk_funcs->p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, host_properties);
     if (res != VK_SUCCESS)
     {
-        ERR("Failed to retrieve host properties, res=%d\n", res);
+        ERR("Failed to retrieve host properties, res=%d.\n", res);
         heap_free(host_properties);
         return res;
     }
@@ -736,7 +813,7 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
 
     if (!properties)
     {
-        TRACE("Returning %u extensions\n", num_properties);
+        TRACE("Returning %u extensions.\n", num_properties);
         *count = num_properties;
         heap_free(host_properties);
         return VK_SUCCESS;
@@ -746,15 +823,49 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
     {
         if (wine_vk_instance_extension_supported(host_properties[i].extensionName))
         {
-            TRACE("Enabling extension '%s'\n", host_properties[i].extensionName);
-            properties[j] = host_properties[i];
-            j++;
+            TRACE("Enabling extension '%s'.\n", host_properties[i].extensionName);
+            properties[j++] = host_properties[i];
         }
     }
     *count = min(*count, num_properties);
 
     heap_free(host_properties);
     return *count < num_properties ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+VkResult WINAPI wine_vkEnumerateInstanceLayerProperties(uint32_t *count, VkLayerProperties *properties)
+{
+    TRACE("%p, %p\n", count, properties);
+
+    if (!properties)
+    {
+        *count = 0;
+        return VK_SUCCESS;
+    }
+
+    return VK_ERROR_LAYER_NOT_PRESENT;
+}
+
+VkResult WINAPI wine_vkEnumerateInstanceVersion(uint32_t *version)
+{
+    VkResult res;
+
+    TRACE("%p\n", version);
+
+    if (p_vkEnumerateInstanceVersion)
+    {
+        res = p_vkEnumerateInstanceVersion(version);
+    }
+    else
+    {
+        *version = VK_API_VERSION_1_0;
+        res = VK_SUCCESS;
+    }
+
+    TRACE("API version %u.%u.%u.\n",
+            VK_VERSION_MAJOR(*version), VK_VERSION_MINOR(*version), VK_VERSION_PATCH(*version));
+    *version = min(WINE_VK_VERSION, *version);
+    return res;
 }
 
 VkResult WINAPI wine_vkEnumeratePhysicalDevices(VkInstance instance, uint32_t *count,
@@ -766,18 +877,18 @@ VkResult WINAPI wine_vkEnumeratePhysicalDevices(VkInstance instance, uint32_t *c
 
     if (!devices)
     {
-        *count = instance->num_phys_devs;
+        *count = instance->phys_dev_count;
         return VK_SUCCESS;
     }
 
-    *count = min(*count, instance->num_phys_devs);
+    *count = min(*count, instance->phys_dev_count);
     for (i = 0; i < *count; i++)
     {
         devices[i] = instance->phys_devs[i];
     }
 
     TRACE("Returning %u devices.\n", *count);
-    return *count < instance->num_phys_devs ? VK_INCOMPLETE : VK_SUCCESS;
+    return *count < instance->phys_dev_count ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 void WINAPI wine_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, uint32_t count,
@@ -824,23 +935,42 @@ PFN_vkVoidFunction WINAPI wine_vkGetDeviceProcAddr(VkDevice device, const char *
         return func;
     }
 
-    TRACE("Function %s not found.\n", debugstr_a(name));
+    WARN("Unsupported device function: %s.\n", debugstr_a(name));
     return NULL;
 }
 
 void WINAPI wine_vkGetDeviceQueue(VkDevice device, uint32_t family_index,
         uint32_t queue_index, VkQueue *queue)
 {
-    TRACE("%p %u %u %p\n", device, family_index, queue_index, queue);
+    TRACE("%p, %u, %u, %p\n", device, family_index, queue_index, queue);
 
     *queue = &device->queues[family_index][queue_index];
+}
+
+void WINAPI wine_vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2 *info, VkQueue *queue)
+{
+    const struct wine_vk_structure_header *chain;
+    struct VkQueue_T *matching_queue;
+
+    TRACE("%p, %p, %p\n", device, info, queue);
+
+    if ((chain = info->pNext))
+        FIXME("Ignoring a linked structure of type %#x.\n", chain->sType);
+
+    matching_queue = &device->queues[info->queueFamilyIndex][info->queueIndex];
+    if (matching_queue->flags != info->flags)
+    {
+        WARN("No matching flags were specified %#x, %#x.\n", matching_queue->flags, info->flags);
+        matching_queue = VK_NULL_HANDLE;
+    }
+    *queue = matching_queue;
 }
 
 PFN_vkVoidFunction WINAPI wine_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 {
     void *func;
 
-    TRACE("%p %s\n", instance, debugstr_a(name));
+    TRACE("%p, %s\n", instance, debugstr_a(name));
 
     if (!name)
         return NULL;
@@ -855,7 +985,7 @@ PFN_vkVoidFunction WINAPI wine_vkGetInstanceProcAddr(VkInstance instance, const 
     }
     if (!instance)
     {
-        FIXME("Global function %s not found.\n", debugstr_a(name));
+        WARN("Global function %s not found.\n", debugstr_a(name));
         return NULL;
     }
 
@@ -866,13 +996,13 @@ PFN_vkVoidFunction WINAPI wine_vkGetInstanceProcAddr(VkInstance instance, const 
     func = wine_vk_get_device_proc_addr(name);
     if (func) return func;
 
-    FIXME("Unsupported device or instance function: %s.\n", debugstr_a(name));
+    WARN("Unsupported device or instance function: %s.\n", debugstr_a(name));
     return NULL;
 }
 
 void * WINAPI wine_vk_icdGetInstanceProcAddr(VkInstance instance, const char *name)
 {
-    TRACE("%p %s\n", instance, debugstr_a(name));
+    TRACE("%p, %s\n", instance, debugstr_a(name));
 
     /* Initial version of the Vulkan ICD spec required vkGetInstanceProcAddr to be
      * exported. vk_icdGetInstanceProcAddr was added later to separate ICD calls from
@@ -956,9 +1086,51 @@ err:
     return res;
 }
 
+static VkResult wine_vk_enumerate_physical_device_groups(struct VkInstance_T *instance,
+        VkResult (*p_vkEnumeratePhysicalDeviceGroups)(VkInstance, uint32_t *, VkPhysicalDeviceGroupProperties *),
+        uint32_t *count, VkPhysicalDeviceGroupProperties *properties)
+{
+    unsigned int i, j;
+    VkResult res;
+
+    res = p_vkEnumeratePhysicalDeviceGroups(instance->instance, count, properties);
+    if (res < 0 || !properties)
+        return res;
+
+    for (i = 0; i < *count; ++i)
+    {
+        VkPhysicalDeviceGroupProperties *current = &properties[i];
+        for (j = 0; j < current->physicalDeviceCount; ++j)
+        {
+            VkPhysicalDevice dev = current->physicalDevices[j];
+            if (!(current->physicalDevices[j] = wine_vk_instance_wrap_physical_device(instance, dev)))
+                return VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
+
+    return res;
+}
+
+VkResult WINAPI wine_vkEnumeratePhysicalDeviceGroups(VkInstance instance,
+        uint32_t *count, VkPhysicalDeviceGroupProperties *properties)
+{
+    TRACE("%p, %p, %p\n", instance, count, properties);
+    return wine_vk_enumerate_physical_device_groups(instance,
+            instance->funcs.p_vkEnumeratePhysicalDeviceGroups, count, properties);
+}
+
+VkResult WINAPI wine_vkEnumeratePhysicalDeviceGroupsKHR(VkInstance instance,
+        uint32_t *count, VkPhysicalDeviceGroupProperties *properties)
+{
+    TRACE("%p, %p, %p\n", instance, count, properties);
+    return wine_vk_enumerate_physical_device_groups(instance,
+            instance->funcs.p_vkEnumeratePhysicalDeviceGroupsKHR, count, properties);
+}
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
 {
+    TRACE("%p, %u, %p\n", hinst, reason, reserved);
+
     switch (reason)
     {
         case DLL_PROCESS_ATTACH:
@@ -972,6 +1144,8 @@ static const struct vulkan_func vk_global_dispatch_table[] =
 {
     {"vkCreateInstance", &wine_vkCreateInstance},
     {"vkEnumerateInstanceExtensionProperties", &wine_vkEnumerateInstanceExtensionProperties},
+    {"vkEnumerateInstanceLayerProperties", &wine_vkEnumerateInstanceLayerProperties},
+    {"vkEnumerateInstanceVersion", &wine_vkEnumerateInstanceVersion},
     {"vkGetInstanceProcAddr", &wine_vkGetInstanceProcAddr},
 };
 
