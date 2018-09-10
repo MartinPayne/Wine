@@ -1389,12 +1389,10 @@ HRESULT CDECL wined3d_device_set_stream_source(struct wined3d_device *device, UI
     }
 
     stream->buffer = buffer;
+    stream->stride = stride;
+    stream->offset = offset;
     if (buffer)
-    {
-        stream->stride = stride;
-        stream->offset = offset;
         wined3d_buffer_incref(buffer);
-    }
 
     if (!device->recording)
         wined3d_cs_emit_set_stream_source(device->cs, stream_idx, buffer, offset, stride);
@@ -3476,7 +3474,7 @@ struct wined3d_texture * CDECL wined3d_device_get_texture(const struct wined3d_d
     return device->state.textures[stage];
 }
 
-HRESULT CDECL wined3d_device_get_device_caps(const struct wined3d_device *device, WINED3DCAPS *caps)
+HRESULT CDECL wined3d_device_get_device_caps(const struct wined3d_device *device, struct wined3d_caps *caps)
 {
     TRACE("device %p, caps %p.\n", device, caps);
 

@@ -1,24 +1,24 @@
 @ stub DefaultInputHandler
 @ stub AddPointerInteractionContext
 @ stub BufferPointerPacketsInteractionContext
-@ stub CreateInteractionContext
-@ stub DestroyInteractionContext
+@ stdcall CreateInteractionContext(ptr)
+@ stdcall DestroyInteractionContext(ptr)
 @ stub GetCrossSlideParameterInteractionContext
 @ stub GetInertiaParameterInteractionContext
 @ stub GetInteractionConfigurationInteractionContext
 @ stub GetMouseWheelParameterInteractionContext
-@ stub GetPropertyInteractionContext
+@ stdcall GetPropertyInteractionContext(ptr long ptr)
 @ stub GetStateInteractionContext
 @ stub ProcessBufferedPacketsInteractionContext
-@ stub ProcessInertiaInteractionContext
+@ stdcall ProcessInertiaInteractionContext(ptr)
 @ stub ProcessPointerFramesInteractionContext
-@ stub RegisterOutputCallbackInteractionContext
+@ stdcall RegisterOutputCallbackInteractionContext(ptr ptr ptr)
 @ stub RemovePointerInteractionContext
 @ stub ResetInteractionContext
 @ stub SetCrossSlideParametersInteractionContext
 @ stub SetInertiaParameterInteractionContext
-@ stub SetInteractionConfigurationInteractionContext
+@ stdcall SetInteractionConfigurationInteractionContext(ptr long ptr)
 @ stub SetMouseWheelParameterInteractionContext
 @ stub SetPivotInteractionContext
-@ stub SetPropertyInteractionContext
+@ stdcall SetPropertyInteractionContext(ptr long long)
 @ stub StopInteractionContext

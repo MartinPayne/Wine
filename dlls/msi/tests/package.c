@@ -187,7 +187,7 @@ static LSTATUS package_RegDeleteTreeW(HKEY hKey, LPCWSTR lpszSubKey, REGSAM acce
     dwMaxSubkeyLen++;
     dwMaxValueLen++;
     dwMaxLen = max(dwMaxSubkeyLen, dwMaxValueLen);
-    if (dwMaxLen > sizeof(szNameBuf)/sizeof(WCHAR))
+    if (dwMaxLen > ARRAY_SIZE(szNameBuf))
     {
         /* Name too big: alloc a buffer for it */
         if (!(lpszName = HeapAlloc( GetProcessHeap(), 0, dwMaxLen*sizeof(WCHAR))))
@@ -751,6 +751,22 @@ static UINT create_actiontext_table( MSIHANDLE hdb )
     return r;
 }
 
+static UINT create_upgrade_table( MSIHANDLE hdb )
+{
+    UINT r = run_query( hdb,
+            "CREATE TABLE `Upgrade` ("
+            "`UpgradeCode` CHAR(38) NOT NULL, "
+            "`VersionMin` CHAR(20), "
+            "`VersionMax` CHAR(20), "
+            "`Language` CHAR(255), "
+            "`Attributes` SHORT, "
+            "`Remove` CHAR(255), "
+            "`ActionProperty` CHAR(72) NOT NULL "
+            "PRIMARY KEY `UpgradeCode`, `VersionMin`, `VersionMax`, `Language`)" );
+    ok(r == ERROR_SUCCESS, "Failed to create Upgrade table: %u\n", r);
+    return r;
+}
+
 static inline UINT add_entry(const char *file, int line, const char *type, MSIHANDLE hdb, const char *values, const char *insert)
 {
     char *query;
@@ -805,6 +821,12 @@ static inline UINT add_entry(const char *file, int line, const char *type, MSIHA
 #define add_property_entry(hdb, values) add_entry(__FILE__, __LINE__, "Property", hdb, values, \
                "INSERT INTO `Property` (`Property`, `Value`) VALUES( %s )")
 
+#define update_ProductVersion_property(hdb, value) add_entry(__FILE__, __LINE__, "Property", hdb, value, \
+               "UPDATE `Property` SET `Value` = '%s' WHERE `Property` = 'ProductVersion'")
+
+#define update_ProductCode_property(hdb, value) add_entry(__FILE__, __LINE__, "Property", hdb, value, \
+               "UPDATE `Property` SET `Value` = '%s' WHERE `Property` = 'ProductCode'")
+
 #define add_install_execute_sequence_entry(hdb, values) add_entry(__FILE__, __LINE__, "InstallExecuteSequence", hdb, values, \
                "INSERT INTO `InstallExecuteSequence` " \
                "(`Action`, `Condition`, `Sequence`) VALUES( %s )")
@@ -853,6 +875,10 @@ static inline UINT add_entry(const char *file, int line, const char *type, MSIHA
 #define add_actiontext_entry(hdb, values) add_entry(__FILE__, __LINE__, "ActionText", hdb, values, \
                "INSERT INTO `ActionText` " \
                "(`Action`, `Description`, `Template`) VALUES( %s )");
+
+#define add_upgrade_entry(hdb, values) add_entry(__FILE__, __LINE__, "Upgrade", hdb, values, \
+               "INSERT INTO `Upgrade` " \
+               "(`UpgradeCode`, `VersionMin`, `VersionMax`, `Language`, `Attributes`, `Remove`, `ActionProperty`) VALUES( %s )");
 
 static UINT add_reglocator_entry( MSIHANDLE hdb, const char *sig, UINT root, const char *path,
                                   const char *name, UINT type )
@@ -3072,10 +3098,12 @@ static void test_states(void)
     char msi_cache_file[MAX_PATH];
     DWORD cache_file_name_len;
     INSTALLSTATE state;
-    MSIHANDLE hpkg;
+    MSIHANDLE hpkg, hprod;
     UINT r;
     MSIHANDLE hdb;
     BOOL is_broken;
+    char value[MAX_PATH];
+    DWORD size;
 
     if (is_process_limited())
     {
@@ -3094,6 +3122,7 @@ static void test_states(void)
     add_property_entry( hdb, "'ProductName', 'MSITEST'" );
     add_property_entry( hdb, "'ProductVersion', '1.1.1'" );
     add_property_entry( hdb, "'MSIFASTINSTALL', '1'" );
+    add_property_entry( hdb, "'UpgradeCode', '{3494EEEA-4221-4A66-802E-DED8916BC5C5}'" );
 
     create_install_execute_sequence_table( hdb );
     add_install_execute_sequence_entry( hdb, "'CostInitialize', '', '800'" );
@@ -3298,6 +3327,12 @@ static void test_states(void)
     CopyFileA(msifile, msifile3, FALSE);
     CopyFileA(msifile, msifile4, FALSE);
 
+    size = sizeof(value);
+    memset(value, 0, sizeof(value));
+    r = MsiGetPropertyA(hpkg, "ProductToBeRegistered", value, &size);
+    ok( r == ERROR_SUCCESS, "get property failed: %d\n", r);
+    ok(!value[0], "ProductToBeRegistered = %s\n", value);
+
     test_feature_states( __LINE__, hpkg, "one", ERROR_UNKNOWN_FEATURE, 0, 0, FALSE );
     test_component_states( __LINE__, hpkg, "alpha", ERROR_UNKNOWN_COMPONENT, 0, 0, FALSE );
 
@@ -3377,6 +3412,12 @@ static void test_states(void)
     ok( r == ERROR_SUCCESS, "failed to create package %u\n", r );
 
     MsiCloseHandle(hdb);
+
+    size = sizeof(value);
+    memset(value, 0, sizeof(value));
+    r = MsiGetPropertyA(hpkg, "ProductToBeRegistered", value, &size);
+    ok( r == ERROR_SUCCESS, "get property failed: %d\n", r);
+    ok(value[0]=='1' && !value[1], "ProductToBeRegistered = %s\n", value);
 
     test_feature_states( __LINE__, hpkg, "one", ERROR_UNKNOWN_FEATURE, 0, 0, FALSE );
     test_component_states( __LINE__, hpkg, "alpha", ERROR_UNKNOWN_COMPONENT, 0, 0, FALSE );
@@ -3779,8 +3820,66 @@ static void test_states(void)
     state = MsiQueryFeatureStateA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", "three");
     ok(state == INSTALLSTATE_LOCAL, "state = %d\n", state);
 
+    /* minor upgrade test with no REINSTALL argument */
+    r = MsiOpenProductA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", &hprod);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    size = MAX_PATH;
+    r = MsiGetProductPropertyA(hprod, "ProductVersion", value, &size);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(!strcmp(value, "1.1.1"), "ProductVersion = %s\n", value);
+    MsiCloseHandle(hprod);
+
+    r = MsiOpenDatabaseA(msifile2, (const char*)MSIDBOPEN_DIRECT, &hdb);
+    ok(r == ERROR_SUCCESS, "failed to open database: %d\n", r);
+    update_ProductVersion_property( hdb, "1.1.2" );
+    set_summary_str(hdb, PID_REVNUMBER, "{A219A62A-D931-4F1B-89DB-FF1C300A8D43}");
+    r = MsiDatabaseCommit(hdb);
+    ok(r == ERROR_SUCCESS, "MsiDatabaseCommit failed: %d\n", r);
+    MsiCloseHandle(hdb);
+
+    r = MsiInstallProductA(msifile2, "");
+    ok(r == ERROR_PRODUCT_VERSION, "Expected ERROR_PRODUCT_VERSION, got %d\n", r);
+
+    r = MsiInstallProductA(msifile2, "REINSTALLMODe=V");
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+
+    r = MsiOpenProductA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", &hprod);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    size = MAX_PATH;
+    r = MsiGetProductPropertyA(hprod, "ProductVersion", value, &size);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(!strcmp(value, "1.1.2"), "ProductVersion = %s\n", value);
+    MsiCloseHandle(hprod);
+
+    /* major upgrade test */
+    r = MsiOpenDatabaseA(msifile2, (const char*)MSIDBOPEN_DIRECT, &hdb);
+    ok(r == ERROR_SUCCESS, "failed to open database: %d\n", r);
+    add_install_execute_sequence_entry( hdb, "'FindRelatedProducts', '', '100'" );
+    add_install_execute_sequence_entry( hdb, "'RemoveExistingProducts', '', '1401'" );
+    create_upgrade_table( hdb );
+    add_upgrade_entry( hdb, "'{3494EEEA-4221-4A66-802E-DED8916BC5C5}', NULL, '1.1.3', NULL, 0, NULL, 'OLDERVERSIONBEINGUPGRADED'");
+    update_ProductCode_property( hdb, "{333DB27A-C25E-4EBC-9BEC-0F49546C19A6}" );
+    update_ProductVersion_property( hdb, "1.1.3" );
+    set_summary_str(hdb, PID_REVNUMBER, "{5F99011C-02E6-48BD-8B8D-DE7CFABC7A09}");
+    r = MsiDatabaseCommit(hdb);
+    ok(r == ERROR_SUCCESS, "MsiDatabaseCommit failed: %d\n", r);
+    MsiCloseHandle(hdb);
+
+    r = MsiInstallProductA(msifile2, "");
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+
+    r = MsiOpenProductA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", &hprod);
+    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = MsiOpenProductA("{333DB27A-C25E-4EBC-9BEC-0F49546C19A6}", &hprod);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    size = MAX_PATH;
+    r = MsiGetProductPropertyA(hprod, "ProductVersion", value, &size);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(!strcmp(value, "1.1.3"), "ProductVersion = %s\n", value);
+    MsiCloseHandle(hprod);
+
     /* uninstall the product */
-    r = MsiInstallProductA(msifile4, "REMOVE=ALL");
+    r = MsiInstallProductA(msifile2, "REMOVE=ALL");
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
 
     DeleteFileA(msifile);

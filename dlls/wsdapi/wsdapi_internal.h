@@ -40,13 +40,18 @@ struct notificationSink
     IWSDiscoveryPublisherNotify *notificationSink;
 };
 
+#define MAX_WSD_THREADS        20
+
 typedef struct IWSDiscoveryPublisherImpl {
     IWSDiscoveryPublisher IWSDiscoveryPublisher_iface;
     LONG                  ref;
     IWSDXMLContext        *xmlContext;
     DWORD                 addressFamily;
     struct list           notificationSinks;
+    CRITICAL_SECTION      notification_sink_critical_section;
     BOOL                  publisherStarted;
+    HANDLE                thread_handles[MAX_WSD_THREADS];
+    int                   num_thread_handles;
 } IWSDiscoveryPublisherImpl;
 
 /* network.c */
@@ -67,9 +72,15 @@ HRESULT send_bye_message(IWSDiscoveryPublisherImpl *impl, LPCWSTR id, ULONGLONG 
 
 HRESULT register_namespaces(IWSDXMLContext *xml_context);
 
+HRESULT read_message(const char *xml, int xml_length, WSD_SOAP_MESSAGE **out_msg, int *msg_type);
+
+#define MSGTYPE_UNKNOWN     0
+#define MSGTYPE_PROBE       1
+
 /* xml.c */
 
 LPWSTR duplicate_string(void *parentMemoryBlock, LPCWSTR value);
 WSDXML_NAME *duplicate_name(void *parentMemoryBlock, WSDXML_NAME *name);
+WSDXML_NAMESPACE *xml_context_find_namespace_by_prefix(IWSDXMLContext *context, LPCWSTR prefix);
 
 #endif

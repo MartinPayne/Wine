@@ -1600,10 +1600,10 @@
 @ stdcall WinExec(str long)
 @ stdcall Wow64EnableWow64FsRedirection(long)
 @ stdcall Wow64DisableWow64FsRedirection(ptr)
-# @ stub Wow64GetThreadContext
+@ stdcall Wow64GetThreadContext(long ptr)
 # @ stub Wow64GetThreadSelectorEntry
 @ stdcall Wow64RevertWow64FsRedirection(ptr)
-# @ stub Wow64SetThreadContext
+@ stdcall Wow64SetThreadContext(long ptr)
 # @ stub Wow64SuspendThread
 @ stdcall WriteConsoleA(long ptr long ptr ptr)
 @ stdcall WriteConsoleInputA(long ptr long ptr)

@@ -1309,6 +1309,23 @@ static DWORD log_proc_ex_size_plus(DWORD size)
     return sizeof(LOGICAL_PROCESSOR_RELATIONSHIP) + sizeof(DWORD) + size;
 }
 
+static DWORD count_bits(ULONG_PTR mask)
+{
+    DWORD count = 0;
+    while (mask > 0)
+    {
+        mask >>= 1;
+        count++;
+    }
+    return count;
+}
+
+/* Store package and core information for a logical processor. Parsing of processor
+ * data may happen in multiple passes; the 'id' parameter is then used to locate
+ * previously stored data. The type of data stored in 'id' depends on 'rel':
+ * - RelationProcessorPackage: package id ('CPU socket').
+ * - RelationProcessorCore: physical core number.
+ */
 static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **pdata,
         SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX **pdataex, DWORD *len, DWORD *pmax_len,
         LOGICAL_PROCESSOR_RELATIONSHIP rel, DWORD id, ULONG_PTR mask)
@@ -1316,17 +1333,16 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
     if (pdata) {
         DWORD i;
 
-        if(rel == RelationProcessorPackage){
-            for(i=0; i<*len; i++)
+        for (i=0; i<*len; i++)
+        {
+            if (rel == RelationProcessorPackage && (*pdata)[i].Relationship == rel && (*pdata)[i].u.Reserved[1] == id)
             {
-                if ((*pdata)[i].Relationship!=rel || (*pdata)[i].u.Reserved[1]!=id)
-                    continue;
-
                 (*pdata)[i].ProcessorMask |= mask;
                 return TRUE;
             }
-        }else
-            i = *len;
+            else if (rel == RelationProcessorCore && (*pdata)[i].Relationship == rel && (*pdata)[i].u.Reserved[1] == id)
+                return TRUE;
+        }
 
         while(*len == *pmax_len)
         {
@@ -1336,7 +1352,8 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
 
         (*pdata)[i].Relationship = rel;
         (*pdata)[i].ProcessorMask = mask;
-        /* TODO: set processor core flags */
+        if (rel == RelationProcessorCore)
+            (*pdata)[i].u.ProcessorCore.Flags = count_bits(mask) > 1 ? LTP_PC_SMT : 0;
         (*pdata)[i].u.Reserved[0] = 0;
         (*pdata)[i].u.Reserved[1] = id;
         *len = i+1;
@@ -1350,6 +1367,10 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
             if (rel == RelationProcessorPackage && dataex->Relationship == rel && dataex->u.Processor.Reserved[1] == id)
             {
                 dataex->u.Processor.GroupMask[0].Mask |= mask;
+                return TRUE;
+            }
+            else if (rel == RelationProcessorCore && dataex->Relationship == rel && dataex->u.Processor.Reserved[1] == id)
+            {
                 return TRUE;
             }
             ofs += dataex->Size;
@@ -1368,7 +1389,10 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
 
         dataex->Relationship = rel;
         dataex->Size = log_proc_ex_size_plus(sizeof(PROCESSOR_RELATIONSHIP));
-        dataex->u.Processor.Flags = 0; /* TODO */
+        if (rel == RelationProcessorCore)
+            dataex->u.Processor.Flags = count_bits(mask) > 1 ? LTP_PC_SMT : 0;
+        else
+            dataex->u.Processor.Flags = 0;
         dataex->u.Processor.EfficiencyClass = 0;
         dataex->u.Processor.GroupCount = 1;
         dataex->u.Processor.GroupMask[0].Mask = mask;
@@ -1537,6 +1561,9 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
 
         for(i=beg; i<=end; i++)
         {
+            DWORD phys_core = 0;
+            ULONG_PTR thread_mask = 0;
+
             if(i > 8*sizeof(ULONG_PTR))
             {
                 FIXME("skipping logical processor %d\n", i);
@@ -1557,15 +1584,35 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
                 return STATUS_NO_MEMORY;
             }
 
-            sprintf(name, core_info, i, "core_id");
+            /* Sysfs enumerates logical cores (and not physical cores), but Windows enumerates
+             * by physical core. Upon enumerating a logical core in sysfs, we register a physical
+             * core and all its logical cores. In order to not report physical cores multiple
+             * times, we pass a unique physical core ID to logical_proc_info_add_by_id and let
+             * that call figure out any duplication.
+             * Obtain a unique physical core ID from the first element of thread_siblings_list.
+             * This list provides logical cores sharing the same physical core. The IDs are based
+             * on kernel cpu core numbering as opposed to a hardware core ID like provided through
+             * 'core_id', so are suitable as a unique ID.
+             */
+            sprintf(name, core_info, i, "thread_siblings_list");
             f = fopen(name, "r");
             if(f)
             {
-                fscanf(f, "%u", &r);
+                fscanf(f, "%d%c", &phys_core, &op);
                 fclose(f);
             }
-            else r = i;
-            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, r, (ULONG_PTR)1 << i))
+            else phys_core = i;
+
+            /* Mask of logical threads sharing same physical core in kernel core numbering. */
+            sprintf(name, core_info, i, "thread_siblings");
+            f = fopen(name, "r");
+            if(f)
+            {
+                fscanf(f, "%lx", &thread_mask);
+                fclose(f);
+            }
+            else thread_mask = 1<<i;
+            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, phys_core, thread_mask))
             {
                 fclose(fcpu_list);
                 return STATUS_NO_MEMORY;
@@ -1643,7 +1690,6 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
         for(i=0; i<len; i++){
             if((*data)[i].Relationship == RelationProcessorCore){
                 all_cpus_mask |= (*data)[i].ProcessorMask;
-                ++num_cpus;
             }
         }
     }else{
@@ -1651,11 +1697,11 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
             SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *infoex = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)(((char *)*dataex) + i);
             if(infoex->Relationship == RelationProcessorCore){
                 all_cpus_mask |= infoex->u.Processor.GroupMask[0].Mask;
-                ++num_cpus;
             }
             i += infoex->Size;
         }
     }
+    num_cpus = count_bits(all_cpus_mask);
 
     fnuma_list = fopen("/sys/devices/system/node/online", "r");
     if(!fnuma_list)
@@ -1795,6 +1841,7 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
     for(p = 0; p < pkgs_no; ++p){
         for(j = 0; j < cores_per_package && p * cores_per_package + j < cores_no; ++j){
             ULONG_PTR mask = 0;
+            DWORD phys_core;
 
             for(k = 0; k < lcpu_per_core; ++k)
                 mask |= (ULONG_PTR)1 << (j * lcpu_per_core + k);
@@ -1806,7 +1853,8 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
                 return STATUS_NO_MEMORY;
 
             /* add new core */
-            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, p, mask))
+            phys_core = p * cores_per_package + j;
+            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, phys_core, mask))
                 return STATUS_NO_MEMORY;
 
             for(i = 1; i < 5; ++i){

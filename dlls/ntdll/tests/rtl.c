@@ -680,7 +680,7 @@ static void test_RtlRandom(void)
     }
 
     seed = 0;
-    for (i = 0; i < sizeof(res) / sizeof(res[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(res); i++)
     {
         res[i] = pRtlRandom(&seed);
         ok(seed != res[i], "%i: seed is same as res %x\n", i, seed);
@@ -708,7 +708,6 @@ static const all_accesses_t all_accesses[] = {
     {0xFEDCBA76, 0xC8C4B242, 1},
     {0xC8C4B242, 0xFEDCBA76, 0},
 };
-#define NB_ALL_ACCESSES (sizeof(all_accesses)/sizeof(*all_accesses))
 
 
 static void test_RtlAreAllAccessesGranted(void)
@@ -722,7 +721,7 @@ static void test_RtlAreAllAccessesGranted(void)
         return;
     }
 
-    for (test_num = 0; test_num < NB_ALL_ACCESSES; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(all_accesses); test_num++) {
 	result = pRtlAreAllAccessesGranted(all_accesses[test_num].GrantedAccess,
 					   all_accesses[test_num].DesiredAccess);
 	ok(all_accesses[test_num].result == result,
@@ -751,7 +750,6 @@ static const any_accesses_t any_accesses[] = {
     {0xFEDCBA76, 0x00040000, 1},
     {0xFED8BA76, 0x00040000, 0},
 };
-#define NB_ANY_ACCESSES (sizeof(any_accesses)/sizeof(*any_accesses))
 
 
 static void test_RtlAreAnyAccessesGranted(void)
@@ -765,7 +763,7 @@ static void test_RtlAreAnyAccessesGranted(void)
         return;
     }
 
-    for (test_num = 0; test_num < NB_ANY_ACCESSES; test_num++) {
+    for (test_num = 0; test_num < ARRAY_SIZE(any_accesses); test_num++) {
 	result = pRtlAreAnyAccessesGranted(any_accesses[test_num].GrantedAccess,
 					   any_accesses[test_num].DesiredAccess);
 	ok(any_accesses[test_num].result == result,
@@ -1226,7 +1224,7 @@ static void test_RtlIpv4StringToAddress(void)
         { "::1",             STATUS_INVALID_PARAMETER,  0, { -1 } },
         { ":1",              STATUS_INVALID_PARAMETER,  0, { -1 } },
     };
-    const int testcount = sizeof(tests) / sizeof(tests[0]);
+    const int testcount = ARRAY_SIZE(tests);
     int i;
 
     if (!pRtlIpv4StringToAddressA)
@@ -1787,7 +1785,7 @@ static void test_RtlDecompressBuffer(void)
     ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
 
     /* regular tests for RtlDecompressBuffer */
-    for (i = 0; i < sizeof(test_lznt) / sizeof(test_lznt[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(test_lznt); i++)
     {
         trace("Running test %d (compressed_size=%u, uncompressed_size=%u, status=0x%08x)\n",
               i, test_lznt[i].compressed_size, test_lznt[i].uncompressed_size, test_lznt[i].status);

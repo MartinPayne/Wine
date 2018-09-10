@@ -321,7 +321,7 @@ static BOOL wined3d_swapchain_desc_from_present_parameters(struct wined3d_swapch
     return TRUE;
 }
 
-void d3dcaps_from_wined3dcaps(D3DCAPS8 *caps, const WINED3DCAPS *wined3d_caps)
+void d3dcaps_from_wined3dcaps(D3DCAPS8 *caps, const struct wined3d_caps *wined3d_caps)
 {
     caps->DeviceType                = (D3DDEVTYPE)wined3d_caps->DeviceType;
     caps->AdapterOrdinal            = wined3d_caps->AdapterOrdinal;
@@ -671,7 +671,7 @@ static HRESULT WINAPI d3d8_device_GetDirect3D(IDirect3DDevice8 *iface, IDirect3D
 static HRESULT WINAPI d3d8_device_GetDeviceCaps(IDirect3DDevice8 *iface, D3DCAPS8 *caps)
 {
     struct d3d8_device *device = impl_from_IDirect3DDevice8(iface);
-    WINED3DCAPS wined3d_caps;
+    struct wined3d_caps wined3d_caps;
     HRESULT hr;
 
     TRACE("iface %p, caps %p.\n", iface, caps);
@@ -3102,6 +3102,14 @@ static HRESULT WINAPI d3d8_device_SetStreamSource(IDirect3DDevice8 *iface,
             iface, stream_idx, buffer, stride);
 
     wined3d_mutex_lock();
+    if (!stride)
+    {
+        struct wined3d_buffer *wined3d_buffer;
+        unsigned int cur_offset;
+
+        hr = wined3d_device_get_stream_source(device->wined3d_device, stream_idx, &wined3d_buffer,
+                &cur_offset, &stride);
+    }
     hr = wined3d_device_set_stream_source(device->wined3d_device, stream_idx,
             buffer_impl ? buffer_impl->wined3d_buffer : NULL, 0, stride);
     wined3d_mutex_unlock();

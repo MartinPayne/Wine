@@ -196,6 +196,7 @@ struct wined3d_d3d_info
     DWORD valid_rt_mask;
     DWORD wined3d_creation_flags;
     BOOL shader_double_precision;
+    enum wined3d_feature_level feature_level;
 };
 
 static const struct color_fixup_desc COLOR_FIXUP_IDENTITY =

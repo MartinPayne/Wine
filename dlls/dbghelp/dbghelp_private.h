@@ -591,7 +591,7 @@ extern int          elf_is_in_thunk_area(unsigned long addr, const struct elf_th
 /* macho_module.c */
 extern BOOL         macho_enum_modules(HANDLE hProc, enum_modules_cb, void*) DECLSPEC_HIDDEN;
 extern BOOL         macho_fetch_file_info(HANDLE process, const WCHAR* name, unsigned long load_addr, DWORD_PTR* base, DWORD* size, DWORD* checksum) DECLSPEC_HIDDEN;
-extern BOOL         macho_load_debug_info(struct module* module) DECLSPEC_HIDDEN;
+extern BOOL         macho_load_debug_info(struct process *pcs, struct module* module) DECLSPEC_HIDDEN;
 extern struct module*
                     macho_load_module(struct process* pcs, const WCHAR* name, unsigned long) DECLSPEC_HIDDEN;
 extern BOOL         macho_read_wine_loader_dbg_info(struct process* pcs) DECLSPEC_HIDDEN;
@@ -676,7 +676,7 @@ typedef void (*stabs_def_cb)(struct module* module, unsigned long load_offset,
                                 BOOL is_public, BOOL is_global, unsigned char other,
                                 struct symt_compiland* compiland, void* user);
 extern BOOL         stabs_parse(struct module* module, unsigned long load_offset,
-                                const void* stabs, int stablen,
+                                const char* stabs, int stablen,
                                 const char* strs, int strtablen,
                                 stabs_def_cb callback, void* user) DECLSPEC_HIDDEN;
 

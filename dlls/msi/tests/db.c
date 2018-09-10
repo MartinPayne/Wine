@@ -3033,8 +3033,6 @@ static const struct {
     { name9, data9, sizeof data9 },
 };
 
-#define NUM_TRANSFORM_TABLES (sizeof table_transform_data/sizeof table_transform_data[0])
-
 static void generate_transform_manual(void)
 {
     IStorage *stg = NULL;
@@ -3056,7 +3054,7 @@ static void generate_transform_manual(void)
     r = IStorage_SetClass( stg, &CLSID_MsiTransform );
     ok(r == S_OK, "failed to set storage type\n");
 
-    for (i=0; i<NUM_TRANSFORM_TABLES; i++)
+    for (i=0; i<ARRAY_SIZE(table_transform_data); i++)
     {
         r = IStorage_CreateStream( stg, table_transform_data[i].name,
                             STGM_WRITE | STGM_SHARE_EXCLUSIVE, 0, 0, &stm );
@@ -5223,12 +5221,12 @@ static void test_collation(void)
 
     r = MsiViewFetch(hview, &hrec);
     ok(r == ERROR_SUCCESS, "MsiViewFetch failed\n");
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 1, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!memcmp(bufferW, letter_a_ring, sizeof(letter_a_ring)),
        "Expected %s, got %s\n", wine_dbgstr_w(letter_a_ring), wine_dbgstr_w(bufferW));
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 2, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpW(bufferW, letter_C), "Expected C, got %s\n", wine_dbgstr_w(bufferW));
@@ -5236,12 +5234,12 @@ static void test_collation(void)
 
     r = MsiViewFetch(hview, &hrec);
     ok(r == ERROR_SUCCESS, "MsiViewFetch failed\n");
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 1, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!memcmp(bufferW, letter_a_with_ring, sizeof(letter_a_with_ring)),
        "Expected %s, got %s\n", wine_dbgstr_w(letter_a_with_ring), wine_dbgstr_w(bufferW));
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 2, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpW(bufferW, letter_D), "Expected D, got %s\n", wine_dbgstr_w(bufferW));
@@ -5259,12 +5257,12 @@ static void test_collation(void)
 
     r = MsiViewFetch(hview, &hrec);
     ok(r == ERROR_SUCCESS, "MsiViewFetch failed\n");
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 1, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!memcmp(bufferW, letter_a_with_ring, sizeof(letter_a_with_ring)),
        "Expected %s, got %s\n", wine_dbgstr_w(letter_a_with_ring), wine_dbgstr_w(bufferW));
-    sz = sizeof(bufferW) / sizeof(bufferW[0]);
+    sz = ARRAY_SIZE(bufferW);
     r = MsiRecordGetStringW(hrec, 2, bufferW, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpW(bufferW, letter_D), "Expected D, got %s\n", wine_dbgstr_w(bufferW));

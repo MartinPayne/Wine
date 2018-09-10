@@ -1310,17 +1310,19 @@ static UINT validate_package( MSIPACKAGE *package )
     return ERROR_INSTALL_LANGUAGE_UNSUPPORTED;
 }
 
-static WCHAR *get_product_code( MSIDATABASE *db )
+static WCHAR *get_property( MSIDATABASE *db, const WCHAR *prop )
 {
-    static const WCHAR query[] = {
+    static const WCHAR select_query[] = {
         'S','E','L','E','C','T',' ','`','V','a','l','u','e','`',' ',
         'F','R','O','M',' ','`','P','r','o','p','e','r','t','y','`',' ',
         'W','H','E','R','E',' ','`','P','r','o','p','e','r','t','y','`','=',
-        '\'','P','r','o','d','u','c','t','C','o','d','e','\'',0};
+        '\'','%','s','\'',0};
+    WCHAR query[MAX_PATH];
     MSIQUERY *view;
     MSIRECORD *rec;
     WCHAR *ret = NULL;
 
+    sprintfW(query, select_query, prop);
     if (MSI_DatabaseOpenViewW( db, query, &view ) != ERROR_SUCCESS)
     {
         return NULL;
@@ -1341,51 +1343,42 @@ static WCHAR *get_product_code( MSIDATABASE *db )
     return ret;
 }
 
-static UINT get_registered_local_package( const WCHAR *product, const WCHAR *package, WCHAR *localfile )
+static WCHAR *get_product_code( MSIDATABASE *db )
+{
+    return get_property( db, szProductCode );
+}
+
+static WCHAR *get_product_version( MSIDATABASE *db )
+{
+    return get_property( db, szProductVersion );
+}
+
+static UINT get_registered_local_package( const WCHAR *product, WCHAR *localfile )
 {
     MSIINSTALLCONTEXT context;
-    HKEY product_key, props_key;
-    WCHAR *registered_package = NULL, unsquashed[GUID_SIZE];
+    WCHAR *filename;
+    HKEY props_key;
     UINT r;
 
     r = msi_locate_product( product, &context );
     if (r != ERROR_SUCCESS)
         return r;
 
-    r = MSIREG_OpenProductKey( product, NULL, context, &product_key, FALSE );
-    if (r != ERROR_SUCCESS)
-        return r;
-
     r = MSIREG_OpenInstallProps( product, context, NULL, &props_key, FALSE );
     if (r != ERROR_SUCCESS)
-    {
-        RegCloseKey( product_key );
         return r;
-    }
-    r = ERROR_FUNCTION_FAILED;
-    registered_package = msi_reg_get_val_str( product_key, INSTALLPROPERTY_PACKAGECODEW );
-    if (!registered_package)
-        goto done;
 
-    unsquash_guid( registered_package, unsquashed );
-    if (!strcmpiW( package, unsquashed ))
-    {
-        WCHAR *filename = msi_reg_get_val_str( props_key, INSTALLPROPERTY_LOCALPACKAGEW );
-        if (!filename)
-            goto done;
-
-        strcpyW( localfile, filename );
-        msi_free( filename );
-        r = ERROR_SUCCESS;
-    }
-done:
-    msi_free( registered_package );
+    filename = msi_reg_get_val_str( props_key, INSTALLPROPERTY_LOCALPACKAGEW );
     RegCloseKey( props_key );
-    RegCloseKey( product_key );
-    return r;
+    if (!filename)
+        return ERROR_FUNCTION_FAILED;
+
+    strcpyW( localfile, filename );
+    msi_free( filename );
+    return ERROR_SUCCESS;
 }
 
-static WCHAR *get_package_code( MSIDATABASE *db )
+WCHAR *msi_get_package_code( MSIDATABASE *db )
 {
     WCHAR *ret;
     MSISUMMARYINFO *si;
@@ -1406,33 +1399,15 @@ static WCHAR *get_package_code( MSIDATABASE *db )
     return ret;
 }
 
-static UINT get_local_package( const WCHAR *filename, WCHAR *localfile )
+static UINT get_local_package( MSIDATABASE *db, WCHAR *localfile )
 {
-    WCHAR *product_code, *package_code;
-    MSIDATABASE *db;
+    WCHAR *product_code;
     UINT r;
 
-    if ((r = MSI_OpenDatabaseW( filename, MSIDBOPEN_READONLY, &db )) != ERROR_SUCCESS)
-    {
-        if (GetFileAttributesW( filename ) == INVALID_FILE_ATTRIBUTES)
-            return ERROR_FILE_NOT_FOUND;
-        return r;
-    }
     if (!(product_code = get_product_code( db )))
-    {
-        msiobj_release( &db->hdr );
         return ERROR_INSTALL_PACKAGE_INVALID;
-    }
-    if (!(package_code = get_package_code( db )))
-    {
-        msi_free( product_code );
-        msiobj_release( &db->hdr );
-        return ERROR_INSTALL_PACKAGE_INVALID;
-    }
-    r = get_registered_local_package( product_code, package_code, localfile );
-    msi_free( package_code );
+    r = get_registered_local_package( product_code, localfile );
     msi_free( product_code );
-    msiobj_release( &db->hdr );
     return r;
 }
 
@@ -1458,7 +1433,7 @@ UINT msi_set_original_database_property( MSIDATABASE *db, const WCHAR *package )
     return r;
 }
 
-UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
+UINT MSI_OpenPackageW(LPCWSTR szPackage, DWORD dwOptions, MSIPACKAGE **pPackage)
 {
     static const WCHAR dotmsi[] = {'.','m','s','i',0};
     MSIDATABASE *db;
@@ -1471,7 +1446,8 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
     DWORD index = 0;
     MSISUMMARYINFO *si;
     BOOL delete_on_close = FALSE;
-    WCHAR *info_template, *productname;
+    WCHAR *info_template, *productname, *product_code;
+    MSIINSTALLCONTEXT context;
 
     TRACE("%s %p\n", debugstr_w(szPackage), pPackage);
 
@@ -1496,6 +1472,8 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
     }
     else
     {
+        WCHAR *product_version = NULL;
+
         if ( UrlIsW( szPackage, URLIS_URL ) )
         {
             r = msi_download_file( szPackage, cachefile );
@@ -1504,26 +1482,65 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
 
             file = cachefile;
         }
-        r = get_local_package( file, localfile );
+        r = MSI_OpenDatabaseW( file, MSIDBOPEN_READONLY, &db );
+        if (r != ERROR_SUCCESS)
+        {
+            if (GetFileAttributesW( file ) == INVALID_FILE_ATTRIBUTES)
+                return ERROR_FILE_NOT_FOUND;
+            return r;
+        }
+        r = get_local_package( db, localfile );
         if (r != ERROR_SUCCESS || GetFileAttributesW( localfile ) == INVALID_FILE_ATTRIBUTES)
         {
             r = msi_create_empty_local_file( localfile, dotmsi );
             if (r != ERROR_SUCCESS)
+            {
+                msiobj_release( &db->hdr );
                 return r;
+            }
 
             if (!CopyFileW( file, localfile, FALSE ))
             {
                 r = GetLastError();
                 WARN("unable to copy package %s to %s (%u)\n", debugstr_w(file), debugstr_w(localfile), r);
                 DeleteFileW( localfile );
+                msiobj_release( &db->hdr );
                 return r;
             }
             delete_on_close = TRUE;
         }
+        else if (dwOptions & WINE_OPENPACKAGEFLAGS_RECACHE)
+        {
+            if (!CopyFileW( file, localfile, FALSE ))
+            {
+                r = GetLastError();
+                WARN("unable to update cached package (%u)\n", r);
+                msiobj_release( &db->hdr );
+                return r;
+            }
+        }
+        else
+            product_version = get_product_version( db );
+        msiobj_release( &db->hdr );
         TRACE("opening package %s\n", debugstr_w( localfile ));
         r = MSI_OpenDatabaseW( localfile, MSIDBOPEN_TRANSACT, &db );
         if (r != ERROR_SUCCESS)
             return r;
+
+        if (product_version)
+        {
+            WCHAR *cache_version = get_product_version( db );
+            if (!product_version != !cache_version ||
+                    (product_version && strcmpW(product_version, cache_version)))
+            {
+                msiobj_release( &db->hdr );
+                msi_free(product_version);
+                msi_free(cache_version);
+                return ERROR_PRODUCT_VERSION;
+            }
+            msi_free(product_version);
+            msi_free(cache_version);
+        }
     }
     package = MSI_CreatePackage( db );
     msiobj_release( &db->hdr );
@@ -1559,6 +1576,14 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
     msi_set_property( package->db, szDatabase, db->path, -1 );
     set_installed_prop( package );
     msi_set_context( package );
+
+    product_code = get_product_code( db );
+    if (msi_locate_product( product_code, &context ) == ERROR_SUCCESS)
+    {
+        TRACE("product already registered\n");
+        msi_set_property( package->db, szProductToBeRegistered, szOne, -1 );
+    }
+    msi_free(product_code);
 
     while (1)
     {
@@ -1647,7 +1672,7 @@ UINT WINAPI MsiOpenPackageExW(LPCWSTR szPackage, DWORD dwOptions, MSIHANDLE *phP
     if( dwOptions )
         FIXME("dwOptions %08x not supported\n", dwOptions);
 
-    ret = MSI_OpenPackageW( szPackage, &package );
+    ret = MSI_OpenPackageW( szPackage, 0, &package );
     if( ret == ERROR_SUCCESS )
     {
         *phPackage = alloc_msihandle( &package->hdr );

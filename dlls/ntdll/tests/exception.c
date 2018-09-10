@@ -149,6 +149,8 @@ static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionEntry)(ULONG64, ULONG64*, UN
 static EXCEPTION_DISPOSITION (WINAPI *p__C_specific_handler)(EXCEPTION_RECORD*, ULONG64, CONTEXT*, DISPATCHER_CONTEXT*);
 static VOID      (WINAPI *pRtlCaptureContext)(CONTEXT*);
 static VOID      (CDECL *pRtlRestoreContext)(CONTEXT*, EXCEPTION_RECORD*);
+static NTSTATUS  (WINAPI *pRtlWow64GetThreadContext)(HANDLE, WOW64_CONTEXT *);
+static NTSTATUS  (WINAPI *pRtlWow64SetThreadContext)(HANDLE, const WOW64_CONTEXT *);
 static VOID      (CDECL *pRtlUnwindEx)(VOID*, VOID*, EXCEPTION_RECORD*, VOID*, CONTEXT*, UNWIND_HISTORY_TABLE*);
 static int       (CDECL *p_setjmp)(_JUMP_BUFFER*);
 #endif
@@ -641,7 +643,7 @@ static void test_prot_fault(void)
 {
     unsigned int i;
 
-    for (i = 0; i < sizeof(exceptions)/sizeof(exceptions[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(exceptions); i++)
     {
         if (is_wow64 && exceptions[i].wow64_broken && !strcmp( winetest_platform, "windows" ))
         {
@@ -1732,7 +1734,7 @@ static void call_virtual_unwind( int testnum, const struct unwind_test *test )
 
         for (j = 0; j < 16; j++)
         {
-            static const UINT nb_regs = sizeof(test->results[i].regs) / sizeof(test->results[i].regs[0]);
+            static const UINT nb_regs = ARRAY_SIZE(test->results[i].regs);
 
             for (k = 0; k < nb_regs; k++)
             {
@@ -1886,14 +1888,12 @@ static void test_virtual_unwind(void)
 
     static const struct unwind_test tests[] =
     {
-        { function_0, sizeof(function_0), unwind_info_0,
-          results_0, sizeof(results_0)/sizeof(results_0[0]) },
-        { function_1, sizeof(function_1), unwind_info_1,
-          results_1, sizeof(results_1)/sizeof(results_1[0]) }
+        { function_0, sizeof(function_0), unwind_info_0, results_0, ARRAY_SIZE(results_0) },
+        { function_1, sizeof(function_1), unwind_info_1, results_1, ARRAY_SIZE(results_1) }
     };
     unsigned int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
         call_virtual_unwind( i, &tests[i] );
 }
 
@@ -2427,7 +2427,7 @@ static void test_prot_fault(void)
 {
     unsigned int i;
 
-    for (i = 0; i < sizeof(exceptions)/sizeof(exceptions[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(exceptions); i++)
     {
         got_exception = 0;
         run_exception_test(handler, &exceptions[i], &exceptions[i].code,
@@ -2490,6 +2490,41 @@ static void test_dpe_exceptions(void)
     pRtlRemoveVectoredExceptionHandler(handler);
 }
 
+static void test_wow64_context(void)
+{
+    char cmdline[] = "C:\\windows\\syswow64\\notepad.exe";
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si = {0};
+    WOW64_CONTEXT ctx;
+    NTSTATUS ret;
+
+    memset(&ctx, 0x55, sizeof(ctx));
+    ctx.ContextFlags = WOW64_CONTEXT_ALL;
+    ret = pRtlWow64GetThreadContext( GetCurrentThread(), &ctx );
+    ok(ret == STATUS_INVALID_PARAMETER || broken(ret == STATUS_PARTIAL_COPY), "got %#x\n", ret);
+
+    CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+
+    ret = pRtlWow64GetThreadContext( pi.hThread, &ctx );
+    ok(ret == STATUS_SUCCESS, "got %#x\n", ret);
+    ok(ctx.ContextFlags == WOW64_CONTEXT_ALL, "got context flags %#x\n", ctx.ContextFlags);
+    ok(!ctx.Ebp, "got ebp %08x\n", ctx.Ebp);
+    ok(!ctx.Ecx, "got ecx %08x\n", ctx.Ecx);
+    ok(!ctx.Edx, "got edx %08x\n", ctx.Edx);
+    ok(!ctx.Esi, "got esi %08x\n", ctx.Esi);
+    ok(!ctx.Edi, "got edi %08x\n", ctx.Edi);
+    ok((ctx.EFlags & ~2) == 0x200, "got eflags %08x\n", ctx.EFlags);
+    ok((WORD) ctx.FloatSave.ControlWord == 0x27f, "got control word %08x\n",
+        ctx.FloatSave.ControlWord);
+    ok(*(WORD *)ctx.ExtendedRegisters == 0x27f, "got SSE control word %04x\n",
+       *(WORD *)ctx.ExtendedRegisters);
+
+    ret = pRtlWow64SetThreadContext( pi.hThread, &ctx );
+    ok(ret == STATUS_SUCCESS, "got %#x\n", ret);
+
+    pNtTerminateProcess(pi.hProcess, 0);
+}
+
 #endif  /* __x86_64__ */
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -2530,7 +2565,7 @@ static void test_debug_registers(void)
     HANDLE thread;
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         memset(&ctx, 0, sizeof(ctx));
         ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
@@ -3128,6 +3163,10 @@ START_TEST(exception)
                                                                  "RtlRestoreContext" );
     pRtlUnwindEx                       = (void *)GetProcAddress( hntdll,
                                                                  "RtlUnwindEx" );
+    pRtlWow64GetThreadContext          = (void *)GetProcAddress( hntdll,
+                                                                 "RtlWow64GetThreadContext" );
+    pRtlWow64SetThreadContext          = (void *)GetProcAddress( hntdll,
+                                                                 "RtlWow64SetThreadContext" );
     p_setjmp                           = (void *)GetProcAddress( hmsvcrt,
                                                                  "_setjmp" );
 
@@ -3143,6 +3182,7 @@ START_TEST(exception)
     test_restore_context();
     test_prot_fault();
     test_dpe_exceptions();
+    test_wow64_context();
 
     if (pRtlAddFunctionTable && pRtlDeleteFunctionTable && pRtlInstallFunctionTableCallback && pRtlLookupFunctionEntry)
       test_dynamic_unwind();

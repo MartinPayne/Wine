@@ -799,6 +799,7 @@ extern UINT ACTION_ForceReboot(MSIPACKAGE *package) DECLSPEC_HIDDEN;
 extern UINT MSI_Sequence( MSIPACKAGE *package, LPCWSTR szTable ) DECLSPEC_HIDDEN;
 extern UINT MSI_SetFeatureStates( MSIPACKAGE *package ) DECLSPEC_HIDDEN;
 extern UINT msi_parse_command_line( MSIPACKAGE *package, LPCWSTR szCommandLine, BOOL preserve_case ) DECLSPEC_HIDDEN;
+extern const WCHAR *msi_get_command_line_option( const WCHAR *cmd, const WCHAR *option, UINT *len ) DECLSPEC_HIDDEN;
 extern UINT msi_schedule_action( MSIPACKAGE *package, UINT script, const WCHAR *action ) DECLSPEC_HIDDEN;
 extern INSTALLSTATE msi_get_component_action( MSIPACKAGE *package, MSICOMPONENT *comp ) DECLSPEC_HIDDEN;
 extern INSTALLSTATE msi_get_feature_action( MSIPACKAGE *package, MSIFEATURE *feature ) DECLSPEC_HIDDEN;
@@ -863,8 +864,9 @@ extern UINT msi_view_get_row(MSIDATABASE *, MSIVIEW *, UINT, MSIRECORD **) DECLS
 extern UINT MSI_SetInstallLevel( MSIPACKAGE *package, int iInstallLevel ) DECLSPEC_HIDDEN;
 
 /* package internals */
+#define WINE_OPENPACKAGEFLAGS_RECACHE 0x80000000
 extern MSIPACKAGE *MSI_CreatePackage( MSIDATABASE * ) DECLSPEC_HIDDEN;
-extern UINT MSI_OpenPackageW( LPCWSTR szPackage, MSIPACKAGE **pPackage ) DECLSPEC_HIDDEN;
+extern UINT MSI_OpenPackageW( LPCWSTR szPackage, DWORD dwOptions, MSIPACKAGE **pPackage ) DECLSPEC_HIDDEN;
 extern UINT MSI_SetTargetPathW( MSIPACKAGE *, LPCWSTR, LPCWSTR ) DECLSPEC_HIDDEN;
 extern INT MSI_ProcessMessageVerbatim( MSIPACKAGE *, INSTALLMESSAGE, MSIRECORD * ) DECLSPEC_HIDDEN;
 extern INT MSI_ProcessMessage( MSIPACKAGE *, INSTALLMESSAGE, MSIRECORD * ) DECLSPEC_HIDDEN;
@@ -1048,6 +1050,7 @@ extern UINT msi_set_original_database_property(MSIDATABASE *, const WCHAR *) DEC
 extern WCHAR *msi_get_error_message(MSIDATABASE *, int) DECLSPEC_HIDDEN;
 extern UINT msi_strncpyWtoA(const WCHAR *str, int len, char *buf, DWORD *sz, BOOL remote) DECLSPEC_HIDDEN;
 extern UINT msi_strncpyW(const WCHAR *str, int len, WCHAR *buf, DWORD *sz) DECLSPEC_HIDDEN;
+extern WCHAR *msi_get_package_code(MSIDATABASE *db) DECLSPEC_HIDDEN;
 
 /* media */
 
@@ -1200,6 +1203,7 @@ static const WCHAR szInstallLocation[] = {'I','n','s','t','a','l','l','L','o','c
 static const WCHAR szProperty[] = {'P','r','o','p','e','r','t','y',0};
 static const WCHAR szUninstallable[] = {'U','n','i','n','s','t','a','l','l','a','b','l','e',0};
 static const WCHAR szEXECUTEACTION[] = {'E','X','E','C','U','T','E','A','C','T','I','O','N',0};
+static const WCHAR szProductToBeRegistered[] = {'P','r','o','d','u','c','t','T','o','B','e','R','e','g','i','s','t','e','r','e','d',0};
 
 /* memory allocation macro functions */
 static void *msi_alloc( size_t len ) __WINE_ALLOC_SIZE(1);

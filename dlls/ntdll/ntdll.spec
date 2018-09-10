@@ -596,6 +596,7 @@
 @ stdcall RtlEraseUnicodeString(ptr)
 @ stdcall RtlExitUserProcess(long)
 @ stdcall RtlExitUserThread(long)
+@ stdcall RtlExpandEnvironmentStrings(ptr wstr long ptr long ptr)
 @ stdcall RtlExpandEnvironmentStrings_U(ptr ptr ptr ptr)
 @ stub RtlExtendHeap
 @ stdcall -arch=win32 -ret64 RtlExtendedIntegerMultiply(int64 long)
@@ -978,6 +979,8 @@
 @ stdcall RtlWalkHeap(long ptr)
 @ stdcall RtlWow64EnableFsRedirection(long)
 @ stdcall RtlWow64EnableFsRedirectionEx(long ptr)
+@ stdcall -arch=x86_64 RtlWow64GetThreadContext(long ptr)
+@ stdcall -arch=x86_64 RtlWow64SetThreadContext(long ptr)
 @ stub RtlWriteMemoryStream
 @ stdcall RtlWriteRegistryValue(long ptr ptr long ptr long)
 @ stub RtlZeroHeap
@@ -1029,6 +1032,7 @@
 @ stdcall -ret64 VerSetConditionMask(int64 long long)
 @ stdcall WinSqmEndSession(long)
 @ stdcall WinSqmIsOptedIn()
+@ stdcall WinSqmSetDWORD(ptr long long)
 @ stdcall WinSqmStartSession(ptr long long)
 @ stdcall -private ZwAcceptConnectPort(ptr long ptr long ptr ptr) NtAcceptConnectPort
 @ stdcall -private ZwAccessCheck(ptr long long ptr ptr ptr ptr ptr) NtAccessCheck

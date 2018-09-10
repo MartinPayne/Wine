@@ -95,7 +95,7 @@ struct gdb_context
     /* current Win32 trap env */
     unsigned                    last_sig;
     BOOL                        in_trap;
-    CONTEXT                     context;
+    dbg_ctx_t                   context;
     /* Win32 information */
     struct dbg_process*         process;
     /* Unix environment */
@@ -183,234 +183,12 @@ static unsigned char checksum(const char* ptr, int len)
     return cksum;
 }
 
-/* =============================================== *
- *              C P U   H A N D L E R S            *
- * =============================================== *
- */
-
-/* This struct helps us to manage the different representations of a register:
- * ctx_offset and ctx_length are the location and size in Win32 CONTEXT
- * gdb_length is the length gdb expects on the wire
- * As the two sizes could be different, we have to convert between the two
- * (for example, on x86_64, Seg?s are 4 bytes on the wire and 2 in CONTEXT)
- */
-struct cpu_register
-{
-    size_t      ctx_offset;
-    size_t      ctx_length;
-    size_t      gdb_length;
-    ULONG       ctx_flags;
-};
-
-#define REG(r,gs,m)  {FIELD_OFFSET(CONTEXT, r), sizeof(((CONTEXT*)NULL)->r), gs, m}
-
 #ifdef __i386__
-typedef struct DECLSPEC_ALIGN(16) _M128A {
-    ULONGLONG Low;
-    LONGLONG High;
-} M128A, *PM128A;
-
-typedef struct _XMM_SAVE_AREA32 {
-    WORD ControlWord;        /* 000 */
-    WORD StatusWord;         /* 002 */
-    BYTE TagWord;            /* 004 */
-    BYTE Reserved1;          /* 005 */
-    WORD ErrorOpcode;        /* 006 */
-    DWORD ErrorOffset;       /* 008 */
-    WORD ErrorSelector;      /* 00c */
-    WORD Reserved2;          /* 00e */
-    DWORD DataOffset;        /* 010 */
-    WORD DataSelector;       /* 014 */
-    WORD Reserved3;          /* 016 */
-    DWORD MxCsr;             /* 018 */
-    DWORD MxCsr_Mask;        /* 01c */
-    M128A FloatRegisters[8]; /* 020 */
-    M128A XmmRegisters[16];  /* 0a0 */
-    BYTE Reserved4[96];      /* 1a0 */
-} XMM_SAVE_AREA32, *PXMM_SAVE_AREA32;
-
 static const char target_xml[] = "";
-static struct cpu_register cpu_register_map[] = {
-    REG(Eax, 4, CONTEXT_INTEGER),
-    REG(Ecx, 4, CONTEXT_INTEGER),
-    REG(Edx, 4, CONTEXT_INTEGER),
-    REG(Ebx, 4, CONTEXT_INTEGER),
-    REG(Esp, 4, CONTEXT_CONTROL),
-    REG(Ebp, 4, CONTEXT_CONTROL),
-    REG(Esi, 4, CONTEXT_INTEGER),
-    REG(Edi, 4, CONTEXT_INTEGER),
-    REG(Eip, 4, CONTEXT_CONTROL),
-    REG(EFlags, 4, CONTEXT_CONTROL),
-    REG(SegCs, 4, CONTEXT_CONTROL),
-    REG(SegSs, 4, CONTEXT_SEGMENTS),
-    REG(SegDs, 4, CONTEXT_SEGMENTS),
-    REG(SegEs, 4, CONTEXT_SEGMENTS),
-    REG(SegFs, 4, CONTEXT_SEGMENTS),
-    REG(SegGs, 4, CONTEXT_SEGMENTS),
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[ 0]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[10]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[20]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[30]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[40]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[50]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[60]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.RegisterArea[70]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.ControlWord), 2, 4, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.StatusWord), 2, 4, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.TagWord), 2, 4, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, FloatSave.ErrorSelector), 2, 4, CONTEXT_FLOATING_POINT },
-    REG(FloatSave.ErrorOffset, 4, CONTEXT_FLOATING_POINT ),
-    { FIELD_OFFSET(CONTEXT, FloatSave.DataSelector), 2, 4, CONTEXT_FLOATING_POINT },
-    REG(FloatSave.DataOffset, 4, CONTEXT_FLOATING_POINT ),
-    { FIELD_OFFSET(CONTEXT, FloatSave.ErrorSelector)+2, 2, 4, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[0]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[1]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[2]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[3]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[4]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[5]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[6]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, XmmRegisters[7]), 16, 16, CONTEXT_EXTENDED_REGISTERS },
-    { FIELD_OFFSET(CONTEXT, ExtendedRegisters) + FIELD_OFFSET(XMM_SAVE_AREA32, MxCsr), 4, 4, CONTEXT_EXTENDED_REGISTERS },
-};
 #elif defined(__powerpc__)
 static const char target_xml[] = "";
-static struct cpu_register cpu_register_map[] = {
-    REG(Gpr0, 4, CONTEXT_INTEGER),
-    REG(Gpr1, 4, CONTEXT_INTEGER),
-    REG(Gpr2, 4, CONTEXT_INTEGER),
-    REG(Gpr3, 4, CONTEXT_INTEGER),
-    REG(Gpr4, 4, CONTEXT_INTEGER),
-    REG(Gpr5, 4, CONTEXT_INTEGER),
-    REG(Gpr6, 4, CONTEXT_INTEGER),
-    REG(Gpr7, 4, CONTEXT_INTEGER),
-    REG(Gpr8, 4, CONTEXT_INTEGER),
-    REG(Gpr9, 4, CONTEXT_INTEGER),
-    REG(Gpr10, 4, CONTEXT_INTEGER),
-    REG(Gpr11, 4, CONTEXT_INTEGER),
-    REG(Gpr12, 4, CONTEXT_INTEGER),
-    REG(Gpr13, 4, CONTEXT_INTEGER),
-    REG(Gpr14, 4, CONTEXT_INTEGER),
-    REG(Gpr15, 4, CONTEXT_INTEGER),
-    REG(Gpr16, 4, CONTEXT_INTEGER),
-    REG(Gpr17, 4, CONTEXT_INTEGER),
-    REG(Gpr18, 4, CONTEXT_INTEGER),
-    REG(Gpr19, 4, CONTEXT_INTEGER),
-    REG(Gpr20, 4, CONTEXT_INTEGER),
-    REG(Gpr21, 4, CONTEXT_INTEGER),
-    REG(Gpr22, 4, CONTEXT_INTEGER),
-    REG(Gpr23, 4, CONTEXT_INTEGER),
-    REG(Gpr24, 4, CONTEXT_INTEGER),
-    REG(Gpr25, 4, CONTEXT_INTEGER),
-    REG(Gpr26, 4, CONTEXT_INTEGER),
-    REG(Gpr27, 4, CONTEXT_INTEGER),
-    REG(Gpr28, 4, CONTEXT_INTEGER),
-    REG(Gpr29, 4, CONTEXT_INTEGER),
-    REG(Gpr30, 4, CONTEXT_INTEGER),
-    REG(Gpr31, 4, CONTEXT_INTEGER),
-    REG(Fpr0, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr1, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr2, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr3, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr4, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr5, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr6, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr7, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr8, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr9, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr10, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr11, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr12, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr13, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr14, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr15, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr16, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr17, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr18, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr19, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr20, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr21, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr22, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr23, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr24, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr25, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr26, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr27, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr28, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr29, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr30, 4, CONTEXT_FLOATING_POINT),
-    REG(Fpr31, 4, CONTEXT_FLOATING_POINT),
-
-    REG(Iar, 4, CONTEXT_CONTROL),
-    REG(Msr, 4, CONTEXT_CONTROL),
-    REG(Cr, 4, CONTEXT_INTEGER),
-    REG(Lr, 4, CONTEXT_CONTROL),
-    REG(Ctr, 4, CONTEXT_CONTROL),
-    REG(Xer, 4, CONTEXT_INTEGER),
-    /* FIXME: MQ is missing? FIELD_OFFSET(CONTEXT, Mq), */
-    /* see gdb/nlm/ppc.c */
-};
 #elif defined(__x86_64__)
 static const char target_xml[] = "";
-static struct cpu_register cpu_register_map[] = {
-    REG(Rax, 8, CONTEXT_INTEGER),
-    REG(Rbx, 8, CONTEXT_INTEGER),
-    REG(Rcx, 8, CONTEXT_INTEGER),
-    REG(Rdx, 8, CONTEXT_INTEGER),
-    REG(Rsi, 8, CONTEXT_INTEGER),
-    REG(Rdi, 8, CONTEXT_INTEGER),
-    REG(Rbp, 8, CONTEXT_INTEGER),
-    REG(Rsp, 8, CONTEXT_INTEGER),
-    REG(R8, 8, CONTEXT_INTEGER),
-    REG(R9, 8, CONTEXT_INTEGER),
-    REG(R10, 8, CONTEXT_INTEGER),
-    REG(R11, 8, CONTEXT_INTEGER),
-    REG(R12, 8, CONTEXT_INTEGER),
-    REG(R13, 8, CONTEXT_INTEGER),
-    REG(R14, 8, CONTEXT_INTEGER),
-    REG(R15, 8, CONTEXT_INTEGER),
-    REG(Rip, 8, CONTEXT_CONTROL),
-    REG(EFlags, 4, CONTEXT_CONTROL),
-    REG(SegCs, 4, CONTEXT_CONTROL),
-    REG(SegSs, 4, CONTEXT_CONTROL),
-    REG(SegDs, 4, CONTEXT_SEGMENTS),
-    REG(SegEs, 4, CONTEXT_SEGMENTS),
-    REG(SegFs, 4, CONTEXT_SEGMENTS),
-    REG(SegGs, 4, CONTEXT_SEGMENTS),
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 0]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 1]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 2]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 3]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 4]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 5]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 6]), 10, 10, CONTEXT_FLOATING_POINT },
-    { FIELD_OFFSET(CONTEXT, u.FltSave.FloatRegisters[ 7]), 10, 10, CONTEXT_FLOATING_POINT },
-    REG(u.FltSave.ControlWord, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.StatusWord, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.TagWord, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.ErrorSelector, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.ErrorOffset, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.DataSelector, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.DataOffset, 4, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.ErrorOpcode, 4, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm0, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm1, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm2, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm3, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm4, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm5, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm6, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm7, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm8, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm9, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm10, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm11, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm12, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm13, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm14, 16, CONTEXT_FLOATING_POINT),
-    REG(u.s.Xmm15, 16, CONTEXT_FLOATING_POINT),
-    REG(u.FltSave.MxCsr, 4, CONTEXT_FLOATING_POINT),
-};
 #elif defined(__arm__)
 static const char target_xml[] =
     "l <target><architecture>arm</architecture>\n"
@@ -433,96 +211,43 @@ static const char target_xml[] =
     "    <reg name=\"pc\" bitsize=\"32\" type=\"code_ptr\"/>\n"
     "    <reg name=\"cpsr\" bitsize=\"32\"/>\n"
     "</feature></target>\n";
-
-static struct cpu_register cpu_register_map[] = {
-    REG(R0, 4, CONTEXT_INTEGER),
-    REG(R1, 4, CONTEXT_INTEGER),
-    REG(R2, 4, CONTEXT_INTEGER),
-    REG(R3, 4, CONTEXT_INTEGER),
-    REG(R4, 4, CONTEXT_INTEGER),
-    REG(R5, 4, CONTEXT_INTEGER),
-    REG(R6, 4, CONTEXT_INTEGER),
-    REG(R7, 4, CONTEXT_INTEGER),
-    REG(R8, 4, CONTEXT_INTEGER),
-    REG(R9, 4, CONTEXT_INTEGER),
-    REG(R10, 4, CONTEXT_INTEGER),
-    REG(R11, 4, CONTEXT_INTEGER),
-    REG(R12, 4, CONTEXT_INTEGER),
-    REG(Sp, 4, CONTEXT_CONTROL),
-    REG(Lr, 4, CONTEXT_CONTROL),
-    REG(Pc, 4, CONTEXT_CONTROL),
-    REG(Cpsr, 4, CONTEXT_CONTROL),
-};
 #elif defined(__aarch64__)
 static const char target_xml[] = "";
-static struct cpu_register cpu_register_map[] = {
-    REG(Cpsr, 4, CONTEXT_CONTROL),
-    REG(u.s.X0,  8, CONTEXT_INTEGER),
-    REG(u.s.X1,  8, CONTEXT_INTEGER),
-    REG(u.s.X2,  8, CONTEXT_INTEGER),
-    REG(u.s.X3,  8, CONTEXT_INTEGER),
-    REG(u.s.X4,  8, CONTEXT_INTEGER),
-    REG(u.s.X5,  8, CONTEXT_INTEGER),
-    REG(u.s.X6,  8, CONTEXT_INTEGER),
-    REG(u.s.X7,  8, CONTEXT_INTEGER),
-    REG(u.s.X8,  8, CONTEXT_INTEGER),
-    REG(u.s.X9,  8, CONTEXT_INTEGER),
-    REG(u.s.X10, 8, CONTEXT_INTEGER),
-    REG(u.s.X11, 8, CONTEXT_INTEGER),
-    REG(u.s.X12, 8, CONTEXT_INTEGER),
-    REG(u.s.X13, 8, CONTEXT_INTEGER),
-    REG(u.s.X14, 8, CONTEXT_INTEGER),
-    REG(u.s.X15, 8, CONTEXT_INTEGER),
-    REG(u.s.X16, 8, CONTEXT_INTEGER),
-    REG(u.s.X17, 8, CONTEXT_INTEGER),
-    REG(u.s.X18, 8, CONTEXT_INTEGER),
-    REG(u.s.X19, 8, CONTEXT_INTEGER),
-    REG(u.s.X20, 8, CONTEXT_INTEGER),
-    REG(u.s.X21, 8, CONTEXT_INTEGER),
-    REG(u.s.X22, 8, CONTEXT_INTEGER),
-    REG(u.s.X23, 8, CONTEXT_INTEGER),
-    REG(u.s.X24, 8, CONTEXT_INTEGER),
-    REG(u.s.X25, 8, CONTEXT_INTEGER),
-    REG(u.s.X26, 8, CONTEXT_INTEGER),
-    REG(u.s.X27, 8, CONTEXT_INTEGER),
-    REG(u.s.X28, 8, CONTEXT_INTEGER),
-    REG(u.s.Fp,  8, CONTEXT_INTEGER),
-    REG(u.s.Lr,  8, CONTEXT_INTEGER),
-    REG(Sp,  8, CONTEXT_CONTROL),
-    REG(Pc,  8, CONTEXT_CONTROL),
-};
 #else
 # error Define the registers map for your CPU
 #endif
-#undef REG
 
-static const size_t cpu_num_regs = (sizeof(cpu_register_map) / sizeof(cpu_register_map[0]));
-
-static inline void* cpu_register_ptr(CONTEXT* ctx, unsigned idx)
+static inline void* cpu_register_ptr(struct gdb_context *gdbctx,
+    dbg_ctx_t *ctx, unsigned idx)
 {
-    assert(idx < cpu_num_regs);
-    return (char*)ctx + cpu_register_map[idx].ctx_offset;
+    assert(idx < gdbctx->process->be_cpu->gdb_num_regs);
+    return (char*)ctx + gdbctx->process->be_cpu->gdb_register_map[idx].ctx_offset;
 }
 
-static inline DWORD64   cpu_register(CONTEXT* ctx, unsigned idx)
+static inline DWORD64 cpu_register(struct gdb_context *gdbctx,
+    dbg_ctx_t *ctx, unsigned idx)
 {
-    switch (cpu_register_map[idx].ctx_length)
+    switch (gdbctx->process->be_cpu->gdb_register_map[idx].ctx_length)
     {
-    case 1: return *(BYTE*)cpu_register_ptr(ctx, idx);
-    case 2: return *(WORD*)cpu_register_ptr(ctx, idx);
-    case 4: return *(DWORD*)cpu_register_ptr(ctx, idx);
-    case 8: return *(DWORD64*)cpu_register_ptr(ctx, idx);
+    case 1: return *(BYTE*)cpu_register_ptr(gdbctx, ctx, idx);
+    case 2: return *(WORD*)cpu_register_ptr(gdbctx, ctx, idx);
+    case 4: return *(DWORD*)cpu_register_ptr(gdbctx, ctx, idx);
+    case 8: return *(DWORD64*)cpu_register_ptr(gdbctx, ctx, idx);
     default:
-        fprintf(stderr, "got unexpected size: %u\n", (unsigned)cpu_register_map[idx].ctx_length);
+        fprintf(stderr, "got unexpected size: %u\n",
+            (unsigned)gdbctx->process->be_cpu->gdb_register_map[idx].ctx_length);
         assert(0);
         return 0;
     }
 }
 
-static inline   void    cpu_register_hex_from(CONTEXT* ctx, unsigned idx, const char** phex)
+static inline void cpu_register_hex_from(struct gdb_context *gdbctx,
+    dbg_ctx_t* ctx, unsigned idx, const char **phex)
 {
+    const struct gdb_register *cpu_register_map = gdbctx->process->be_cpu->gdb_register_map;
+
     if (cpu_register_map[idx].gdb_length == cpu_register_map[idx].ctx_length)
-        hex_from(cpu_register_ptr(ctx, idx), *phex, cpu_register_map[idx].gdb_length);
+        hex_from(cpu_register_ptr(gdbctx, ctx, idx), *phex, cpu_register_map[idx].gdb_length);
     else
     {
         DWORD64     val = 0;
@@ -537,10 +262,10 @@ static inline   void    cpu_register_hex_from(CONTEXT* ctx, unsigned idx, const 
         }
         switch (cpu_register_map[idx].ctx_length)
         {
-        case 1: *(BYTE*)cpu_register_ptr(ctx, idx) = (BYTE)val; break;
-        case 2: *(WORD*)cpu_register_ptr(ctx, idx) = (WORD)val; break;
-        case 4: *(DWORD*)cpu_register_ptr(ctx, idx) = (DWORD)val; break;
-        case 8: *(DWORD64*)cpu_register_ptr(ctx, idx) = val; break;
+        case 1: *(BYTE*)cpu_register_ptr(gdbctx, ctx, idx) = (BYTE)val; break;
+        case 2: *(WORD*)cpu_register_ptr(gdbctx, ctx, idx) = (WORD)val; break;
+        case 4: *(DWORD*)cpu_register_ptr(gdbctx, ctx, idx) = (DWORD)val; break;
+        case 8: *(DWORD64*)cpu_register_ptr(gdbctx, ctx, idx) = val; break;
         default: assert(0);
         }
     }
@@ -551,24 +276,9 @@ static inline   void    cpu_register_hex_from(CONTEXT* ctx, unsigned idx, const 
  * =============================================== *
  */
 
-static BOOL fetch_context(struct gdb_context* gdbctx, HANDLE h, CONTEXT* ctx)
+static BOOL fetch_context(struct gdb_context *gdbctx, HANDLE h, dbg_ctx_t *ctx)
 {
-    ctx->ContextFlags =  CONTEXT_CONTROL
-                       | CONTEXT_INTEGER
-#if defined(__powerpc__) || defined(__i386__) || defined(__x86_64__)
-                       | CONTEXT_FLOATING_POINT
-#endif
-#ifdef CONTEXT_SEGMENTS
-	               | CONTEXT_SEGMENTS
-#endif
-#ifdef CONTEXT_DEBUG_REGISTERS
-	               | CONTEXT_DEBUG_REGISTERS
-#endif
-#ifdef CONTEXT_EXTENDED_REGISTERS
-                       | CONTEXT_EXTENDED_REGISTERS
-#endif
-		       ;
-    if (!GetThreadContext(h, ctx))
+    if (!gdbctx->process->be_cpu->get_context(h, ctx))
     {
         if (gdbctx->trace & GDBPXY_TRC_WIN32_ERROR)
             fprintf(stderr, "Can't get thread's context\n");
@@ -629,6 +339,30 @@ static BOOL handle_exception(struct gdb_context* gdbctx, EXCEPTION_DEBUG_INFO* e
         ret = TRUE;
         /* FIXME: we could also add here a O packet with additional information */
         break;
+    case EXCEPTION_NAME_THREAD:
+    {
+        const THREADNAME_INFO *threadname = (const THREADNAME_INFO *)rec->ExceptionInformation;
+        struct dbg_thread *thread;
+        char name[9];
+        SIZE_T read;
+
+        if (threadname->dwThreadID == -1)
+            thread = dbg_curr_thread;
+        else
+            thread = dbg_get_thread(gdbctx->process, threadname->dwThreadID);
+        if (thread)
+        {
+            if (gdbctx->process->process_io->read( gdbctx->process->handle,
+                threadname->szName, name, sizeof(name), &read) && read == sizeof(name))
+            {
+                fprintf(stderr, "Thread ID=%04x renamed to \"%.9s\"\n",
+                    threadname->dwThreadID, name);
+            }
+        }
+        else
+            fprintf(stderr, "Cannot set name of thread %04x\n", threadname->dwThreadID);
+        return DBG_CONTINUE;
+    }
     default:
         if (gdbctx->trace & GDBPXY_TRC_WIN32_EVENT)
             fprintf(stderr, "Unhandled exception code 0x%08x\n", rec->ExceptionCode);
@@ -657,7 +391,7 @@ static	void	handle_debug_event(struct gdb_context* gdbctx, DEBUG_EVENT* de)
         memory_get_string_indirect(gdbctx->process,
                                    de->u.CreateProcessInfo.lpImageName,
                                    de->u.CreateProcessInfo.fUnicode,
-                                   u.buffer, sizeof(u.buffer) / sizeof(WCHAR));
+                                   u.buffer, ARRAY_SIZE(u.buffer));
         dbg_set_process_name(gdbctx->process, u.buffer);
 
         if (gdbctx->trace & GDBPXY_TRC_WIN32_EVENT)
@@ -689,7 +423,7 @@ static	void	handle_debug_event(struct gdb_context* gdbctx, DEBUG_EVENT* de)
         memory_get_string_indirect(gdbctx->process,
                                    de->u.LoadDll.lpImageName,
                                    de->u.LoadDll.fUnicode,
-                                   u.buffer, sizeof(u.buffer) / sizeof(WCHAR));
+                                   u.buffer, ARRAY_SIZE(u.buffer));
         if (gdbctx->trace & GDBPXY_TRC_WIN32_EVENT)
             fprintf(stderr, "%04x:%04x: loads DLL %s @%p (%u<%u>)\n",
                     de->dwProcessId, de->dwThreadId,
@@ -784,7 +518,7 @@ static void resume_debuggee(struct gdb_context* gdbctx, DWORD cont)
 {
     if (dbg_curr_thread)
     {
-        if (!SetThreadContext(dbg_curr_thread->handle, &gdbctx->context))
+        if (!gdbctx->process->be_cpu->set_context(dbg_curr_thread->handle, &gdbctx->context))
             if (gdbctx->trace & GDBPXY_TRC_WIN32_ERROR)
                 fprintf(stderr, "Cannot set context on thread %04x\n", dbg_curr_thread->tid);
         if (!ContinueDebugEvent(gdbctx->process->pid, dbg_curr_thread->tid, cont))
@@ -804,7 +538,7 @@ static void resume_debuggee_thread(struct gdb_context* gdbctx, DWORD cont, unsig
     {
         if(dbg_curr_thread->tid  == threadid){
             /* Windows debug and GDB don't seem to work well here, windows only likes ContinueDebugEvent being used on the reporter of the event */
-            if (!SetThreadContext(dbg_curr_thread->handle, &gdbctx->context))
+            if (!gdbctx->process->be_cpu->set_context(dbg_curr_thread->handle, &gdbctx->context))
                 if (gdbctx->trace & GDBPXY_TRC_WIN32_ERROR)
                     fprintf(stderr, "Cannot set context on thread %04x\n", dbg_curr_thread->tid);
             if (!ContinueDebugEvent(gdbctx->process->pid, dbg_curr_thread->tid, cont))
@@ -886,7 +620,8 @@ static void    wait_for_debuggee(struct gdb_context* gdbctx)
 
 static void detach_debuggee(struct gdb_context* gdbctx, BOOL kill)
 {
-    be_cpu->single_step(&gdbctx->context, FALSE);
+    assert(gdbctx->process->be_cpu);
+    gdbctx->process->be_cpu->single_step(&gdbctx->context, FALSE);
     resume_debuggee(gdbctx, DBG_CONTINUE);
     if (!kill)
         DebugActiveProcessStop(gdbctx->process->pid);
@@ -1093,11 +828,14 @@ static enum packet_return packet_reply_error(struct gdb_context* gdbctx, int err
 
 static inline void packet_reply_register_hex_to(struct gdb_context* gdbctx, unsigned idx)
 {
+    const struct gdb_register *cpu_register_map = gdbctx->process->be_cpu->gdb_register_map;
+
     if (cpu_register_map[idx].gdb_length == cpu_register_map[idx].ctx_length)
-        packet_reply_hex_to(gdbctx, cpu_register_ptr(&gdbctx->context, idx), cpu_register_map[idx].gdb_length);
+        packet_reply_hex_to(gdbctx, cpu_register_ptr(gdbctx, &gdbctx->context, idx),
+                            cpu_register_map[idx].gdb_length);
     else
     {
-        DWORD64     val = cpu_register(&gdbctx->context, idx);
+        DWORD64     val = cpu_register(gdbctx, &gdbctx->context, idx);
         unsigned    i;
 
         for (i = 0; i < cpu_register_map[idx].gdb_length; i++)
@@ -1132,12 +870,8 @@ static enum packet_return packet_reply_status(struct gdb_context* gdbctx)
         packet_reply_val(gdbctx, dbg_curr_thread->tid, 4);
         packet_reply_catc(gdbctx, ';');
 
-        for (i = 0; i < cpu_num_regs; i++)
+        for (i = 0; i < gdbctx->process->be_cpu->gdb_num_regs; i++)
         {
-            ULONG flags = cpu_register_map[i].ctx_flags;
-            if ((gdbctx->context.ContextFlags & flags) != flags)
-                break;
-
             /* FIXME: this call will also grow the buffer...
              * unneeded, but not harmful
              */
@@ -1309,13 +1043,13 @@ static enum packet_return packet_verbose_cont(struct gdb_context* gdbctx)
             switch (gdbctx->in_packet[actionIndex[i] + 1])
             {
             case 's': /* step */
-                be_cpu->single_step(&gdbctx->context, TRUE);
+                gdbctx->process->be_cpu->single_step(&gdbctx->context, TRUE);
                 /* fall through*/
             case 'c': /* continue */
                 resume_debuggee_thread(gdbctx, DBG_CONTINUE, threadID);
                 break;
             case 'S': /* step Sig, */
-                be_cpu->single_step(&gdbctx->context, TRUE);
+                gdbctx->process->be_cpu->single_step(&gdbctx->context, TRUE);
                 /* fall through */
             case 'C': /* continue sig */
                 hex_from(&sig, gdbctx->in_packet + actionIndex[i] + 2, 1);
@@ -1352,13 +1086,13 @@ static enum packet_return packet_verbose_cont(struct gdb_context* gdbctx)
                 switch (gdbctx->in_packet[actionIndex[defaultAction] + 1])
                 {
                 case 's': /* step */
-                    be_cpu->single_step(&gdbctx->context, TRUE);
+                    gdbctx->process->be_cpu->single_step(&gdbctx->context, TRUE);
                     /* fall through */
                 case 'c': /* continue */
                     resume_debuggee_thread(gdbctx, DBG_CONTINUE, threadID);
                     break;
                 case 'S':
-                     be_cpu->single_step(&gdbctx->context, TRUE);
+                     gdbctx->process->be_cpu->single_step(&gdbctx->context, TRUE);
                      /* fall through */
                 case 'C': /* continue sig */
                     hex_from(&sig, gdbctx->in_packet + actionIndex[defaultAction] + 2, 1);
@@ -1375,7 +1109,7 @@ static enum packet_return packet_verbose_cont(struct gdb_context* gdbctx)
     } /* if(defaultAction >=0) */
 
     wait_for_debuggee(gdbctx);
-    be_cpu->single_step(&gdbctx->context, FALSE);
+    gdbctx->process->be_cpu->single_step(&gdbctx->context, FALSE);
     return packet_reply_status(gdbctx);
 }
 
@@ -1412,7 +1146,7 @@ static enum packet_return packet_verbose(struct gdb_context* gdbctx)
             if (gdbctx->trace & GDBPXY_TRC_COMMAND)
                 fprintf(stderr, "trying to process a verbose packet %*.*s\n",
                         gdbctx->in_packet_len, gdbctx->in_packet_len, gdbctx->in_packet);
-            for (i = 0; i < sizeof(verbose_details)/sizeof(verbose_details[0]); i++)
+            for (i = 0; i < ARRAY_SIZE(verbose_details); i++)
             {
                 if (klen == verbose_details[i].len &&
                     !memcmp(gdbctx->in_packet, verbose_details[i].name, verbose_details[i].len))
@@ -1461,7 +1195,7 @@ static enum packet_return packet_detach(struct gdb_context* gdbctx)
 static enum packet_return packet_read_registers(struct gdb_context* gdbctx)
 {
     int                 i;
-    CONTEXT             ctx;
+    dbg_ctx_t ctx;
 
     assert(gdbctx->in_trap);
 
@@ -1472,22 +1206,19 @@ static enum packet_return packet_read_registers(struct gdb_context* gdbctx)
     }
 
     packet_reply_open(gdbctx);
-    for (i = 0; i < cpu_num_regs; i++)
-    {
-        ULONG flags = cpu_register_map[i].ctx_flags;
-        if ((gdbctx->context.ContextFlags & flags) != flags)
-            break;
+    for (i = 0; i < gdbctx->process->be_cpu->gdb_num_regs; i++)
         packet_reply_register_hex_to(gdbctx, i);
-    }
+
     packet_reply_close(gdbctx);
     return packet_done;
 }
 
 static enum packet_return packet_write_registers(struct gdb_context* gdbctx)
 {
+    const size_t cpu_num_regs = gdbctx->process->be_cpu->gdb_num_regs;
     unsigned    i;
-    CONTEXT     ctx;
-    CONTEXT*    pctx = &gdbctx->context;
+    dbg_ctx_t ctx;
+    dbg_ctx_t *pctx = &gdbctx->context;
     const char* ptr;
 
     assert(gdbctx->in_trap);
@@ -1500,13 +1231,10 @@ static enum packet_return packet_write_registers(struct gdb_context* gdbctx)
 
     ptr = gdbctx->in_packet;
     for (i = 0; i < cpu_num_regs; i++)
-    {
-        ULONG flags = cpu_register_map[i].ctx_flags;
-        if ((pctx->ContextFlags & flags) != flags)
-            break;
-        cpu_register_hex_from(pctx, i, &ptr);
-    }
-    if (pctx != &gdbctx->context && !SetThreadContext(gdbctx->other_thread->handle, pctx))
+        cpu_register_hex_from(gdbctx, pctx, i, &ptr);
+
+    if (pctx != &gdbctx->context &&
+        !gdbctx->process->be_cpu->set_context(gdbctx->other_thread->handle, pctx))
     {
         if (gdbctx->trace & GDBPXY_TRC_WIN32_ERROR)
             fprintf(stderr, "Cannot set context on thread %04x\n", gdbctx->other_thread->tid);
@@ -1643,12 +1371,12 @@ static enum packet_return packet_write_memory(struct gdb_context* gdbctx)
 static enum packet_return packet_read_register(struct gdb_context* gdbctx)
 {
     unsigned            reg;
-    CONTEXT             ctx;
-    CONTEXT*            pctx = &gdbctx->context;
+    dbg_ctx_t ctx;
+    dbg_ctx_t *pctx = &gdbctx->context;
 
     assert(gdbctx->in_trap);
     reg = hex_to_int(gdbctx->in_packet, gdbctx->in_packet_len);
-    if (reg >= cpu_num_regs)
+    if (reg >= gdbctx->process->be_cpu->gdb_num_regs)
     {
         if (gdbctx->trace & GDBPXY_TRC_COMMAND_ERROR)
             fprintf(stderr, "Register out of bounds %x\n", reg);
@@ -1661,9 +1389,9 @@ static enum packet_return packet_read_register(struct gdb_context* gdbctx)
     }
     if (gdbctx->trace & GDBPXY_TRC_COMMAND)
     {
-        if (cpu_register_map[reg].ctx_length <= sizeof(DWORD64))
+        if (gdbctx->process->be_cpu->gdb_register_map[reg].ctx_length <= sizeof(DWORD64))
             fprintf(stderr, "Read register %x => %08x%08x\n", reg,
-                    (unsigned)(cpu_register(pctx, reg) >> 32), (unsigned)cpu_register(pctx, reg));
+                    (unsigned)(cpu_register(gdbctx, pctx, reg) >> 32), (unsigned)cpu_register(gdbctx, pctx, reg));
         else
             fprintf(stderr, "Read register %x\n", reg);
     }
@@ -1677,13 +1405,13 @@ static enum packet_return packet_write_register(struct gdb_context* gdbctx)
 {
     unsigned            reg;
     char*               ptr;
-    CONTEXT             ctx;
-    CONTEXT*            pctx = &gdbctx->context;
+    dbg_ctx_t ctx;
+    dbg_ctx_t *pctx = &gdbctx->context;
 
     assert(gdbctx->in_trap);
 
     reg = strtoul(gdbctx->in_packet, &ptr, 16);
-    if (ptr == NULL || reg >= cpu_num_regs || *ptr++ != '=')
+    if (ptr == NULL || reg >= gdbctx->process->be_cpu->gdb_num_regs || *ptr++ != '=')
     {
         if (gdbctx->trace & GDBPXY_TRC_COMMAND_ERROR)
             fprintf(stderr, "Invalid register index %s\n", gdbctx->in_packet);
@@ -1703,15 +1431,10 @@ static enum packet_return packet_write_register(struct gdb_context* gdbctx)
         if (!fetch_context(gdbctx, gdbctx->other_thread->handle, pctx = &ctx))
             return packet_error;
     }
-    if ((pctx->ContextFlags & cpu_register_map[reg].ctx_flags) != cpu_register_map[reg].ctx_flags)
-    {
-        if (gdbctx->trace & GDBPXY_TRC_COMMAND_ERROR)
-            fprintf(stderr, "Writing reg %u is not supported on this host\n", reg);
-        return packet_error;
-    }
 
-    cpu_register_hex_from(pctx, reg, (const char**)&ptr);
-    if (pctx != &gdbctx->context && !SetThreadContext(gdbctx->other_thread->handle, pctx))
+    cpu_register_hex_from(gdbctx, pctx, reg, (const char**)&ptr);
+    if (pctx != &gdbctx->context &&
+        !gdbctx->process->be_cpu->set_context(gdbctx->other_thread->handle, pctx))
     {
         if (gdbctx->trace & GDBPXY_TRC_WIN32_ERROR)
             fprintf(stderr, "Cannot set context for thread %04x\n", gdbctx->other_thread->tid);
@@ -2090,10 +1813,10 @@ static enum packet_return packet_step(struct gdb_context* gdbctx)
         if (gdbctx->trace & GDBPXY_TRC_COMMAND_FIXME)
             fprintf(stderr, "NIY: step on %04x, while last thread is %04x\n",
                     gdbctx->exec_thread->tid, dbg_curr_thread->tid);
-    be_cpu->single_step(&gdbctx->context, TRUE);
+    gdbctx->process->be_cpu->single_step(&gdbctx->context, TRUE);
     resume_debuggee(gdbctx, DBG_CONTINUE);
     wait_for_debuggee(gdbctx);
-    be_cpu->single_step(&gdbctx->context, FALSE);
+    gdbctx->process->be_cpu->single_step(&gdbctx->context, FALSE);
     return packet_reply_status(gdbctx);
 }
 
@@ -2211,11 +1934,11 @@ static BOOL extract_packets(struct gdb_context* gdbctx)
                 assert(plen);
                 
                 /* FIXME: should use bsearch if packet_entries was sorted */
-                for (i = 0; i < sizeof(packet_entries)/sizeof(packet_entries[0]); i++)
+                for (i = 0; i < ARRAY_SIZE(packet_entries); i++)
                 {
                     if (packet_entries[i].key == gdbctx->in_buf[1]) break;
                 }
-                if (i == sizeof(packet_entries)/sizeof(packet_entries[0]))
+                if (i == ARRAY_SIZE(packet_entries))
                 {
                     if (gdbctx->trace & GDBPXY_TRC_COMMAND_ERROR)
                         fprintf(stderr, "Unknown packet request %*.*s\n",
@@ -2455,7 +2178,7 @@ static BOOL gdb_init_context(struct gdb_context* gdbctx, unsigned flags, unsigne
     gdbctx->in_trap = FALSE;
     gdbctx->trace = /*GDBPXY_TRC_PACKET | GDBPXY_TRC_COMMAND |*/ GDBPXY_TRC_COMMAND_ERROR | GDBPXY_TRC_COMMAND_FIXME | GDBPXY_TRC_WIN32_EVENT;
     gdbctx->process = NULL;
-    for (i = 0; i < sizeof(gdbctx->wine_segs) / sizeof(gdbctx->wine_segs[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(gdbctx->wine_segs); i++)
         gdbctx->wine_segs[i] = 0;
 
     /* wait for first trap */

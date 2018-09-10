@@ -691,14 +691,17 @@ static struct message sent_messages[MAXKEYMESSAGES];
 static UINT sent_messages_cnt;
 
 /* Verify that only specified key state transitions occur */
-static void compare_and_check(int id, BYTE *ks1, BYTE *ks2, const struct sendinput_test_s *test)
+static void compare_and_check(int id, BYTE *ks1, BYTE *ks2,
+    const struct sendinput_test_s *test, BOOL foreground)
 {
     int i, failcount = 0;
     const struct transition_s *t = test->expected_transitions;
     UINT actual_cnt = 0;
     const struct message *expected = test->expected_messages;
 
-    while (t->wVk) {
+    while (t->wVk && foreground) {
+        /* We won't receive any information from GetKeyboardState() if we're
+         * not the foreground window. */
         BOOL matched = ((ks1[t->wVk]&0x80) == (t->before_state&0x80)
                        && (ks2[t->wVk]&0x80) == (~t->before_state&0x80));
 
@@ -781,6 +784,13 @@ static void compare_and_check(int id, BYTE *ks1, BYTE *ks2, const struct sendinp
             expected++;
             continue;
         }
+        else if (!(expected->flags & hook) && !foreground)
+        {
+            /* If we weren't able to receive foreground status, we won't get
+             * any window messages. */
+            expected++;
+            continue;
+        }
         /* NT4 doesn't send SYSKEYDOWN/UP to hooks, only KEYDOWN/UP */
         else if ((expected->flags & hook) &&
                  (expected->message == WM_SYSKEYDOWN || expected->message == WM_SYSKEYUP) &&
@@ -817,7 +827,7 @@ static void compare_and_check(int id, BYTE *ks1, BYTE *ks2, const struct sendinp
         expected++;
     }
     /* skip all optional trailing messages */
-    while (expected->message && (expected->flags & optional))
+    while (expected->message && ((expected->flags & optional) || (!(expected->flags & hook) && !foreground)))
         expected++;
 
 
@@ -848,16 +858,7 @@ static LRESULT CALLBACK WndProc2(HWND hWnd, UINT Msg, WPARAM wParam,
 {
     if (winetest_debug > 1) trace("MSG:  %8x W:%8lx L:%8lx\n", Msg, wParam, lParam);
 
-    if (Msg != WM_PAINT &&
-        Msg != WM_NCPAINT &&
-        Msg != WM_SYNCPAINT &&
-        Msg != WM_ERASEBKGND &&
-        Msg != WM_NCHITTEST &&
-        Msg != WM_GETTEXT &&
-        Msg != WM_GETICON &&
-        Msg != WM_IME_SELECT &&
-        Msg != WM_DEVICECHANGE &&
-        Msg != WM_TIMECHANGE)
+    if ((Msg >= WM_KEYFIRST && Msg <= WM_KEYLAST) || Msg == WM_SYSCOMMAND)
     {
         ok(sent_messages_cnt < MAXKEYMESSAGES, "Too many messages\n");
         if (sent_messages_cnt < MAXKEYMESSAGES)
@@ -906,6 +907,7 @@ static void test_Input_blackbox(void)
     int ii;
     BYTE ks1[256], ks2[256];
     LONG_PTR prevWndProc;
+    BOOL foreground;
     HWND window;
     HHOOK hook;
 
@@ -919,7 +921,9 @@ static void test_Input_blackbox(void)
         NULL, NULL);
     ok(window != NULL, "error: %d\n", (int) GetLastError());
     SetWindowPos( window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE|SWP_NOMOVE );
-    SetForegroundWindow( window );
+    foreground = SetForegroundWindow( window );
+    if (!foreground)
+        skip("Failed to set foreground window; some tests will be skipped.\n");
 
     if (!(hook = SetWindowsHookExA(WH_KEYBOARD_LL, hook_proc, GetModuleHandleA( NULL ), 0)))
     {
@@ -948,15 +952,7 @@ static void test_Input_blackbox(void)
         pSendInput(1, (INPUT*)&i, sizeof(TEST_INPUT));
         empty_message_queue();
         GetKeyboardState(ks2);
-        if (!ii && sent_messages_cnt <= 1 && !memcmp( ks1, ks2, sizeof(ks1) ))
-        {
-            win_skip( "window doesn't receive the queued input\n" );
-            /* release the key */
-            i.u.ki.dwFlags |= KEYEVENTF_KEYUP;
-            pSendInput(1, (INPUT*)&i, sizeof(TEST_INPUT));
-            break;
-        }
-        compare_and_check(ii, ks1, ks2, &sendinput_test[ii]);
+        compare_and_check(ii, ks1, ks2, &sendinput_test[ii], foreground);
     }
 
     empty_message_queue();

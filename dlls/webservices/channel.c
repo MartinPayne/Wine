@@ -193,6 +193,7 @@ enum session_state
 {
     SESSION_STATE_UNINITIALIZED,
     SESSION_STATE_SETUP_COMPLETE,
+    SESSION_STATE_SHUTDOWN,
 };
 
 struct channel
@@ -664,6 +665,78 @@ HRESULT WINAPI WsOpenChannel( WS_CHANNEL *handle, const WS_ENDPOINT_ADDRESS *end
     return hr;
 }
 
+enum frame_record_type
+{
+    FRAME_RECORD_TYPE_VERSION,
+    FRAME_RECORD_TYPE_MODE,
+    FRAME_RECORD_TYPE_VIA,
+    FRAME_RECORD_TYPE_KNOWN_ENCODING,
+    FRAME_RECORD_TYPE_EXTENSIBLE_ENCODING,
+    FRAME_RECORD_TYPE_UNSIZED_ENVELOPE,
+    FRAME_RECORD_TYPE_SIZED_ENVELOPE,
+    FRAME_RECORD_TYPE_END,
+    FRAME_RECORD_TYPE_FAULT,
+    FRAME_RECORD_TYPE_UPGRADE_REQUEST,
+    FRAME_RECORD_TYPE_UPGRADE_RESPONSE,
+    FRAME_RECORD_TYPE_PREAMBLE_ACK,
+    FRAME_RECORD_TYPE_PREAMBLE_END,
+};
+
+static HRESULT send_byte( SOCKET socket, BYTE byte )
+{
+    int count = send( socket, (char *)&byte, 1, 0 );
+    if (count < 0) return HRESULT_FROM_WIN32( WSAGetLastError() );
+    if (count != 1) return WS_E_OTHER;
+    return S_OK;
+}
+
+static HRESULT shutdown_session( struct channel *channel )
+{
+    HRESULT hr;
+
+    if (channel->state != WS_CHANNEL_STATE_OPEN ||
+        (channel->type != WS_CHANNEL_TYPE_OUTPUT_SESSION &&
+         channel->type != WS_CHANNEL_TYPE_DUPLEX_SESSION) ||
+         channel->session_state >= SESSION_STATE_SHUTDOWN) return WS_E_INVALID_OPERATION;
+
+    switch (channel->binding)
+    {
+    case WS_TCP_CHANNEL_BINDING:
+        if ((hr = send_byte( channel->u.tcp.socket, FRAME_RECORD_TYPE_END )) != S_OK) return hr;
+        channel->session_state = SESSION_STATE_SHUTDOWN;
+        return S_OK;
+
+    default:
+        FIXME( "unhandled binding %u\n", channel->binding );
+        return E_NOTIMPL;
+    }
+}
+
+HRESULT WINAPI WsShutdownSessionChannel( WS_CHANNEL *handle, const WS_ASYNC_CONTEXT *ctx, WS_ERROR *error )
+{
+    struct channel *channel = (struct channel *)handle;
+    HRESULT hr;
+
+    TRACE( "%p %p %p\n", handle, ctx, error );
+    if (error) FIXME( "ignoring error parameter\n" );
+    if (ctx) FIXME( "ignoring ctx parameter\n" );
+
+    if (!channel) return E_INVALIDARG;
+
+    EnterCriticalSection( &channel->cs );
+
+    if (channel->magic != CHANNEL_MAGIC)
+    {
+        LeaveCriticalSection( &channel->cs );
+        return E_INVALIDARG;
+    }
+
+    hr = shutdown_session( channel );
+
+    LeaveCriticalSection( &channel->cs );
+    return hr;
+}
+
 static void close_channel( struct channel *channel )
 {
     reset_channel( channel );
@@ -894,15 +967,6 @@ static HRESULT connect_channel( struct channel *channel )
     }
 }
 
-static HRESULT write_message( WS_MESSAGE *handle, WS_XML_WRITER *writer, const WS_ELEMENT_DESCRIPTION *desc,
-                              WS_WRITE_OPTION option, const void *body, ULONG size )
-{
-    HRESULT hr;
-    if ((hr = WsWriteEnvelopeStart( handle, writer, NULL, NULL, NULL )) != S_OK) return hr;
-    if ((hr = WsWriteBody( handle, desc, option, body, size, NULL )) != S_OK) return hr;
-    return WsWriteEnvelopeEnd( handle, NULL );
-}
-
 static HRESULT send_message_http( HINTERNET request, BYTE *data, ULONG len )
 {
     if (!WinHttpSendRequest( request, NULL, 0, data, len, len, 0 ))
@@ -910,14 +974,6 @@ static HRESULT send_message_http( HINTERNET request, BYTE *data, ULONG len )
 
     if (!WinHttpReceiveResponse( request, NULL ))
         return HRESULT_FROM_WIN32( GetLastError() );
-    return S_OK;
-}
-
-static HRESULT send_byte( SOCKET socket, BYTE byte )
-{
-    int count = send( socket, (char *)&byte, 1, 0 );
-    if (count < 0) return HRESULT_FROM_WIN32( WSAGetLastError() );
-    if (count != 1) return WS_E_OTHER;
     return S_OK;
 }
 
@@ -944,23 +1000,6 @@ static HRESULT send_size( SOCKET socket, ULONG size )
     return E_INVALIDARG;
 }
 
-enum frame_record_type
-{
-    FRAME_RECORD_TYPE_VERSION,
-    FRAME_RECORD_TYPE_MODE,
-    FRAME_RECORD_TYPE_VIA,
-    FRAME_RECORD_TYPE_KNOWN_ENCODING,
-    FRAME_RECORD_TYPE_EXTENSIBLE_ENCODING,
-    FRAME_RECORD_TYPE_UNSIZED_ENVELOPE,
-    FRAME_RECORD_TYPE_SIZED_ENVELOPE,
-    FRAME_RECORD_TYPE_END,
-    FRAME_RECORD_TYPE_FAULT,
-    FRAME_RECORD_TYPE_UPGRADE_REQUEST,
-    FRAME_RECORD_TYPE_UPGRADE_RESPONSE,
-    FRAME_RECORD_TYPE_PREAMBLE_ACK,
-    FRAME_RECORD_TYPE_PREAMBLE_END,
-};
-
 static inline ULONG size_length( ULONG size )
 {
     if (size < 0x80) return 1;
@@ -970,22 +1009,26 @@ static inline ULONG size_length( ULONG size )
     return 5;
 }
 
-static ULONG string_table_size( const WS_XML_DICTIONARY *dict )
+static ULONG string_table_size( const struct dictionary *dict )
 {
     ULONG i, size = 0;
-    for (i = 0; i < dict->stringCount; i++)
-        size += size_length( dict->strings[i].length ) + dict->strings[i].length;
+    for (i = 0; i < dict->dict.stringCount; i++)
+    {
+        if (dict->sequence[i] == dict->current_sequence)
+            size += size_length( dict->dict.strings[i].length ) + dict->dict.strings[i].length;
+    }
     return size;
 }
 
-static HRESULT send_string_table( SOCKET socket, const WS_XML_DICTIONARY *dict )
+static HRESULT send_string_table( SOCKET socket, const struct dictionary *dict )
 {
     ULONG i;
     HRESULT hr;
-    for (i = 0; i < dict->stringCount; i++)
+    for (i = 0; i < dict->dict.stringCount; i++)
     {
-        if ((hr = send_size( socket, dict->strings[i].length )) != S_OK) return hr;
-        if ((hr = send_bytes( socket, dict->strings[i].bytes, dict->strings[i].length )) != S_OK) return hr;
+        if (dict->sequence[i] != dict->current_sequence) continue;
+        if ((hr = send_size( socket, dict->dict.strings[i].length )) != S_OK) return hr;
+        if ((hr = send_bytes( socket, dict->dict.strings[i].bytes, dict->dict.strings[i].length )) != S_OK) return hr;
     }
     return S_OK;
 }
@@ -1115,13 +1158,13 @@ static HRESULT receive_preamble_ack( struct channel *channel )
 
 static HRESULT send_sized_envelope( struct channel *channel, BYTE *data, ULONG len )
 {
-    ULONG table_size = string_table_size( &channel->dict_send.dict );
+    ULONG table_size = string_table_size( &channel->dict_send );
     HRESULT hr;
 
     if ((hr = send_byte( channel->u.tcp.socket, FRAME_RECORD_TYPE_SIZED_ENVELOPE )) != S_OK) return hr;
     if ((hr = send_size( channel->u.tcp.socket, size_length(table_size) + table_size + len )) != S_OK) return hr;
     if ((hr = send_size( channel->u.tcp.socket, table_size )) != S_OK) return hr;
-    if ((hr = send_string_table( channel->u.tcp.socket, &channel->dict_send.dict )) != S_OK) return hr;
+    if ((hr = send_string_table( channel->u.tcp.socket, &channel->dict_send )) != S_OK) return hr;
     return send_bytes( channel->u.tcp.socket, data, len );
 }
 
@@ -1246,12 +1289,8 @@ static HRESULT init_writer( struct channel *channel )
         return WsSetOutput( channel->writer, &text.encoding, &buf.output, NULL, 0, NULL );
 
     case WS_ENCODING_XML_BINARY_SESSION_1:
-        clear_dict( &channel->dict_send );
-        bin.staticDictionary           = (WS_XML_DICTIONARY *)&dict_builtin_static.dict;
-        bin.dynamicStringCallback      = dict_cb;
-        bin.dynamicStringCallbackState = &channel->dict_send;
-        if ((hr = WsSetOutput( channel->writer, &bin.encoding, &buf.output, NULL, 0, NULL )) != S_OK) return hr;
-        return writer_enable_lookup( channel->writer );
+        bin.staticDictionary = (WS_XML_DICTIONARY *)&dict_builtin_static.dict;
+        /* fall through */
 
     case WS_ENCODING_XML_BINARY_1:
         return WsSetOutput( channel->writer, &bin.encoding, &buf.output, NULL, 0, NULL );
@@ -1260,6 +1299,19 @@ static HRESULT init_writer( struct channel *channel )
         FIXME( "unhandled encoding %u\n", channel->encoding );
         return WS_E_NOT_SUPPORTED;
     }
+}
+
+static HRESULT write_message( struct channel *channel, WS_MESSAGE *msg, const WS_ELEMENT_DESCRIPTION *desc,
+                              WS_WRITE_OPTION option, const void *body, ULONG size )
+{
+    HRESULT hr;
+    if ((hr = writer_set_lookup( channel->writer, TRUE )) != S_OK) return hr;
+    if ((hr = WsWriteEnvelopeStart( msg, channel->writer, NULL, NULL, NULL )) != S_OK) return hr;
+    if ((hr = writer_set_lookup( channel->writer, FALSE )) != S_OK) return hr;
+    channel->dict_send.current_sequence++;
+    if ((hr = writer_set_dict_callback( channel->writer, dict_cb, &channel->dict_send )) != S_OK) return hr;
+    if ((hr = WsWriteBody( msg, desc, option, body, size, NULL )) != S_OK) return hr;
+    return WsWriteEnvelopeEnd( msg, NULL );
 }
 
 /**************************************************************************
@@ -1291,8 +1343,7 @@ HRESULT WINAPI WsSendMessage( WS_CHANNEL *handle, WS_MESSAGE *msg, const WS_MESS
     if ((hr = message_set_action( msg, desc->action )) != S_OK) goto done;
 
     if ((hr = init_writer( channel )) != S_OK) goto done;
-    if ((hr = write_message( msg, channel->writer, desc->bodyElementDescription, option, body, size )) != S_OK)
-        goto done;
+    if ((hr = write_message( channel, msg, desc->bodyElementDescription, option, body, size )) != S_OK) goto done;
     hr = send_message( channel, msg );
 
 done:
@@ -1332,13 +1383,11 @@ HRESULT WINAPI WsSendReplyMessage( WS_CHANNEL *handle, WS_MESSAGE *msg, const WS
     if ((hr = message_set_request_id( msg, &req_id )) != S_OK) goto done;
 
     if ((hr = init_writer( channel )) != S_OK) goto done;
-    if ((hr = write_message( msg, channel->writer, desc->bodyElementDescription, option, body, size )) != S_OK)
-        goto done;
+    if ((hr = write_message( channel, msg, desc->bodyElementDescription, option, body, size )) != S_OK) goto done;
     hr = send_message( channel, msg );
 
 done:
     LeaveCriticalSection( &channel->cs );
-    FIXME( "returning %08x\n", hr );
     return hr;
 }
 

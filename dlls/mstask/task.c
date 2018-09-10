@@ -58,6 +58,8 @@ typedef struct
     LONG ref;
     ITaskDefinition *task;
     IExecAction *action;
+    BYTE *data;
+    WORD data_count;
     UUID uuid;
     LPWSTR task_name;
     HRESULT status;
@@ -87,6 +89,7 @@ static void TaskDestructor(TaskImpl *This)
     if (This->action)
         IExecAction_Release(This->action);
     ITaskDefinition_Release(This->task);
+    heap_free(This->data);
     heap_free(This->task_name);
     heap_free(This->accountName);
     heap_free(This->trigger);
@@ -809,22 +812,54 @@ static HRESULT WINAPI MSTASK_ITask_GetCreator(ITask *iface, LPWSTR *creator)
     return hr;
 }
 
-static HRESULT WINAPI MSTASK_ITask_SetWorkItemData(
-        ITask* iface,
-        WORD cBytes,
-        BYTE rgbData[])
+static HRESULT WINAPI MSTASK_ITask_SetWorkItemData(ITask *iface, WORD count, BYTE data[])
 {
-    FIXME("(%p, %d, %p): stub\n", iface, cBytes, rgbData);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %u, %p)\n", iface, count, data);
+
+    if (count)
+    {
+        if (!data) return E_INVALIDARG;
+
+        heap_free(This->data);
+        This->data = heap_alloc(count);
+        if (!This->data) return E_OUTOFMEMORY;
+        memcpy(This->data, data, count);
+        This->data_count = count;
+    }
+    else
+    {
+        if (data) return E_INVALIDARG;
+
+        heap_free(This->data);
+        This->data = NULL;
+        This->data_count = 0;
+    }
+
+    return S_OK;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetWorkItemData(
-        ITask* iface,
-        WORD *pcBytes,
-        BYTE **ppBytes)
+static HRESULT WINAPI MSTASK_ITask_GetWorkItemData(ITask *iface, WORD *count, BYTE **data)
 {
-    FIXME("(%p, %p, %p): stub\n", iface, pcBytes, ppBytes);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p, %p)\n", iface, count, data);
+
+    if (!This->data)
+    {
+        *count = 0;
+        *data = NULL;
+    }
+    else
+    {
+        *data = CoTaskMemAlloc(This->data_count);
+        if (!*data) return E_OUTOFMEMORY;
+        memcpy(*data, This->data, This->data_count);
+        *count = This->data_count;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI MSTASK_ITask_SetErrorRetryCount(
@@ -1444,7 +1479,7 @@ static HRESULT WINAPI MSTASK_IPersistFile_Load(IPersistFile *iface, LPCOLESTR fi
         file = CreateFileW(file_name, access, sharing, NULL, OPEN_EXISTING, 0, 0);
         if (file != INVALID_HANDLE_VALUE) break;
 
-        if (try++ >= 3)
+        if (GetLastError() != ERROR_SHARING_VIOLATION || try++ >= 3)
         {
             TRACE("Failed to open %s, error %u\n", debugstr_w(file_name), GetLastError());
             return HRESULT_FROM_WIN32(GetLastError());
@@ -1865,6 +1900,8 @@ HRESULT TaskConstructor(ITaskService *service, const WCHAR *name, ITask **task)
     This->IPersistFile_iface.lpVtbl = &MSTASK_IPersistFileVtbl;
     This->ref = 1;
     This->task = taskdef;
+    This->data = NULL;
+    This->data_count = 0;
     This->task_name = heap_strdupW(task_name);
     This->flags = 0;
     This->status = SCHED_S_TASK_NOT_SCHEDULED;

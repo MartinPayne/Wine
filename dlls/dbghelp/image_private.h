@@ -44,14 +44,6 @@
 #endif
 #ifdef HAVE_MACH_O_LOADER_H
 #include <mach-o/loader.h>
-
-#ifdef _WIN64
-typedef struct mach_header_64       macho_mach_header;
-typedef struct section_64           macho_section;
-#else
-typedef struct mach_header          macho_mach_header;
-typedef struct section              macho_section;
-#endif
 #endif
 
 #define IMAGE_NO_MAP  ((void*)-1)
@@ -96,7 +88,7 @@ struct image_file_map
             struct image_file_map*      dsym;   /* the debug symbols file associated with this one */
 
 #ifdef HAVE_MACH_O_LOADER_H
-            macho_mach_header           mach_header;
+            struct mach_header          mach_header;
             const struct load_command*  load_commands;
             const struct uuid_command*  uuid;
 
@@ -107,7 +99,7 @@ struct image_file_map
             int                         num_sections;
             struct
             {
-                const macho_section*            section;
+                struct section_64               section;
                 const char*                     mapped;
                 unsigned int                    ignored : 1;
             }*                          sect;

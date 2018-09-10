@@ -294,15 +294,18 @@ static int parse_prop( const WCHAR *str, WCHAR *value, int *quotes )
 
         default: break;
         }
-        if (!ignore) *out++ = *p;
+        if (!ignore && value) *out++ = *p;
         if (!count) in_quotes = FALSE;
     }
 
 done:
-    if (!len) *value = 0;
-    else *out = 0;
+    if (value)
+    {
+        if (!len) *value = 0;
+        else *out = 0;
+    }
 
-    *quotes = count;
+    if(quotes) *quotes = count;
     return p - str;
 }
 
@@ -376,6 +379,37 @@ UINT msi_parse_command_line( MSIPACKAGE *package, LPCWSTR szCommandLine,
     }
 
     return ERROR_SUCCESS;
+}
+
+const WCHAR *msi_get_command_line_option(const WCHAR *cmd, const WCHAR *option, UINT *len)
+{
+    DWORD opt_len = strlenW(option);
+
+    if (!cmd)
+        return NULL;
+
+    while (*cmd)
+    {
+        BOOL found = FALSE;
+
+        while (*cmd == ' ') cmd++;
+        if (!*cmd) break;
+
+        if(!strncmpiW(cmd, option, opt_len))
+            found = TRUE;
+
+        cmd = strchrW( cmd, '=' );
+        if(!cmd) break;
+        cmd++;
+        while (*cmd == ' ') cmd++;
+        if (!*cmd) break;
+
+        *len = parse_prop( cmd, NULL, NULL);
+        if (found) return cmd;
+        cmd += *len;
+    }
+
+    return NULL;
 }
 
 WCHAR **msi_split_string( const WCHAR *str, WCHAR sep )
@@ -4473,6 +4507,7 @@ static UINT ACTION_PublishProduct(MSIPACKAGE *package)
     UINT rc;
     HKEY hukey = NULL, hudkey = NULL;
     MSIRECORD *uirow;
+    BOOL republish = FALSE;
 
     if (!list_empty(&package->patches))
     {
@@ -4481,14 +4516,49 @@ static UINT ACTION_PublishProduct(MSIPACKAGE *package)
             goto end;
     }
 
-    /* FIXME: also need to publish if the product is in advertise mode */
-    if (!msi_check_publish(package))
-        return ERROR_SUCCESS;
-
     rc = MSIREG_OpenProductKey(package->ProductCode, NULL, package->Context,
-                               &hukey, TRUE);
-    if (rc != ERROR_SUCCESS)
-        goto end;
+                               &hukey, FALSE);
+    if (rc == ERROR_SUCCESS)
+    {
+        WCHAR *package_code;
+
+        package_code = msi_reg_get_val_str(hukey, INSTALLPROPERTY_PACKAGECODEW);
+        if (package_code)
+        {
+            WCHAR *guid;
+
+            guid = msi_get_package_code(package->db);
+            if (guid)
+            {
+                WCHAR packed[SQUASHED_GUID_SIZE];
+
+                squash_guid(guid, packed);
+                msi_free(guid);
+                if (!strcmpW(packed, package_code))
+                {
+                    TRACE("re-publishing product - new package\n");
+                    republish = TRUE;
+                }
+            }
+            msi_free(package_code);
+        }
+    }
+
+    /* FIXME: also need to publish if the product is in advertise mode */
+    if (!republish && !msi_check_publish(package))
+    {
+        if (hukey)
+            RegCloseKey(hukey);
+        return ERROR_SUCCESS;
+    }
+
+    if (!hukey)
+    {
+        rc = MSIREG_OpenProductKey(package->ProductCode, NULL, package->Context,
+                                   &hukey, TRUE);
+        if (rc != ERROR_SUCCESS)
+            goto end;
+    }
 
     rc = MSIREG_OpenUserDataProductKey(package->ProductCode, package->Context,
                                        NULL, &hudkey, TRUE);
@@ -5222,7 +5292,8 @@ static UINT ACTION_RegisterProduct(MSIPACKAGE *package)
     UINT rc;
 
     /* FIXME: also need to publish if the product is in advertise mode */
-    if (!msi_check_publish(package))
+    if (!msi_get_property_int( package->db, szProductToBeRegistered, 0 )
+            && !msi_check_publish(package))
         return ERROR_SUCCESS;
 
     rc = MSIREG_OpenUninstallKey(package->ProductCode, package->platform, &hkey, TRUE);
