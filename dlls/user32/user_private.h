@@ -28,6 +28,8 @@
 #include "winuser.h"
 #include "winreg.h"
 #include "winternl.h"
+#include "wine/heap.h"
+#include "wine/unicode.h"
 
 #define GET_WORD(ptr)  (*(const WORD *)(ptr))
 #define GET_DWORD(ptr) (*(const DWORD *)(ptr))
@@ -271,7 +273,7 @@ extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                                  LRESULT *result, BOOL unicode, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
 
 extern const WCHAR *CLASS_GetVersionedName(const WCHAR *classname, UINT *basename_offset,
-        BOOL register_class) DECLSPEC_HIDDEN;
+        WCHAR *combined, BOOL register_class) DECLSPEC_HIDDEN;
 
 /* message spy definitions */
 
@@ -353,5 +355,15 @@ extern BOOL get_icon_size( HICON handle, SIZE *size ) DECLSPEC_HIDDEN;
 #undef assert
 #define assert(expr) ((void)0)
 #endif
+
+static inline WCHAR *heap_strdupW(const WCHAR *src)
+{
+    WCHAR *dst;
+    unsigned len;
+    if (!src) return NULL;
+    len = (strlenW(src) + 1) * sizeof(WCHAR);
+    if ((dst = heap_alloc(len))) memcpy(dst, src, len);
+    return dst;
+}
 
 #endif /* __WINE_USER_PRIVATE_H */

@@ -201,6 +201,37 @@ static void test_QueryOption(void)
     ok(GetLastError() == ERROR_INVALID_PARAMETER,
        "expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
 
+    feature = 0xdeadbeef;
+    size = sizeof(feature);
+    SetLastError(0xdeadbeef);
+    ret = WinHttpQueryOption(request, WINHTTP_OPTION_ENABLE_FEATURE, &feature, &size);
+    ok(!ret, "should fail to query enabled features for a request\n");
+    ok(feature == 0xdeadbeef, "expect feature 0xdeadbeef, got %u\n", feature);
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
+
+    feature = WINHTTP_ENABLE_SSL_REVOCATION;
+    SetLastError(0xdeadbeef);
+    ret = WinHttpSetOption(request, WINHTTP_OPTION_ENABLE_FEATURE, 0, sizeof(feature));
+    ok(!ret, "should fail to enable WINHTTP_ENABLE_SSL_REVOCATION with invalid parameters\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WinHttpSetOption(request, WINHTTP_OPTION_ENABLE_FEATURE, &feature, 0);
+    ok(!ret, "should fail to enable WINHTTP_ENABLE_SSL_REVOCATION with invalid parameters\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WinHttpSetOption(request, WINHTTP_OPTION_ENABLE_FEATURE, &feature, sizeof(feature));
+    ok(ret, "failed to set feature\n");
+    ok(GetLastError() == NO_ERROR || broken(GetLastError() == 0xdeadbeef), /* Doesn't set error code on Vista or older */
+       "expected NO_ERROR, got %u\n", GetLastError());
+
+    feature = 0xdeadbeef;
+    SetLastError(0xdeadbeef);
+    ret = WinHttpSetOption(request, WINHTTP_OPTION_ENABLE_FEATURE, &feature, sizeof(feature));
+    ok(!ret, "should fail to enable WINHTTP_ENABLE_SSL_REVOCATION with invalid parameters\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
+
     SetLastError(0xdeadbeef);
     ret = WinHttpCloseHandle(request);
     ok(ret, "WinHttpCloseHandle failed on closing request: %u\n", GetLastError());
@@ -2243,6 +2274,11 @@ static DWORD CALLBACK server_thread(LPVOID param)
             if (!strstr(buffer, "Cookie: name=value\r\n")) send(c, cookiemsg, sizeof(cookiemsg) - 1, 0);
             else send(c, notokmsg, sizeof(notokmsg) - 1, 0);
         }
+        else if (strstr(buffer, "GET /escape"))
+        {
+            if (strstr(buffer, "GET /escape?one%20two%0D%0A HTTP/1.1")) send(c, okmsg, sizeof(okmsg) - 1, 0);
+            else send(c, notokmsg, sizeof(notokmsg) - 1, 0);
+        }
         if (strstr(buffer, "GET /quit"))
         {
             send(c, okmsg, sizeof okmsg - 1, 0);
@@ -3192,6 +3228,40 @@ static void test_cookies( int port )
     ok( ret, "failed to query status code %u\n", GetLastError() );
     ok( status == HTTP_STATUS_OK || broken(status == HTTP_STATUS_BAD_REQUEST) /* < win7 */,
         "request failed unexpectedly %u\n", status );
+
+    WinHttpCloseHandle( req );
+    WinHttpCloseHandle( con );
+    WinHttpCloseHandle( ses );
+}
+
+static void test_request_path_escapes( int port )
+{
+    static const WCHAR objW[] =
+        {'/','e','s','c','a','p','e','?','o','n','e',' ','t','w','o','\r','\n',0};
+    HINTERNET ses, con, req;
+    DWORD status, size;
+    BOOL ret;
+
+    ses = WinHttpOpen( test_useragent, WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0 );
+    ok( ses != NULL, "failed to open session %u\n", GetLastError() );
+
+    con = WinHttpConnect( ses, localhostW, port, 0 );
+    ok( con != NULL, "failed to open a connection %u\n", GetLastError() );
+
+    req = WinHttpOpenRequest( con, NULL, objW, NULL, NULL, NULL, 0 );
+    ok( req != NULL, "failed to open a request %u\n", GetLastError() );
+
+    ret = WinHttpSendRequest( req, NULL, 0, NULL, 0, 0, 0 );
+    ok( ret, "failed to send request %u\n", GetLastError() );
+
+    ret = WinHttpReceiveResponse( req, NULL );
+    ok( ret, "failed to receive response %u\n", GetLastError() );
+
+    status = 0xdeadbeef;
+    size = sizeof(status);
+    ret = WinHttpQueryHeaders( req, WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER, NULL, &status, &size, NULL );
+    ok( ret, "failed to query status code %u\n", GetLastError() );
+    ok( status == HTTP_STATUS_OK, "request failed unexpectedly %u\n", status );
 
     WinHttpCloseHandle( req );
     WinHttpCloseHandle( con );
@@ -4524,6 +4594,7 @@ START_TEST (winhttp)
     test_bad_header(si.port);
     test_multiple_reads(si.port);
     test_cookies(si.port);
+    test_request_path_escapes(si.port);
 
     /* send the basic request again to shutdown the server thread */
     test_basic_request(si.port, NULL, quitW);

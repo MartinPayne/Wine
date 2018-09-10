@@ -213,7 +213,7 @@ WCHAR *msi_create_temp_file( MSIDATABASE *db )
     if (!db->tempfolder)
     {
         WCHAR tmp[MAX_PATH];
-        UINT len = sizeof(tmp)/sizeof(tmp[0]);
+        UINT len = ARRAY_SIZE( tmp );
 
         if (msi_get_property( db, szTempFolder, tmp, &len ) ||
             GetFileAttributesW( tmp ) != FILE_ATTRIBUTE_DIRECTORY)
@@ -601,14 +601,17 @@ static DWORD custom_start_server(MSIPACKAGE *package, DWORD arch)
     if (pipe == INVALID_HANDLE_VALUE)
         ERR("Failed to create custom action client pipe: %u\n", GetLastError());
 
-    if (sizeof(void *) == 8 && arch == SCS_32BIT_BINARY)
-        GetSystemWow64DirectoryW(path, MAX_PATH - sizeof(msiexecW)/sizeof(WCHAR));
+    if (!IsWow64Process(GetCurrentProcess(), &wow64))
+        wow64 = FALSE;
+
+    if ((sizeof(void *) == 8 || wow64) && arch == SCS_32BIT_BINARY)
+        GetSystemWow64DirectoryW(path, MAX_PATH - ARRAY_SIZE(msiexecW));
     else
-        GetSystemDirectoryW(path, MAX_PATH - sizeof(msiexecW)/sizeof(WCHAR));
+        GetSystemDirectoryW(path, MAX_PATH - ARRAY_SIZE(msiexecW));
     strcatW(path, msiexecW);
     sprintfW(cmdline, argsW, path, GetCurrentProcessId());
 
-    if (IsWow64Process(GetCurrentProcess(), &wow64) && wow64 && arch == SCS_64BIT_BINARY)
+    if (wow64 && arch == SCS_64BIT_BINARY)
     {
         Wow64DisableWow64FsRedirection(&cookie);
         CreateProcessW(path, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
@@ -940,7 +943,7 @@ static UINT HANDLE_CustomType23( MSIPACKAGE *package, const WCHAR *source, const
     static const WCHAR msiexecW[] = {'m','s','i','e','x','e','c',0};
     static const WCHAR paramsW[] = {'/','q','b',' ','/','i',' '};
     WCHAR *dir, *arg, *p;
-    UINT len_src, len_dir, len_tgt, len = sizeof(paramsW)/sizeof(paramsW[0]);
+    UINT len_src, len_dir, len_tgt, len = ARRAY_SIZE( paramsW );
     HANDLE handle;
 
     if (!(dir = msi_dup_property( package->db, szOriginalDatabase ))) return ERROR_OUTOFMEMORY;

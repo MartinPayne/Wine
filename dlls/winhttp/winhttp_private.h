@@ -27,23 +27,6 @@
 #include "wine/list.h"
 #include "wine/unicode.h"
 
-#include <sys/types.h>
-#ifdef HAVE_SYS_SOCKET_H
-# include <sys/socket.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-# include <netinet/in.h>
-#endif
-#ifdef HAVE_NETDB_H
-# include <netdb.h>
-#endif
-#if defined(__MINGW32__) || defined (_MSC_VER)
-# include <ws2tcpip.h>
-#else
-# define closesocket close
-# define ioctlsocket ioctl
-#endif
-
 #include "ole2.h"
 #include "sspi.h"
 #include "wincrypt.h"
@@ -210,6 +193,7 @@ typedef struct
     DWORD optional_len;
     netconn_t *netconn;
     DWORD security_flags;
+    BOOL check_revocation;
     const CERT_CONTEXT *server_cert;
     int resolve_timeout;
     int connect_timeout;
@@ -300,13 +284,13 @@ DWORD get_last_error( void ) DECLSPEC_HIDDEN;
 void send_callback( object_header_t *, DWORD, LPVOID, DWORD ) DECLSPEC_HIDDEN;
 void close_connection( request_t * ) DECLSPEC_HIDDEN;
 
-BOOL netconn_close( netconn_t * ) DECLSPEC_HIDDEN;
+void netconn_close( netconn_t * ) DECLSPEC_HIDDEN;
 netconn_t *netconn_create( hostdata_t *, const struct sockaddr_storage *, int ) DECLSPEC_HIDDEN;
 void netconn_unload( void ) DECLSPEC_HIDDEN;
 ULONG netconn_query_data_available( netconn_t * ) DECLSPEC_HIDDEN;
 BOOL netconn_recv( netconn_t *, void *, size_t, int, int * ) DECLSPEC_HIDDEN;
 BOOL netconn_resolve( WCHAR *, INTERNET_PORT, struct sockaddr_storage *, int ) DECLSPEC_HIDDEN;
-BOOL netconn_secure_connect( netconn_t *, WCHAR *, DWORD, CredHandle * ) DECLSPEC_HIDDEN;
+BOOL netconn_secure_connect( netconn_t *, WCHAR *, DWORD, CredHandle *, BOOL ) DECLSPEC_HIDDEN;
 BOOL netconn_send( netconn_t *, const void *, size_t, int * ) DECLSPEC_HIDDEN;
 DWORD netconn_set_timeout( netconn_t *, BOOL, int ) DECLSPEC_HIDDEN;
 BOOL netconn_is_alive( netconn_t * ) DECLSPEC_HIDDEN;
@@ -321,6 +305,7 @@ BOOL set_server_for_hostname( connect_t *, LPCWSTR, INTERNET_PORT ) DECLSPEC_HID
 void destroy_authinfo( struct authinfo * ) DECLSPEC_HIDDEN;
 
 void release_host( hostdata_t *host ) DECLSPEC_HIDDEN;
+DWORD escape_string( WCHAR *, const WCHAR *, DWORD ) DECLSPEC_HIDDEN;
 
 extern HRESULT WinHttpRequest_create( void ** ) DECLSPEC_HIDDEN;
 void release_typelib( void ) DECLSPEC_HIDDEN;

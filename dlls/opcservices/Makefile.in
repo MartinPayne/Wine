@@ -1,0 +1,9 @@
+MODULE  = opcservices.dll
+IMPORTS = uuid
+
+C_SRCS = \
+	factory.c \
+	package.c
+
+IDL_SRCS = \
+	opcservices.idl

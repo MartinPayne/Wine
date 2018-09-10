@@ -39,6 +39,73 @@ static HRESULT (WINAPI *pCreateDXGIFactory2)(UINT flags, REFIID iid, void **fact
 static PFN_D3D12_CREATE_DEVICE pD3D12CreateDevice;
 static PFN_D3D12_GET_DEBUG_INTERFACE pD3D12GetDebugInterface;
 
+static unsigned int use_adapter_idx;
+static BOOL use_warp_adapter;
+static BOOL use_mt = TRUE;
+
+static struct test_entry
+{
+    void (*test)(void);
+} *mt_tests;
+size_t mt_tests_size, mt_test_count;
+
+static void queue_test(void (*test)(void))
+{
+    if (mt_test_count >= mt_tests_size)
+    {
+        mt_tests_size = max(16, mt_tests_size * 2);
+        mt_tests = heap_realloc(mt_tests, mt_tests_size * sizeof(*mt_tests));
+    }
+    mt_tests[mt_test_count++].test = test;
+}
+
+static DWORD WINAPI thread_func(void *ctx)
+{
+    LONG *i = ctx, j;
+
+    while (*i < mt_test_count)
+    {
+        j = *i;
+        if (InterlockedCompareExchange(i, j + 1, j) == j)
+            mt_tests[j].test();
+    }
+
+    return 0;
+}
+
+static void run_queued_tests(void)
+{
+    unsigned int thread_count, i;
+    HANDLE *threads;
+    SYSTEM_INFO si;
+    LONG test_idx;
+
+    if (!use_mt)
+    {
+        for (i = 0; i < mt_test_count; ++i)
+        {
+            mt_tests[i].test();
+        }
+
+        return;
+    }
+
+    GetSystemInfo(&si);
+    thread_count = si.dwNumberOfProcessors;
+    threads = heap_calloc(thread_count, sizeof(*threads));
+    for (i = 0, test_idx = 0; i < thread_count; ++i)
+    {
+        threads[i] = CreateThread(NULL, 0, thread_func, &test_idx, 0, NULL);
+        ok(!!threads[i], "Failed to create thread %u.\n", i);
+    }
+    WaitForMultipleObjects(thread_count, threads, TRUE, INFINITE);
+    for (i = 0; i < thread_count; ++i)
+    {
+        CloseHandle(threads[i]);
+    }
+    heap_free(threads);
+}
+
 static ULONG get_refcount(IUnknown *iface)
 {
     IUnknown_AddRef(iface);
@@ -394,9 +461,6 @@ static void compute_expected_swapchain_fullscreen_state_after_fullscreen_change_
     }
 }
 
-static BOOL use_warp_adapter;
-static unsigned int use_adapter_idx;
-
 static IDXGIAdapter *create_adapter(void)
 {
     IDXGIFactory4 *factory4;
@@ -665,8 +729,9 @@ static void test_adapter_luid(void)
     refcount = IDXGIDevice_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
 
-    is_null_luid_adapter = !device_adapter_desc.AdapterLuid.HighPart
-            && !device_adapter_desc.AdapterLuid.LowPart;
+    is_null_luid_adapter = !device_adapter_desc.AdapterLuid.LowPart
+            && !device_adapter_desc.SubSysId && !device_adapter_desc.Revision
+            && !device_adapter_desc.VendorId && !device_adapter_desc.DeviceId;
 
     hr = CreateDXGIFactory(&IID_IDXGIFactory, (void **)&factory);
     ok(hr == S_OK, "Failed to create DXGI factory, hr %#x.\n", hr);
@@ -2961,38 +3026,105 @@ static void test_private_data(void)
     ok(!refcount, "Test object has %u references left.\n", refcount);
 }
 
-static void test_swapchain_resize(void)
+#define check_surface_desc(a, b) check_surface_desc_(__LINE__, a, b)
+static void check_surface_desc_(unsigned int line, IDXGISurface *surface,
+        const DXGI_SWAP_CHAIN_DESC *swapchain_desc)
+{
+    DXGI_SURFACE_DESC surface_desc;
+    HRESULT hr;
+
+    hr = IDXGISurface_GetDesc(surface, &surface_desc);
+    ok_(__FILE__, line)(hr == S_OK, "Failed to get surface desc, hr %#x.\n", hr);
+    ok_(__FILE__, line)(surface_desc.Width == swapchain_desc->BufferDesc.Width,
+            "Got Width %u, expected %u.\n", surface_desc.Width, swapchain_desc->BufferDesc.Width);
+    ok_(__FILE__, line)(surface_desc.Height == swapchain_desc->BufferDesc.Height,
+            "Got Height %u, expected %u.\n", surface_desc.Height, swapchain_desc->BufferDesc.Height);
+    ok_(__FILE__, line)(surface_desc.Format == swapchain_desc->BufferDesc.Format,
+            "Got Format %#x, expected %#x.\n", surface_desc.Format, swapchain_desc->BufferDesc.Format);
+    ok_(__FILE__, line)(surface_desc.SampleDesc.Count == 1,
+            "Got unexpected SampleDesc.Count %u.\n", surface_desc.SampleDesc.Count);
+    ok_(__FILE__, line)(!surface_desc.SampleDesc.Quality,
+            "Got unexpected SampleDesc.Quality %u.\n", surface_desc.SampleDesc.Quality);
+}
+
+#define check_texture_desc(a, b) check_texture_desc_(__LINE__, a, b)
+static void check_texture_desc_(unsigned int line, ID3D10Texture2D *texture,
+        const DXGI_SWAP_CHAIN_DESC *swapchain_desc)
+{
+    D3D10_TEXTURE2D_DESC texture_desc;
+
+    ID3D10Texture2D_GetDesc(texture, &texture_desc);
+    ok_(__FILE__, line)(texture_desc.Width == swapchain_desc->BufferDesc.Width,
+            "Got Width %u, expected %u.\n", texture_desc.Width, swapchain_desc->BufferDesc.Width);
+    ok_(__FILE__, line)(texture_desc.Height == swapchain_desc->BufferDesc.Height,
+            "Got Height %u, expected %u.\n", texture_desc.Height, swapchain_desc->BufferDesc.Height);
+    ok_(__FILE__, line)(texture_desc.MipLevels == 1, "Got unexpected MipLevels %u.\n", texture_desc.MipLevels);
+    ok_(__FILE__, line)(texture_desc.ArraySize == 1, "Got unexpected ArraySize %u.\n", texture_desc.ArraySize);
+    ok_(__FILE__, line)(texture_desc.Format == swapchain_desc->BufferDesc.Format,
+            "Got Format %#x, expected %#x.\n", texture_desc.Format, swapchain_desc->BufferDesc.Format);
+    ok_(__FILE__, line)(texture_desc.SampleDesc.Count == 1,
+            "Got unexpected SampleDesc.Count %u.\n", texture_desc.SampleDesc.Count);
+    ok_(__FILE__, line)(!texture_desc.SampleDesc.Quality,
+            "Got unexpected SampleDesc.Quality %u.\n", texture_desc.SampleDesc.Quality);
+    ok_(__FILE__, line)(texture_desc.Usage == D3D10_USAGE_DEFAULT,
+            "Got unexpected Usage %#x.\n", texture_desc.Usage);
+    ok_(__FILE__, line)(texture_desc.BindFlags == D3D10_BIND_RENDER_TARGET,
+            "Got unexpected BindFlags %#x.\n", texture_desc.BindFlags);
+    ok_(__FILE__, line)(!texture_desc.CPUAccessFlags,
+            "Got unexpected CPUAccessFlags %#x.\n", texture_desc.CPUAccessFlags);
+    ok_(__FILE__, line)(!texture_desc.MiscFlags, "Got unexpected MiscFlags %#x.\n", texture_desc.MiscFlags);
+}
+
+#define check_resource_desc(a, b) check_resource_desc_(__LINE__, a, b)
+static void check_resource_desc_(unsigned int line, ID3D12Resource *resource,
+        const DXGI_SWAP_CHAIN_DESC *swapchain_desc)
+{
+    D3D12_RESOURCE_DESC resource_desc;
+
+    resource_desc = ID3D12Resource_GetDesc(resource);
+    ok_(__FILE__, line)(resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            "Got unexpected Dimension %#x.\n", resource_desc.Dimension);
+    ok_(__FILE__, line)(resource_desc.Width == swapchain_desc->BufferDesc.Width, "Got Width %s, expected %u.\n",
+            wine_dbgstr_longlong(resource_desc.Width), swapchain_desc->BufferDesc.Width);
+    ok_(__FILE__, line)(resource_desc.Height == swapchain_desc->BufferDesc.Height,
+            "Got Height %u, expected %u.\n", resource_desc.Height, swapchain_desc->BufferDesc.Height);
+    ok_(__FILE__, line)(resource_desc.DepthOrArraySize == 1,
+            "Got unexpected DepthOrArraySize %u.\n", resource_desc.DepthOrArraySize);
+    ok_(__FILE__, line)(resource_desc.MipLevels == 1,
+            "Got unexpected MipLevels %u.\n", resource_desc.MipLevels);
+    ok_(__FILE__, line)(resource_desc.Format == swapchain_desc->BufferDesc.Format,
+            "Got Format %#x, expected %#x.\n", resource_desc.Format, swapchain_desc->BufferDesc.Format);
+    ok_(__FILE__, line)(resource_desc.SampleDesc.Count == 1,
+            "Got unexpected SampleDesc.Count %u.\n", resource_desc.SampleDesc.Count);
+    ok_(__FILE__, line)(!resource_desc.SampleDesc.Quality,
+            "Got unexpected SampleDesc.Quality %u.\n", resource_desc.SampleDesc.Quality);
+    ok_(__FILE__, line)(resource_desc.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN,
+            "Got unexpected Layout %#x.\n", resource_desc.Layout);
+}
+
+static void test_swapchain_resize(IUnknown *device, BOOL is_d3d12)
 {
     DXGI_SWAP_CHAIN_DESC swapchain_desc;
-    D3D10_TEXTURE2D_DESC texture_desc;
-    DXGI_SURFACE_DESC surface_desc;
+    DXGI_SWAP_EFFECT swap_effect;
     IDXGISwapChain *swapchain;
+    ID3D12Resource *resource;
     ID3D10Texture2D *texture;
+    HRESULT hr, expected_hr;
     IDXGISurface *surface;
-    IDXGIAdapter *adapter;
     IDXGIFactory *factory;
-    IDXGIDevice *device;
     RECT client_rect, r;
     ULONG refcount;
     HWND window;
-    HRESULT hr;
     BOOL ret;
 
-    if (!(device = create_device(0)))
-    {
-        skip("Failed to create device, skipping tests.\n");
-        return;
-    }
+    get_factory(device, is_d3d12, &factory);
+
     window = CreateWindowA("static", "dxgi_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             0, 0, 640, 480, NULL, NULL, NULL, NULL);
     ret = GetClientRect(window, &client_rect);
     ok(ret, "Failed to get client rect.\n");
 
-    hr = IDXGIDevice_GetAdapter(device, &adapter);
-    ok(SUCCEEDED(hr), "Failed to get adapter, hr %#x.\n", hr);
-    hr = IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory, (void **)&factory);
-    ok(SUCCEEDED(hr), "Failed to get factory, hr %#x.\n", hr);
-    IDXGIAdapter_Release(adapter);
+    swap_effect = is_d3d12 ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
 
     swapchain_desc.BufferDesc.Width = 640;
     swapchain_desc.BufferDesc.Height = 480;
@@ -3004,19 +3136,25 @@ static void test_swapchain_resize(void)
     swapchain_desc.SampleDesc.Count = 1;
     swapchain_desc.SampleDesc.Quality = 0;
     swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapchain_desc.BufferCount = 1;
+    swapchain_desc.BufferCount = 2;
     swapchain_desc.OutputWindow = window;
     swapchain_desc.Windowed = TRUE;
-    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    swapchain_desc.SwapEffect = swap_effect;
     swapchain_desc.Flags = 0;
 
-    hr = IDXGIFactory_CreateSwapChain(factory, (IUnknown *)device, &swapchain_desc, &swapchain);
-    ok(SUCCEEDED(hr), "Failed to create swapchain, hr %#x.\n", hr);
-    IDXGIFactory_Release(factory);
+    hr = IDXGIFactory_CreateSwapChain(factory, device, &swapchain_desc, &swapchain);
+    ok(hr == S_OK, "Failed to create swapchain, hr %#x.\n", hr);
     hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_IDXGISurface, (void **)&surface);
-    ok(SUCCEEDED(hr), "Failed to get buffer, hr %#x.\n", hr);
+    expected_hr = is_d3d12 ? E_NOINTERFACE : S_OK;
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!surface || hr == S_OK, "Got unexpected pointer %p.\n", surface);
     hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D10Texture2D, (void **)&texture);
-    ok(SUCCEEDED(hr), "Failed to get buffer, hr %#x.\n", hr);
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!texture || hr == S_OK, "Got unexpected pointer %p.\n", texture);
+    expected_hr = is_d3d12 ? S_OK : E_NOINTERFACE;
+    hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D12Resource, (void **)&resource);
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!resource || hr == S_OK, "Got unexpected pointer %p.\n", resource);
 
     ret = GetClientRect(window, &r);
     ok(ret, "Failed to get client rect.\n");
@@ -3048,39 +3186,25 @@ static void test_swapchain_resize(void)
             "Got unexpected SampleDesc.Quality %u.\n", swapchain_desc.SampleDesc.Quality);
     ok(swapchain_desc.BufferUsage == DXGI_USAGE_RENDER_TARGET_OUTPUT,
             "Got unexpected BufferUsage %#x.\n", swapchain_desc.BufferUsage);
-    ok(swapchain_desc.BufferCount == 1,
+    ok(swapchain_desc.BufferCount == 2,
             "Got unexpected BufferCount %u.\n", swapchain_desc.BufferCount);
     ok(swapchain_desc.OutputWindow == window,
             "Got unexpected OutputWindow %p, expected %p.\n", swapchain_desc.OutputWindow, window);
     ok(swapchain_desc.Windowed,
             "Got unexpected Windowed %#x.\n", swapchain_desc.Windowed);
-    ok(swapchain_desc.SwapEffect == DXGI_SWAP_EFFECT_DISCARD,
+    ok(swapchain_desc.SwapEffect == swap_effect,
             "Got unexpected SwapEffect %#x.\n", swapchain_desc.SwapEffect);
     ok(!swapchain_desc.Flags,
             "Got unexpected Flags %#x.\n", swapchain_desc.Flags);
 
-    hr = IDXGISurface_GetDesc(surface, &surface_desc);
-    ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(surface_desc.Width == 640, "Got unexpected Width %u.\n", surface_desc.Width);
-    ok(surface_desc.Height == 480, "Got unexpected Height %u.\n", surface_desc.Height);
-    ok(surface_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM, "Got unexpected Format %#x.\n", surface_desc.Format);
-    ok(surface_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", surface_desc.SampleDesc.Count);
-    ok(!surface_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", surface_desc.SampleDesc.Quality);
+    if (surface)
+        check_surface_desc(surface, &swapchain_desc);
+    if (texture)
+        check_texture_desc(texture, &swapchain_desc);
+    if (resource)
+        check_resource_desc(resource, &swapchain_desc);
 
-    ID3D10Texture2D_GetDesc(texture, &texture_desc);
-    ok(texture_desc.Width == 640, "Got unexpected Width %u.\n", texture_desc.Width);
-    ok(texture_desc.Height == 480, "Got unexpected Height %u.\n", texture_desc.Height);
-    ok(texture_desc.MipLevels == 1, "Got unexpected MipLevels %u.\n", texture_desc.MipLevels);
-    ok(texture_desc.ArraySize == 1, "Got unexpected ArraySize %u.\n", texture_desc.ArraySize);
-    ok(texture_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM, "Got unexpected Format %#x.\n", texture_desc.Format);
-    ok(texture_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", texture_desc.SampleDesc.Count);
-    ok(!texture_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", texture_desc.SampleDesc.Quality);
-    ok(texture_desc.Usage == D3D10_USAGE_DEFAULT, "Got unexpected Usage %#x.\n", texture_desc.Usage);
-    ok(texture_desc.BindFlags == D3D10_BIND_RENDER_TARGET, "Got unexpected BindFlags %#x.\n", texture_desc.BindFlags);
-    ok(!texture_desc.CPUAccessFlags, "Got unexpected CPUAccessFlags %#x.\n", texture_desc.CPUAccessFlags);
-    ok(!texture_desc.MiscFlags, "Got unexpected MiscFlags %#x.\n", texture_desc.MiscFlags);
-
-    hr = IDXGISwapChain_ResizeBuffers(swapchain, 1, 320, 240, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 0);
+    hr = IDXGISwapChain_ResizeBuffers(swapchain, 2, 320, 240, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
     ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
 
     ret = GetClientRect(window, &r);
@@ -3113,46 +3237,46 @@ static void test_swapchain_resize(void)
             "Got unexpected SampleDesc.Quality %u.\n", swapchain_desc.SampleDesc.Quality);
     ok(swapchain_desc.BufferUsage == DXGI_USAGE_RENDER_TARGET_OUTPUT,
             "Got unexpected BufferUsage %#x.\n", swapchain_desc.BufferUsage);
-    ok(swapchain_desc.BufferCount == 1,
+    ok(swapchain_desc.BufferCount == 2,
             "Got unexpected BufferCount %u.\n", swapchain_desc.BufferCount);
     ok(swapchain_desc.OutputWindow == window,
             "Got unexpected OutputWindow %p, expected %p.\n", swapchain_desc.OutputWindow, window);
     ok(swapchain_desc.Windowed,
             "Got unexpected Windowed %#x.\n", swapchain_desc.Windowed);
-    ok(swapchain_desc.SwapEffect == DXGI_SWAP_EFFECT_DISCARD,
+    ok(swapchain_desc.SwapEffect == swap_effect,
             "Got unexpected SwapEffect %#x.\n", swapchain_desc.SwapEffect);
     ok(!swapchain_desc.Flags,
             "Got unexpected Flags %#x.\n", swapchain_desc.Flags);
 
-    hr = IDXGISurface_GetDesc(surface, &surface_desc);
-    ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(surface_desc.Width == 640, "Got unexpected Width %u.\n", surface_desc.Width);
-    ok(surface_desc.Height == 480, "Got unexpected Height %u.\n", surface_desc.Height);
-    ok(surface_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM, "Got unexpected Format %#x.\n", surface_desc.Format);
-    ok(surface_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", surface_desc.SampleDesc.Count);
-    ok(!surface_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", surface_desc.SampleDesc.Quality);
+    if (surface)
+    {
+        check_surface_desc(surface, &swapchain_desc);
+        IDXGISurface_Release(surface);
+    }
+    if (texture)
+    {
+        check_texture_desc(texture, &swapchain_desc);
+        ID3D10Texture2D_Release(texture);
+    }
+    if (resource)
+    {
+        check_resource_desc(resource, &swapchain_desc);
+        ID3D12Resource_Release(resource);
+    }
 
-    ID3D10Texture2D_GetDesc(texture, &texture_desc);
-    ok(texture_desc.Width == 640, "Got unexpected Width %u.\n", texture_desc.Width);
-    ok(texture_desc.Height == 480, "Got unexpected Height %u.\n", texture_desc.Height);
-    ok(texture_desc.MipLevels == 1, "Got unexpected MipLevels %u.\n", texture_desc.MipLevels);
-    ok(texture_desc.ArraySize == 1, "Got unexpected ArraySize %u.\n", texture_desc.ArraySize);
-    ok(texture_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM, "Got unexpected Format %#x.\n", texture_desc.Format);
-    ok(texture_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", texture_desc.SampleDesc.Count);
-    ok(!texture_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", texture_desc.SampleDesc.Quality);
-    ok(texture_desc.Usage == D3D10_USAGE_DEFAULT, "Got unexpected Usage %#x.\n", texture_desc.Usage);
-    ok(texture_desc.BindFlags == D3D10_BIND_RENDER_TARGET, "Got unexpected BindFlags %#x.\n", texture_desc.BindFlags);
-    ok(!texture_desc.CPUAccessFlags, "Got unexpected CPUAccessFlags %#x.\n", texture_desc.CPUAccessFlags);
-    ok(!texture_desc.MiscFlags, "Got unexpected MiscFlags %#x.\n", texture_desc.MiscFlags);
-
-    ID3D10Texture2D_Release(texture);
-    IDXGISurface_Release(surface);
-    hr = IDXGISwapChain_ResizeBuffers(swapchain, 1, 320, 240, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 0);
-    ok(SUCCEEDED(hr), "Failed to resize buffers, hr %#x.\n", hr);
+    hr = IDXGISwapChain_ResizeBuffers(swapchain, 2, 320, 240, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+    ok(hr == S_OK, "Failed to resize buffers, hr %#x.\n", hr);
     hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_IDXGISurface, (void **)&surface);
-    ok(SUCCEEDED(hr), "Failed to get buffer, hr %#x.\n", hr);
+    expected_hr = is_d3d12 ? E_NOINTERFACE : S_OK;
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!surface || hr == S_OK, "Got unexpected pointer %p.\n", surface);
     hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D10Texture2D, (void **)&texture);
-    ok(SUCCEEDED(hr), "Failed to get buffer, hr %#x.\n", hr);
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!texture || hr == S_OK, "Got unexpected pointer %p.\n", texture);
+    expected_hr = is_d3d12 ? S_OK : E_NOINTERFACE;
+    hr = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D12Resource, (void **)&resource);
+    ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    ok(!resource || hr == S_OK, "Got unexpected pointer %p.\n", resource);
 
     ret = GetClientRect(window, &r);
     ok(ret, "Failed to get client rect.\n");
@@ -3172,7 +3296,7 @@ static void test_swapchain_resize(void)
     ok(swapchain_desc.BufferDesc.RefreshRate.Denominator == 1,
             "Got unexpected BufferDesc.RefreshRate.Denominator %u.\n",
             swapchain_desc.BufferDesc.RefreshRate.Denominator);
-    ok(swapchain_desc.BufferDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+    ok(swapchain_desc.BufferDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
             "Got unexpected BufferDesc.Format %#x.\n", swapchain_desc.BufferDesc.Format);
     ok(swapchain_desc.BufferDesc.ScanlineOrdering == DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
             "Got unexpected BufferDesc.ScanlineOrdering %#x.\n", swapchain_desc.BufferDesc.ScanlineOrdering);
@@ -3184,43 +3308,35 @@ static void test_swapchain_resize(void)
             "Got unexpected SampleDesc.Quality %u.\n", swapchain_desc.SampleDesc.Quality);
     ok(swapchain_desc.BufferUsage == DXGI_USAGE_RENDER_TARGET_OUTPUT,
             "Got unexpected BufferUsage %#x.\n", swapchain_desc.BufferUsage);
-    ok(swapchain_desc.BufferCount == 1,
+    ok(swapchain_desc.BufferCount == 2,
             "Got unexpected BufferCount %u.\n", swapchain_desc.BufferCount);
     ok(swapchain_desc.OutputWindow == window,
             "Got unexpected OutputWindow %p, expected %p.\n", swapchain_desc.OutputWindow, window);
     ok(swapchain_desc.Windowed,
             "Got unexpected Windowed %#x.\n", swapchain_desc.Windowed);
-    ok(swapchain_desc.SwapEffect == DXGI_SWAP_EFFECT_DISCARD,
+    ok(swapchain_desc.SwapEffect == swap_effect,
             "Got unexpected SwapEffect %#x.\n", swapchain_desc.SwapEffect);
     ok(!swapchain_desc.Flags,
             "Got unexpected Flags %#x.\n", swapchain_desc.Flags);
 
-    hr = IDXGISurface_GetDesc(surface, &surface_desc);
-    ok(SUCCEEDED(hr), "Failed to get surface desc, hr %#x.\n", hr);
-    ok(surface_desc.Width == 320, "Got unexpected Width %u.\n", surface_desc.Width);
-    ok(surface_desc.Height == 240, "Got unexpected Height %u.\n", surface_desc.Height);
-    ok(surface_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, "Got unexpected Format %#x.\n", surface_desc.Format);
-    ok(surface_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", surface_desc.SampleDesc.Count);
-    ok(!surface_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", surface_desc.SampleDesc.Quality);
-
-    ID3D10Texture2D_GetDesc(texture, &texture_desc);
-    ok(texture_desc.Width == 320, "Got unexpected Width %u.\n", texture_desc.Width);
-    ok(texture_desc.Height == 240, "Got unexpected Height %u.\n", texture_desc.Height);
-    ok(texture_desc.MipLevels == 1, "Got unexpected MipLevels %u.\n", texture_desc.MipLevels);
-    ok(texture_desc.ArraySize == 1, "Got unexpected ArraySize %u.\n", texture_desc.ArraySize);
-    ok(texture_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, "Got unexpected Format %#x.\n", texture_desc.Format);
-    ok(texture_desc.SampleDesc.Count == 1, "Got unexpected SampleDesc.Count %u.\n", texture_desc.SampleDesc.Count);
-    ok(!texture_desc.SampleDesc.Quality, "Got unexpected SampleDesc.Quality %u.\n", texture_desc.SampleDesc.Quality);
-    ok(texture_desc.Usage == D3D10_USAGE_DEFAULT, "Got unexpected Usage %#x.\n", texture_desc.Usage);
-    ok(texture_desc.BindFlags == D3D10_BIND_RENDER_TARGET, "Got unexpected BindFlags %#x.\n", texture_desc.BindFlags);
-    ok(!texture_desc.CPUAccessFlags, "Got unexpected CPUAccessFlags %#x.\n", texture_desc.CPUAccessFlags);
-    ok(!texture_desc.MiscFlags, "Got unexpected MiscFlags %#x.\n", texture_desc.MiscFlags);
-
-    ID3D10Texture2D_Release(texture);
-    IDXGISurface_Release(surface);
+    if (surface)
+    {
+        check_surface_desc(surface, &swapchain_desc);
+        IDXGISurface_Release(surface);
+    }
+    if (texture)
+    {
+        check_texture_desc(texture, &swapchain_desc);
+        ID3D10Texture2D_Release(texture);
+    }
+    if (resource)
+    {
+        check_resource_desc(resource, &swapchain_desc);
+        ID3D12Resource_Release(resource);
+    }
 
     hr = IDXGISwapChain_ResizeBuffers(swapchain, 0, 0, 0, DXGI_FORMAT_UNKNOWN, 0);
-    ok(SUCCEEDED(hr), "Failed to resize buffers, hr %#x.\n", hr);
+    ok(hr == S_OK, "Failed to resize buffers, hr %#x.\n", hr);
 
     memset(&swapchain_desc, 0, sizeof(swapchain_desc));
     hr = IDXGISwapChain_GetDesc(swapchain, &swapchain_desc);
@@ -3237,7 +3353,7 @@ static void test_swapchain_resize(void)
     ok(swapchain_desc.BufferDesc.RefreshRate.Denominator == 1,
             "Got unexpected BufferDesc.RefreshRate.Denominator %u.\n",
             swapchain_desc.BufferDesc.RefreshRate.Denominator);
-    ok(swapchain_desc.BufferDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+    ok(swapchain_desc.BufferDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
             "Got unexpected BufferDesc.Format %#x.\n", swapchain_desc.BufferDesc.Format);
     ok(swapchain_desc.BufferDesc.ScanlineOrdering == DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
             "Got unexpected BufferDesc.ScanlineOrdering %#x.\n", swapchain_desc.BufferDesc.ScanlineOrdering);
@@ -3249,21 +3365,21 @@ static void test_swapchain_resize(void)
             "Got unexpected SampleDesc.Quality %u.\n", swapchain_desc.SampleDesc.Quality);
     ok(swapchain_desc.BufferUsage == DXGI_USAGE_RENDER_TARGET_OUTPUT,
             "Got unexpected BufferUsage %#x.\n", swapchain_desc.BufferUsage);
-    ok(swapchain_desc.BufferCount == 1,
+    ok(swapchain_desc.BufferCount == 2,
             "Got unexpected BufferCount %u.\n", swapchain_desc.BufferCount);
     ok(swapchain_desc.OutputWindow == window,
             "Got unexpected OutputWindow %p, expected %p.\n", swapchain_desc.OutputWindow, window);
     ok(swapchain_desc.Windowed,
             "Got unexpected Windowed %#x.\n", swapchain_desc.Windowed);
-    ok(swapchain_desc.SwapEffect == DXGI_SWAP_EFFECT_DISCARD,
+    ok(swapchain_desc.SwapEffect == swap_effect,
             "Got unexpected SwapEffect %#x.\n", swapchain_desc.SwapEffect);
     ok(!swapchain_desc.Flags,
             "Got unexpected Flags %#x.\n", swapchain_desc.Flags);
 
     IDXGISwapChain_Release(swapchain);
-    refcount = IDXGIDevice_Release(device);
-    ok(!refcount, "Device has %u references left.\n", refcount);
     DestroyWindow(window);
+    refcount = IDXGIFactory_Release(factory);
+    ok(refcount == !is_d3d12, "Got unexpected refcount %u.\n", refcount);
 }
 
 static void test_swapchain_parameters(void)
@@ -4040,7 +4156,7 @@ static void run_on_d3d12(void (*test_func)(IUnknown *device, BOOL is_d3d12))
     ok(!refcount, "Device has %u references left.\n", refcount);
 }
 
-START_TEST(device)
+START_TEST(dxgi)
 {
     HMODULE dxgi_module, d3d12_module;
     BOOL enable_debug_layer = FALSE;
@@ -4064,30 +4180,36 @@ START_TEST(device)
             use_warp_adapter = TRUE;
         else if (!strcmp(argv[i], "--adapter") && i + 1 < argc)
             use_adapter_idx = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--single"))
+            use_mt = FALSE;
     }
 
-    test_adapter_desc();
-    test_adapter_luid();
-    test_check_interface_support();
-    test_create_surface();
-    test_parents();
-    test_output();
-    test_find_closest_matching_mode();
+    queue_test(test_adapter_desc);
+    queue_test(test_adapter_luid);
+    queue_test(test_check_interface_support);
+    queue_test(test_create_surface);
+    queue_test(test_parents);
+    queue_test(test_output);
+    queue_test(test_find_closest_matching_mode);
+    queue_test(test_get_containing_output);
+    queue_test(test_create_factory);
+    queue_test(test_private_data);
+    queue_test(test_swapchain_present);
+    queue_test(test_maximum_frame_latency);
+    queue_test(test_output_desc);
+    queue_test(test_object_wrapping);
+
+    run_queued_tests();
+
+    /* These tests use full-screen swapchains, so shouldn't run in parallel. */
     test_create_swapchain();
-    test_get_containing_output();
     test_set_fullscreen();
     test_default_fullscreen_target_output();
     test_resize_target();
     test_inexact_modes();
-    test_create_factory();
-    test_private_data();
-    test_swapchain_resize();
     test_swapchain_parameters();
-    test_swapchain_present();
+    run_on_d3d10(test_swapchain_resize);
     run_on_d3d10(test_swapchain_backbuffer_index);
-    test_maximum_frame_latency();
-    test_output_desc();
-    test_object_wrapping();
 
     if (!(d3d12_module = LoadLibraryA("d3d12.dll")))
     {
@@ -4104,6 +4226,7 @@ START_TEST(device)
         ID3D12Debug_Release(debug);
     }
 
+    run_on_d3d12(test_swapchain_resize);
     run_on_d3d12(test_swapchain_backbuffer_index);
 
     FreeLibrary(d3d12_module);

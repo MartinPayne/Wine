@@ -179,6 +179,8 @@ if exist foo (type foo) else echo not supported
 echo --- redirections within IF statements
 if 1==1 echo foo1>bar
 type bar & del bar
+if 1==1 echo foo2>>bar
+type bar & del bar
 echo -----
 if 1==1 (echo foo2>bar) else echo baz2>bar
 type bar & del bar
@@ -685,6 +687,15 @@ echo '%~xs1'
 goto :eof
 :endEchoFuns
 
+echo ------------ Testing parameter zero ------------
+call :func parm1 parm2
+goto :endParm0
+:func
+echo %~0 %~1
+echo [%0] [%~d0] [%~p0] [%~n0] [%~x0] [%~s0]
+goto :EOF
+:endParm0
+
 echo ------------ Testing variable delayed expansion ------------
 rem NT4 doesn't support this
 echo --- default mode (load-time expansion)
@@ -925,6 +936,13 @@ if %elseIF% == 1 (
 ) else (
   echo else if seems to be broken
 )
+if "x" == "a" (
+  echo broken1
+) else (
+  echo expected1
+  if "y" == "b" echo broken2
+  echo expected post-embedded if
+)
 echo --- case sensitivity with and without /i option
 if bar==BAR echo if does not default to case sensitivity
 if not bar==BAR echo if seems to default to case sensitivity
@@ -1036,6 +1054,26 @@ if exist idontexist\ba* (
    echo ERROR exist wildcard bad subdir broken
 ) else (
    echo exist wildcard bad subdir broken works
+)
+if exist subdir (
+   echo exist subdir ok
+) else (
+   echo ERROR exist subdir not working
+)
+if exist subdir\. (
+   echo exist subdir with . ok
+) else (
+   echo ERROR exist subdir with . not working
+)
+if exist subdir\ (
+   echo exist subdir with \ ok
+) else (
+   echo ERROR exist subdir with \ not working
+)
+if exist "subdir\" (
+   echo exist subdir with \ and quotes ok
+) else (
+   echo ERROR exist subdir with \ and quotes not working
 )
 del foo subdir\bar
 rd subdir
@@ -1715,9 +1753,11 @@ if "%CD%"=="" goto :SkipFORFcmdNT4
 for /f %%i in ('echo.Passed1') do echo %%i
 for /f "usebackq" %%i in (`echo.Passed2`) do echo %%i
 for /f usebackq %%i in (`echo.Passed3`) do echo %%i
+for /f "usebackq" %%i in (`"c:\windows\system32\cmd.exe" /C echo Passed4`) do echo %%i
+for /f "usebackq" %%i in (`""c:\windows\system32\cmd.exe" /C echo Passed5"`) do echo %%i
 goto :ContinueFORF
 :SkipFORFcmdNT4
-for /l %%i in (1,1,3) do echo Missing functionality - Broken%%i
+for /l %%i in (1,1,5) do echo Missing functionality - Broken%%i
 :ContinueFORF
 rem FIXME: Rest not testable right now in wine: not implemented and would need
 rem preliminary grep-like program implementation (e.g. like findstr or fc) even

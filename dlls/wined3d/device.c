@@ -610,9 +610,9 @@ out:
 /* Context activation is done by the caller. */
 static void create_dummy_textures(struct wined3d_device *device, struct wined3d_context *context)
 {
-    const struct wined3d_d3d_info *d3d_info = &device->adapter->d3d_info;
-    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
     struct wined3d_dummy_textures *textures = &device->dummy_textures;
+    const struct wined3d_d3d_info *d3d_info = context->d3d_info;
+    const struct wined3d_gl_info *gl_info = context->gl_info;
     unsigned int i;
     DWORD color;
 
@@ -970,7 +970,7 @@ static void device_init_swapchain_state(struct wined3d_device *device, struct wi
     BOOL ds_enable = swapchain->desc.enable_auto_depth_stencil;
     unsigned int i;
 
-    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+    for (i = 0; i < device->adapter->d3d_info.limits.max_rt_count; ++i)
     {
         wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
     }
@@ -1240,7 +1240,7 @@ HRESULT CDECL wined3d_device_uninit_3d(struct wined3d_device *device)
             ERR("Something's still holding the auto depth/stencil view (%p).\n", view);
     }
 
-    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+    for (i = 0; i < device->adapter->d3d_info.limits.max_rt_count; ++i)
     {
         wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
     }
@@ -4293,10 +4293,10 @@ void CDECL wined3d_device_resolve_sub_resource(struct wined3d_device *device,
     if (wined3d_format_is_typeless(dst_resource->format)
             || wined3d_format_is_typeless(src_resource->format))
     {
-        FIXME("Unhandled multisample resolve, dst_format %s, src_format %s, format %s.\n",
+        FIXME("Multisample resolve is not fully supported for typeless formats "
+                "(dst_format %s, src_format %s, format %s).\n",
                 debug_d3dformat(dst_resource->format->id), debug_d3dformat(src_resource->format->id),
                 debug_d3dformat(format_id));
-        return;
     }
     if (dst_resource->type != WINED3D_RTYPE_TEXTURE_2D)
     {
@@ -4380,11 +4380,14 @@ void CDECL wined3d_device_clear_unordered_access_view_uint(struct wined3d_device
 struct wined3d_rendertarget_view * CDECL wined3d_device_get_rendertarget_view(const struct wined3d_device *device,
         unsigned int view_idx)
 {
+    unsigned int max_rt_count;
+
     TRACE("device %p, view_idx %u.\n", device, view_idx);
 
-    if (view_idx >= device->adapter->gl_info.limits.buffers)
+    max_rt_count = device->adapter->d3d_info.limits.max_rt_count;
+    if (view_idx >= max_rt_count)
     {
-        WARN("Only %u render targets are supported.\n", device->adapter->gl_info.limits.buffers);
+        WARN("Only %u render targets are supported.\n", max_rt_count);
         return NULL;
     }
 
@@ -4402,13 +4405,15 @@ HRESULT CDECL wined3d_device_set_rendertarget_view(struct wined3d_device *device
         unsigned int view_idx, struct wined3d_rendertarget_view *view, BOOL set_viewport)
 {
     struct wined3d_rendertarget_view *prev;
+    unsigned int max_rt_count;
 
     TRACE("device %p, view_idx %u, view %p, set_viewport %#x.\n",
             device, view_idx, view, set_viewport);
 
-    if (view_idx >= device->adapter->gl_info.limits.buffers)
+    max_rt_count = device->adapter->d3d_info.limits.max_rt_count;
+    if (view_idx >= max_rt_count)
     {
-        WARN("Only %u render targets are supported.\n", device->adapter->gl_info.limits.buffers);
+        WARN("Only %u render targets are supported.\n", max_rt_count);
         return WINED3DERR_INVALIDCALL;
     }
 
@@ -4706,6 +4711,7 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         const struct wined3d_swapchain_desc *swapchain_desc, const struct wined3d_display_mode *mode,
         wined3d_device_reset_cb callback, BOOL reset_state)
 {
+    const struct wined3d_d3d_info *d3d_info = &device->adapter->d3d_info;
     struct wined3d_resource *resource, *cursor;
     struct wined3d_swapchain *swapchain;
     struct wined3d_view_desc view_desc;
@@ -4739,7 +4745,7 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         state_unbind_resources(&device->state);
     }
 
-    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+    for (i = 0; i < d3d_info->limits.max_rt_count; ++i)
     {
         wined3d_device_set_rendertarget_view(device, i, NULL, FALSE);
     }
@@ -4922,8 +4928,7 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
             wined3d_device_delete_opengl_contexts(device);
 
         memset(&device->state, 0, sizeof(device->state));
-        state_init(&device->state, &device->fb, &device->adapter->gl_info,
-                &device->adapter->d3d_info, WINED3D_STATE_INIT_DEFAULT);
+        state_init(&device->state, &device->fb, &device->adapter->d3d_info, WINED3D_STATE_INIT_DEFAULT);
         device->update_state = &device->state;
 
         device_init_swapchain_state(device, swapchain);
@@ -5039,7 +5044,7 @@ void device_resource_released(struct wined3d_device *device, struct wined3d_reso
 
     if (device->d3d_initialized)
     {
-        for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+        for (i = 0; i < ARRAY_SIZE(device->fb.render_targets); ++i)
         {
             if ((rtv = device->fb.render_targets[i]) && rtv->resource == resource)
                 ERR("Resource %p is still in use as render target %u.\n", resource, i);
@@ -5163,8 +5168,7 @@ HRESULT device_init(struct wined3d_device *device, struct wined3d *wined3d,
         return hr;
     }
 
-    state_init(&device->state, &device->fb, &adapter->gl_info,
-            &adapter->d3d_info, WINED3D_STATE_INIT_DEFAULT);
+    state_init(&device->state, &device->fb, &adapter->d3d_info, WINED3D_STATE_INIT_DEFAULT);
     device->update_state = &device->state;
 
     device->max_frame_latency = 3;

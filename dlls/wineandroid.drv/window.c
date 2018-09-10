@@ -103,6 +103,21 @@ static inline int get_dib_image_size( const BITMAPINFO *info )
 }
 
 
+/**********************************************************************
+ *	     get_win_monitor_dpi
+ */
+static UINT get_win_monitor_dpi( HWND hwnd )
+{
+    DPI_AWARENESS_CONTEXT context;
+    UINT ret;
+
+    context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+    ret = GetDpiForSystem();  /* FIXME: get monitor dpi */
+    SetThreadDpiAwarenessContext( context );
+    return ret;
+}
+
+
 /***********************************************************************
  *           alloc_win_data
  */
@@ -113,7 +128,8 @@ static struct android_win_data *alloc_win_data( HWND hwnd )
     if ((data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data))))
     {
         data->hwnd = hwnd;
-        data->window = create_ioctl_window( hwnd, FALSE );
+        data->window = create_ioctl_window( hwnd, FALSE,
+                                            (float)get_win_monitor_dpi( hwnd ) / GetDpiForWindow( hwnd ));
         EnterCriticalSection( &win_data_section );
         win_data_context[context_idx(hwnd)] = data;
     }
@@ -408,6 +424,7 @@ static void pull_events(void)
  */
 static int process_events( DWORD mask )
 {
+    DPI_AWARENESS_CONTEXT context;
     struct java_event *event, *next, *previous;
     unsigned int count = 0;
 
@@ -448,11 +465,13 @@ static int process_events( DWORD mask )
         {
         case DESKTOP_CHANGED:
             TRACE( "DESKTOP_CHANGED %ux%u\n", event->data.desktop.width, event->data.desktop.height );
+            context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
             screen_width = event->data.desktop.width;
             screen_height = event->data.desktop.height;
             init_monitors( screen_width, screen_height );
             SetWindowPos( GetDesktopWindow(), 0, 0, 0, screen_width, screen_height,
                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW );
+            SetThreadDpiAwarenessContext( context );
             break;
 
         case CONFIG_CHANGED:
@@ -489,7 +508,6 @@ static int process_events( DWORD mask )
                     RECT rect;
                     SetRect( &rect, event->data.motion.input.u.mi.dx, event->data.motion.input.u.mi.dy,
                              event->data.motion.input.u.mi.dx + 1, event->data.motion.input.u.mi.dy + 1 );
-                    MapWindowPoints( 0, event->data.motion.hwnd, (POINT *)&rect, 2 );
 
                     SERVER_START_REQ( update_window_zorder )
                     {
@@ -1171,7 +1189,7 @@ void CDECL ANDROID_SetParent( HWND hwnd, HWND parent, HWND old_parent )
     TRACE( "win %p parent %p -> %p\n", hwnd, old_parent, parent );
 
     data->parent = (parent == GetDesktopWindow()) ? 0 : parent;
-    ioctl_set_window_parent( hwnd, parent );
+    ioctl_set_window_parent( hwnd, parent, (float)get_win_monitor_dpi( hwnd ) / GetDpiForWindow( hwnd ));
     release_win_data( data );
 }
 

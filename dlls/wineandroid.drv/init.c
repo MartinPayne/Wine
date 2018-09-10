@@ -189,25 +189,6 @@ static BOOL ANDROID_DeleteDC( PHYSDEV dev )
 
 
 /***********************************************************************
- *           ANDROID_GetDeviceCaps
- */
-static INT ANDROID_GetDeviceCaps( PHYSDEV dev, INT cap )
-{
-    switch(cap)
-    {
-    case HORZRES:        return screen_width;
-    case VERTRES:        return screen_height;
-    case DESKTOPHORZRES: return virtual_screen_rect.right - virtual_screen_rect.left;
-    case DESKTOPVERTRES: return virtual_screen_rect.bottom - virtual_screen_rect.top;
-    case BITSPIXEL:      return screen_bpp;
-    default:
-        dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
-        return dev->funcs->pGetDeviceCaps( dev, cap );
-    }
-}
-
-
-/***********************************************************************
  *           ANDROID_ChangeDisplaySettingsEx
  */
 LONG CDECL ANDROID_ChangeDisplaySettingsEx( LPCWSTR devname, LPDEVMODEW devmode,
@@ -242,30 +223,7 @@ BOOL CDECL ANDROID_GetMonitorInfo( HMONITOR handle, LPMONITORINFO info )
  */
 BOOL CDECL ANDROID_EnumDisplayMonitors( HDC hdc, LPRECT rect, MONITORENUMPROC proc, LPARAM lp )
 {
-    if (hdc)
-    {
-        POINT origin;
-        RECT limit, monrect;
-
-        if (!GetDCOrgEx( hdc, &origin )) return FALSE;
-        if (GetClipBox( hdc, &limit ) == ERROR) return FALSE;
-
-        if (rect && !IntersectRect( &limit, &limit, rect )) return TRUE;
-
-        monrect = default_monitor.rcMonitor;
-        OffsetRect( &monrect, -origin.x, -origin.y );
-        if (IntersectRect( &monrect, &monrect, &limit ))
-            if (!proc( (HMONITOR)1, hdc, &monrect, lp ))
-                return FALSE;
-    }
-    else
-    {
-        RECT unused;
-        if (!rect || IntersectRect( &unused, &default_monitor.rcMonitor, rect ))
-            if (!proc( (HMONITOR)1, 0, &default_monitor.rcMonitor, lp ))
-                return FALSE;
-    }
-    return TRUE;
+    return proc( (HMONITOR)1, 0, &default_monitor.rcMonitor, lp );
 }
 
 
@@ -363,7 +321,7 @@ static const struct gdi_dc_funcs android_drv_funcs =
     NULL,                               /* pGetCharABCWidths */
     NULL,                               /* pGetCharABCWidthsI */
     NULL,                               /* pGetCharWidth */
-    ANDROID_GetDeviceCaps,              /* pGetDeviceCaps */
+    NULL,                               /* pGetDeviceCaps */
     NULL,                               /* pGetDeviceGammaRamp */
     NULL,                               /* pGetFontData */
     NULL,                               /* pGetFontRealizationInfo */

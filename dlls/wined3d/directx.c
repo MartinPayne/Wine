@@ -73,7 +73,7 @@ UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount)
 
 static void wined3d_adapter_cleanup(struct wined3d_adapter *adapter)
 {
-    heap_free(adapter->gl_info.formats);
+    heap_free(adapter->formats);
     heap_free(adapter->cfgs);
 }
 
@@ -739,7 +739,7 @@ UINT CDECL wined3d_get_adapter_mode_count(const struct wined3d *wined3d, UINT ad
         return 0;
 
     adapter = &wined3d->adapters[adapter_idx];
-    format = wined3d_get_format(&adapter->gl_info, format_id, WINED3DUSAGE_RENDERTARGET);
+    format = wined3d_get_format(adapter, format_id, WINED3DUSAGE_RENDERTARGET);
     format_bits = format->byte_count * CHAR_BIT;
 
     memset(&mode, 0, sizeof(mode));
@@ -793,7 +793,7 @@ HRESULT CDECL wined3d_enum_adapter_modes(const struct wined3d *wined3d, UINT ada
         return WINED3DERR_INVALIDCALL;
 
     adapter = &wined3d->adapters[adapter_idx];
-    format = wined3d_get_format(&adapter->gl_info, format_id, WINED3DUSAGE_RENDERTARGET);
+    format = wined3d_get_format(adapter, format_id, WINED3DUSAGE_RENDERTARGET);
     format_bits = format->byte_count * CHAR_BIT;
 
     memset(&m, 0, sizeof(m));
@@ -1052,7 +1052,7 @@ HRESULT CDECL wined3d_set_adapter_display_mode(struct wined3d *wined3d,
         TRACE("mode %ux%u@%u %s %#x.\n", mode->width, mode->height, mode->refresh_rate,
                 debug_d3dformat(mode->format_id), mode->scanline_ordering);
 
-        format = wined3d_get_format(&adapter->gl_info, mode->format_id, WINED3DUSAGE_RENDERTARGET);
+        format = wined3d_get_format(adapter, mode->format_id, WINED3DUSAGE_RENDERTARGET);
 
         new_mode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
         new_mode.dmBitsPerPel = format->byte_count * CHAR_BIT;
@@ -1227,8 +1227,8 @@ HRESULT CDECL wined3d_get_adapter_raster_status(const struct wined3d *wined3d, U
     return WINED3D_OK;
 }
 
-static BOOL wined3d_check_pixel_format_color(const struct wined3d_gl_info *gl_info,
-        const struct wined3d_pixel_format *cfg, const struct wined3d_format *format)
+static BOOL wined3d_check_pixel_format_color(const struct wined3d_pixel_format *cfg,
+        const struct wined3d_format *format)
 {
     /* Float formats need FBOs. If FBOs are used this function isn't called */
     if (format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_FLOAT)
@@ -1247,8 +1247,8 @@ static BOOL wined3d_check_pixel_format_color(const struct wined3d_gl_info *gl_in
     return TRUE;
 }
 
-static BOOL wined3d_check_pixel_format_depth(const struct wined3d_gl_info *gl_info,
-        const struct wined3d_pixel_format *cfg, const struct wined3d_format *format)
+static BOOL wined3d_check_pixel_format_depth(const struct wined3d_pixel_format *cfg,
+        const struct wined3d_format *format)
 {
     BOOL lockable = FALSE;
 
@@ -1294,8 +1294,8 @@ HRESULT CDECL wined3d_check_depth_stencil_match(const struct wined3d *wined3d,
         return WINED3DERR_INVALIDCALL;
 
     adapter = &wined3d->adapters[adapter_idx];
-    rt_format = wined3d_get_format(&adapter->gl_info, render_target_format_id, WINED3DUSAGE_RENDERTARGET);
-    ds_format = wined3d_get_format(&adapter->gl_info, depth_stencil_format_id, WINED3DUSAGE_DEPTHSTENCIL);
+    rt_format = wined3d_get_format(adapter, render_target_format_id, WINED3DUSAGE_RENDERTARGET);
+    ds_format = wined3d_get_format(adapter, depth_stencil_format_id, WINED3DUSAGE_DEPTHSTENCIL);
     if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
     {
         if ((rt_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_RENDERTARGET)
@@ -1315,8 +1315,8 @@ HRESULT CDECL wined3d_check_depth_stencil_match(const struct wined3d *wined3d,
         cfg_count = adapter->cfg_count;
         for (i = 0; i < cfg_count; ++i)
         {
-            if (wined3d_check_pixel_format_color(&adapter->gl_info, &cfgs[i], rt_format)
-                    && wined3d_check_pixel_format_depth(&adapter->gl_info, &cfgs[i], ds_format))
+            if (wined3d_check_pixel_format_color(&cfgs[i], rt_format)
+                    && wined3d_check_pixel_format_depth(&cfgs[i], ds_format))
             {
                 TRACE("Formats match.\n");
                 return WINED3D_OK;
@@ -1335,8 +1335,8 @@ HRESULT CDECL wined3d_check_device_multisample_type(const struct wined3d *wined3
         enum wined3d_device_type device_type, enum wined3d_format_id surface_format_id, BOOL windowed,
         enum wined3d_multisample_type multisample_type, DWORD *quality_levels)
 {
-    const struct wined3d_gl_info *gl_info = &wined3d->adapters[adapter_idx].gl_info;
-    const struct wined3d_format *format = wined3d_get_format(gl_info, surface_format_id, 0);
+    const struct wined3d_adapter *adapter;
+    const struct wined3d_format *format;
     HRESULT hr = WINED3D_OK;
 
     TRACE("wined3d %p, adapter_idx %u, device_type %s, surface_format %s, "
@@ -1355,6 +1355,9 @@ HRESULT CDECL wined3d_check_device_multisample_type(const struct wined3d *wined3
         FIXME("multisample_type %u not handled yet.\n", multisample_type);
         return WINED3DERR_NOTAVAILABLE;
     }
+
+    adapter = &wined3d->adapters[adapter_idx];
+    format = wined3d_get_format(adapter, surface_format_id, 0);
 
     if (multisample_type && !(format->multisample_types & 1u << (multisample_type - 1)))
         hr = WINED3DERR_NOTAVAILABLE;
@@ -1381,7 +1384,8 @@ static BOOL CheckDepthStencilCapability(const struct wined3d_adapter *adapter,
         enum wined3d_gl_resource_type gl_type)
 {
     /* Only allow depth/stencil formats */
-    if (!(ds_format->depth_size || ds_format->stencil_size)) return FALSE;
+    if (!(ds_format->depth_size || ds_format->stencil_size))
+        return FALSE;
 
     /* Blacklist formats not supported on Windows */
     switch (ds_format->id)
@@ -1409,8 +1413,8 @@ static BOOL CheckDepthStencilCapability(const struct wined3d_adapter *adapter,
         for (i = 0; i < adapter->cfg_count; ++i)
         {
             const struct wined3d_pixel_format *cfg = &adapter->cfgs[i];
-            if (wined3d_check_pixel_format_color(&adapter->gl_info, cfg, display_format)
-                    && wined3d_check_pixel_format_depth(&adapter->gl_info, cfg, ds_format))
+            if (wined3d_check_pixel_format_color(cfg, display_format)
+                    && wined3d_check_pixel_format_depth(cfg, ds_format))
                 return TRUE;
         }
     }
@@ -1449,7 +1453,7 @@ static BOOL CheckRenderTargetCapability(const struct wined3d_adapter *adapter,
         for (i = 0; i < adapter->cfg_count; ++i)
         {
             if (cfgs[i].windowDrawable
-                    && wined3d_check_pixel_format_color(&adapter->gl_info, &cfgs[i], check_format))
+                    && wined3d_check_pixel_format_color(&cfgs[i], check_format))
             {
                 TRACE("Pixel format %d is compatible with format %s.\n",
                         cfgs[i].iPixelFormat, debug_d3dformat(check_format->id));
@@ -1524,10 +1528,9 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d, UINT ad
         enum wined3d_device_type device_type, enum wined3d_format_id adapter_format_id, DWORD usage,
         enum wined3d_resource_type resource_type, enum wined3d_format_id check_format_id)
 {
-    const struct wined3d_adapter *adapter = &wined3d->adapters[adapter_idx];
-    const struct wined3d_gl_info *gl_info = &adapter->gl_info;
     const struct wined3d_format *adapter_format, *format;
     enum wined3d_gl_resource_type gl_type, gl_type_end;
+    const struct wined3d_adapter *adapter;
     BOOL mipmap_gen_supported = TRUE;
     DWORD format_flags = 0;
     DWORD allowed_usage;
@@ -1541,8 +1544,9 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d, UINT ad
     if (adapter_idx >= wined3d->adapter_count)
         return WINED3DERR_INVALIDCALL;
 
-    adapter_format = wined3d_get_format(gl_info, adapter_format_id, WINED3DUSAGE_RENDERTARGET);
-    format = wined3d_get_format(gl_info, check_format_id, usage);
+    adapter = &wined3d->adapters[adapter_idx];
+    adapter_format = wined3d_get_format(adapter, adapter_format_id, WINED3DUSAGE_RENDERTARGET);
+    format = wined3d_get_format(adapter, check_format_id, usage);
 
     switch (resource_type)
     {
@@ -1603,7 +1607,7 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d, UINT ad
             }
             else if ((usage & WINED3DUSAGE_DEPTHSTENCIL)
                     && (format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_SHADOW)
-                    && !gl_info->supported[ARB_SHADOW])
+                    && !adapter->gl_info.supported[ARB_SHADOW])
             {
                 TRACE("[FAILED] - No shadow sampler support.\n");
                 return WINED3DERR_NOTAVAILABLE;
@@ -1701,7 +1705,7 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d, UINT ad
 UINT CDECL wined3d_calculate_format_pitch(const struct wined3d *wined3d, UINT adapter_idx,
         enum wined3d_format_id format_id, UINT width)
 {
-    const struct wined3d_gl_info *gl_info;
+    const struct wined3d_adapter *adapter;
     unsigned int row_pitch, slice_pitch;
 
     TRACE("wined3d %p, adapter_idx %u, format_id %s, width %u.\n",
@@ -1710,8 +1714,8 @@ UINT CDECL wined3d_calculate_format_pitch(const struct wined3d *wined3d, UINT ad
     if (adapter_idx >= wined3d->adapter_count)
         return ~0u;
 
-    gl_info = &wined3d->adapters[adapter_idx].gl_info;
-    wined3d_format_calculate_pitch(wined3d_get_format(gl_info, format_id, 0),
+    adapter = &wined3d->adapters[adapter_idx];
+    wined3d_format_calculate_pitch(wined3d_get_format(adapter, format_id, 0),
             1, width, 1, &row_pitch, &slice_pitch);
 
     return row_pitch;
@@ -2182,7 +2186,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
     }
 
     caps->MaxAnisotropy = gl_info->limits.anisotropy;
-    caps->MaxPointSize = gl_info->limits.pointsize_max;
+    caps->MaxPointSize = d3d_info->limits.pointsize_max;
 
     caps->MaxPrimitiveCount   = 0x555555; /* Taken from an AMD Radeon HD 5700 (Evergreen) GPU. */
     caps->MaxVertexIndex      = 0xffffff; /* Taken from an AMD Radeon HD 5700 (Evergreen) GPU. */
@@ -2197,7 +2201,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
     caps->AdapterOrdinalInGroup             = 0;
     caps->NumberOfAdaptersInGroup           = 1;
 
-    caps->NumSimultaneousRTs = gl_info->limits.buffers;
+    caps->NumSimultaneousRTs = d3d_info->limits.max_rt_count;
 
     caps->StretchRectFilterCaps               = WINED3DPTFILTERCAPS_MINFPOINT  |
                                                 WINED3DPTFILTERCAPS_MAGFPOINT  |
@@ -2205,9 +2209,9 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
                                                 WINED3DPTFILTERCAPS_MAGFLINEAR;
     caps->VertexTextureFilterCaps             = 0;
 
-    adapter->shader_backend->shader_get_caps(&adapter->gl_info, &shader_caps);
-    adapter->fragment_pipe->get_caps(&adapter->gl_info, &fragment_caps);
-    adapter->vertex_pipe->vp_get_caps(&adapter->gl_info, &vertex_caps);
+    adapter->shader_backend->shader_get_caps(gl_info, &shader_caps);
+    adapter->fragment_pipe->get_caps(gl_info, &fragment_caps);
+    adapter->vertex_pipe->vp_get_caps(gl_info, &vertex_caps);
 
     /* Add shader misc caps. Only some of them belong to the shader parts of the pipeline */
     caps->PrimitiveMiscCaps |= fragment_caps.PrimitiveMiscCaps;
@@ -2243,19 +2247,19 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
         caps->VS20Caps.caps = WINED3DVS20CAPS_PREDICATION;
         /* VS 3.0 requires MAX_DYNAMICFLOWCONTROLDEPTH (24) */
         caps->VS20Caps.dynamic_flow_control_depth = WINED3DVS20_MAX_DYNAMICFLOWCONTROLDEPTH;
-        caps->VS20Caps.temp_count = max(32, adapter->gl_info.limits.arb_vs_temps);
+        caps->VS20Caps.temp_count = max(32, gl_info->limits.arb_vs_temps);
         /* level of nesting in loops / if-statements; VS 3.0 requires MAX (4) */
         caps->VS20Caps.static_flow_control_depth = WINED3DVS20_MAX_STATICFLOWCONTROLDEPTH;
 
         caps->MaxVShaderInstructionsExecuted    = 65535; /* VS 3.0 needs at least 65535, some cards even use 2^32-1 */
-        caps->MaxVertexShader30InstructionSlots = max(512, adapter->gl_info.limits.arb_vs_instructions);
+        caps->MaxVertexShader30InstructionSlots = max(512, gl_info->limits.arb_vs_instructions);
         caps->VertexTextureFilterCaps = WINED3DPTFILTERCAPS_MINFPOINT | WINED3DPTFILTERCAPS_MAGFPOINT;
     }
     else if (caps->VertexShaderVersion == 2)
     {
         caps->VS20Caps.caps = 0;
         caps->VS20Caps.dynamic_flow_control_depth = WINED3DVS20_MIN_DYNAMICFLOWCONTROLDEPTH;
-        caps->VS20Caps.temp_count = max(12, adapter->gl_info.limits.arb_vs_temps);
+        caps->VS20Caps.temp_count = max(12, gl_info->limits.arb_vs_temps);
         caps->VS20Caps.static_flow_control_depth = 1;
 
         caps->MaxVShaderInstructionsExecuted    = 65535;
@@ -2289,7 +2293,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
                 WINED3DPS20CAPS_NOTEXINSTRUCTIONLIMIT;
         /* PS 3.0 requires MAX_DYNAMICFLOWCONTROLDEPTH (24) */
         caps->PS20Caps.dynamic_flow_control_depth = WINED3DPS20_MAX_DYNAMICFLOWCONTROLDEPTH;
-        caps->PS20Caps.temp_count = max(32, adapter->gl_info.limits.arb_ps_temps);
+        caps->PS20Caps.temp_count = max(32, gl_info->limits.arb_ps_temps);
         /* PS 3.0 requires MAX_STATICFLOWCONTROLDEPTH (4) */
         caps->PS20Caps.static_flow_control_depth = WINED3DPS20_MAX_STATICFLOWCONTROLDEPTH;
         /* PS 3.0 requires MAX_NUMINSTRUCTIONSLOTS (512) */
@@ -2297,14 +2301,14 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d *wined3d, UINT adapte
 
         caps->MaxPShaderInstructionsExecuted = 65535;
         caps->MaxPixelShader30InstructionSlots = max(WINED3DMIN30SHADERINSTRUCTIONS,
-                adapter->gl_info.limits.arb_ps_instructions);
+                gl_info->limits.arb_ps_instructions);
     }
     else if(caps->PixelShaderVersion == 2)
     {
         /* Below we assume PS2.0 specs, not extended 2.0a(GeforceFX)/2.0b(Radeon R3xx) ones */
         caps->PS20Caps.caps = 0;
         caps->PS20Caps.dynamic_flow_control_depth = 0; /* WINED3DVS20_MIN_DYNAMICFLOWCONTROLDEPTH = 0 */
-        caps->PS20Caps.temp_count = max(12, adapter->gl_info.limits.arb_ps_temps);
+        caps->PS20Caps.temp_count = max(12, gl_info->limits.arb_ps_temps);
         caps->PS20Caps.static_flow_control_depth = WINED3DPS20_MIN_STATICFLOWCONTROLDEPTH; /* Minimum: 1 */
         /* Minimum number (64 ALU + 32 Texture), a GeforceFX uses 512 */
         caps->PS20Caps.instruction_slot_count = WINED3DPS20_MIN_NUMINSTRUCTIONSLOTS;
@@ -2456,6 +2460,17 @@ HRESULT CDECL wined3d_device_create(struct wined3d *wined3d, UINT adapter_idx, e
     return WINED3D_OK;
 }
 
+static BOOL wined3d_adapter_no3d_create_context(struct wined3d_context *context,
+        struct wined3d_texture *target, const struct wined3d_format *ds_format)
+{
+    return TRUE;
+}
+
+static const struct wined3d_adapter_ops wined3d_adapter_no3d_ops =
+{
+    wined3d_adapter_no3d_create_context,
+};
+
 static BOOL wined3d_adapter_no3d_init(struct wined3d_adapter *adapter)
 {
     TRACE("adapter %p.\n", adapter);
@@ -2473,6 +2488,7 @@ static BOOL wined3d_adapter_no3d_init(struct wined3d_adapter *adapter)
     adapter->vertex_pipe = &none_vertex_pipe;
     adapter->fragment_pipe = &none_fragment_pipe;
     adapter->shader_backend = &none_shader_backend;
+    adapter->adapter_ops = &wined3d_adapter_no3d_ops;
 
     return TRUE;
 }
@@ -2495,6 +2511,9 @@ static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, unsigned int o
     }
     TRACE("Allocated LUID %08x:%08x for adapter %p.\n",
             adapter->luid.HighPart, adapter->luid.LowPart, adapter);
+
+    adapter->formats = NULL;
+    adapter->format_count = 0;
 
     if (wined3d_creation_flags & WINED3D_NO3D)
         return wined3d_adapter_no3d_init(adapter);
