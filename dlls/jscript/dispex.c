@@ -216,7 +216,13 @@ static HRESULT find_prop_name(jsdisp_t *This, unsigned hash, const WCHAR *name, 
 
     builtin = find_builtin_prop(This, name);
     if(builtin) {
-        prop = alloc_prop(This, name, PROP_BUILTIN, builtin->flags);
+        unsigned flags = builtin->flags;
+        if(flags & PROPF_METHOD)
+            flags |= PROPF_WRITABLE | PROPF_CONFIGURABLE;
+        else if(builtin->setter)
+            flags |= PROPF_WRITABLE;
+        flags &= PROPF_ENUMERABLE | PROPF_WRITABLE | PROPF_CONFIGURABLE;
+        prop = alloc_prop(This, name, PROP_BUILTIN, flags);
         if(!prop)
             return E_OUTOFMEMORY;
 
@@ -232,7 +238,7 @@ static HRESULT find_prop_name(jsdisp_t *This, unsigned hash, const WCHAR *name, 
         for(ptr = name; isdigitW(*ptr) && idx < 0x10000; ptr++)
             idx = idx*10 + (*ptr-'0');
         if(!*ptr && idx < This->builtin_info->idx_length(This)) {
-            prop = alloc_prop(This, name, PROP_IDX, This->builtin_info->idx_put ? 0 : PROPF_CONST);
+            prop = alloc_prop(This, name, PROP_IDX, This->builtin_info->idx_put ? PROPF_WRITABLE : 0);
             if(!prop)
                 return E_OUTOFMEMORY;
 
@@ -268,7 +274,6 @@ static HRESULT find_prop_name_prot(jsdisp_t *This, unsigned hash, const WCHAR *n
         if(prop) {
             if(del) {
                 del->type = PROP_PROTREF;
-                del->flags = 0;
                 del->u.ref = prop - This->prototype->props;
                 prop = del;
             }else {
@@ -470,7 +475,7 @@ static HRESULT prop_put(jsdisp_t *This, dispex_prop_t *prop, jsval_t val)
 {
     HRESULT hres;
 
-    if(prop->flags & PROPF_CONST)
+    if(!(prop->flags & PROPF_WRITABLE) && prop->type != PROP_PROTREF)
         return S_OK;
 
     switch(prop->type) {
@@ -485,7 +490,7 @@ static HRESULT prop_put(jsdisp_t *This, dispex_prop_t *prop, jsval_t val)
         /* fall through */
     case PROP_PROTREF:
         prop->type = PROP_JSVAL;
-        prop->flags = PROPF_ENUM;
+        prop->flags = PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE;
         prop->u.val = jsval_undefined();
         break;
     case PROP_JSVAL:
@@ -744,7 +749,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
 
 static HRESULT delete_prop(dispex_prop_t *prop, BOOL *ret)
 {
-    if(prop->flags & PROPF_DONTDELETE) {
+    if(!(prop->flags & PROPF_CONFIGURABLE)) {
         *ret = FALSE;
         return S_OK;
     }
@@ -845,7 +850,7 @@ static HRESULT WINAPI DispatchEx_GetNextDispID(IDispatchEx *iface, DWORD grfdex,
     }
 
     while(iter < This->props + This->prop_cnt) {
-        if(iter->name && (get_flags(This, iter) & PROPF_ENUM) && iter->type!=PROP_DELETED) {
+        if(iter->name && (get_flags(This, iter) & PROPF_ENUMERABLE) && iter->type!=PROP_DELETED) {
             *pid = prop_to_id(This, iter);
             return S_OK;
         }
@@ -1035,7 +1040,8 @@ HRESULT jsdisp_get_id(jsdisp_t *jsdisp, const WCHAR *name, DWORD flags, DISPID *
     HRESULT hres;
 
     if(flags & fdexNameEnsure)
-        hres = ensure_prop_name(jsdisp, name, TRUE, PROPF_ENUM, &prop);
+        hres = ensure_prop_name(jsdisp, name, TRUE, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE,
+                                &prop);
     else
         hres = find_prop_name_prot(jsdisp, string_hash(name), name, &prop);
     if(FAILED(hres))
@@ -1307,7 +1313,7 @@ HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, jsval_t va
 
 HRESULT jsdisp_propput_name(jsdisp_t *obj, const WCHAR *name, jsval_t val)
 {
-    return jsdisp_propput(obj, name, PROPF_ENUM, val);
+    return jsdisp_propput(obj, name, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, val);
 }
 
 HRESULT jsdisp_propput_const(jsdisp_t *obj, const WCHAR *name, jsval_t val)
@@ -1315,7 +1321,7 @@ HRESULT jsdisp_propput_const(jsdisp_t *obj, const WCHAR *name, jsval_t val)
     dispex_prop_t *prop;
     HRESULT hres;
 
-    hres = ensure_prop_name(obj, name, FALSE, PROPF_CONST, &prop);
+    hres = ensure_prop_name(obj, name, FALSE, 0, &prop);
     if(FAILED(hres))
         return hres;
 
@@ -1324,7 +1330,7 @@ HRESULT jsdisp_propput_const(jsdisp_t *obj, const WCHAR *name, jsval_t val)
 
 HRESULT jsdisp_propput_dontenum(jsdisp_t *obj, const WCHAR *name, jsval_t val)
 {
-    return jsdisp_propput(obj, name, 0, val);
+    return jsdisp_propput(obj, name, PROPF_CONFIGURABLE | PROPF_WRITABLE, val);
 }
 
 HRESULT jsdisp_propput_idx(jsdisp_t *obj, DWORD idx, jsval_t val)
@@ -1583,7 +1589,8 @@ HRESULT disp_delete_name(script_ctx_t *ctx, IDispatch *disp, jsstr_t *name, BOOL
     return hres;
 }
 
-HRESULT jsdisp_is_own_prop(jsdisp_t *obj, const WCHAR *name, BOOL *ret)
+HRESULT jsdisp_get_own_property(jsdisp_t *obj, const WCHAR *name, BOOL flags_only,
+                                property_desc_t *desc)
 {
     dispex_prop_t *prop;
     HRESULT hres;
@@ -1592,11 +1599,32 @@ HRESULT jsdisp_is_own_prop(jsdisp_t *obj, const WCHAR *name, BOOL *ret)
     if(FAILED(hres))
         return hres;
 
-    *ret = prop && (prop->type == PROP_JSVAL || prop->type == PROP_BUILTIN);
+    if(!prop)
+        return DISP_E_UNKNOWNNAME;
+
+    memset(desc, 0, sizeof(*desc));
+
+    switch(prop->type) {
+    case PROP_BUILTIN:
+    case PROP_JSVAL:
+        desc->mask |= PROPF_WRITABLE;
+        desc->explicit_value = TRUE;
+        if(!flags_only) {
+            hres = prop_get(obj, prop, &desc->value);
+            if(FAILED(hres))
+                return hres;
+        }
+        break;
+    default:
+        return DISP_E_UNKNOWNNAME;
+    }
+
+    desc->flags = prop->flags & (PROPF_ENUMERABLE | PROPF_WRITABLE | PROPF_CONFIGURABLE);
+    desc->mask |= PROPF_ENUMERABLE | PROPF_CONFIGURABLE;
     return S_OK;
 }
 
-HRESULT jsdisp_is_enumerable(jsdisp_t *obj, const WCHAR *name, BOOL *ret)
+HRESULT jsdisp_define_property(jsdisp_t *obj, const WCHAR *name, property_desc_t *desc)
 {
     dispex_prop_t *prop;
     HRESULT hres;
@@ -1605,6 +1633,77 @@ HRESULT jsdisp_is_enumerable(jsdisp_t *obj, const WCHAR *name, BOOL *ret)
     if(FAILED(hres))
         return hres;
 
-    *ret = prop && (prop->flags & PROPF_ENUM) && prop->type != PROP_PROTREF;
+    if(!prop && !(prop = alloc_prop(obj, name, PROP_DELETED, 0)))
+       return E_OUTOFMEMORY;
+
+    if(prop->type == PROP_DELETED || prop->type == PROP_PROTREF) {
+        prop->flags = desc->flags;
+        if(desc->explicit_getter || desc->explicit_setter) {
+            FIXME("accessor property\n");
+            return E_NOTIMPL;
+        }else {
+            prop->type = PROP_JSVAL;
+            if(desc->explicit_value) {
+                hres = jsval_copy(desc->value, &prop->u.val);
+                if(FAILED(hres))
+                    return hres;
+            }else {
+                prop->u.val = jsval_undefined();
+            }
+            TRACE("%s = %s\n", debugstr_w(name), debugstr_jsval(prop->u.val));
+        }
+        return S_OK;
+    }
+
+    TRACE("existing prop %s prop flags %x desc flags %x desc mask %x\n", debugstr_w(name),
+          prop->flags, desc->flags, desc->mask);
+
+    if(!(prop->flags & PROPF_CONFIGURABLE)) {
+        if(((desc->mask & PROPF_CONFIGURABLE) && (desc->flags & PROPF_CONFIGURABLE))
+           || ((desc->mask & PROPF_ENUMERABLE)
+               && ((desc->flags & PROPF_ENUMERABLE) != (prop->flags & PROPF_ENUMERABLE))))
+            return throw_type_error(obj->ctx, JS_E_NONCONFIGURABLE_REDEFINED, name);
+    }
+
+    if(desc->explicit_value || (desc->mask & PROPF_WRITABLE)) {
+        if(!(prop->flags & PROPF_CONFIGURABLE) && !(prop->flags & PROPF_WRITABLE)) {
+            if((desc->mask & PROPF_WRITABLE) && (desc->flags & PROPF_WRITABLE))
+                return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
+            if(desc->explicit_value) {
+                if(prop->type == PROP_JSVAL) {
+                    BOOL eq;
+                    hres = jsval_strict_equal(desc->value, prop->u.val, &eq);
+                    if(FAILED(hres))
+                        return hres;
+                    if(!eq)
+                        return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
+                }else {
+                    FIXME("redefinition of property type %d\n", prop->type);
+                }
+            }
+        }
+        if(desc->explicit_value) {
+            if(prop->type == PROP_JSVAL)
+                jsval_release(prop->u.val);
+            else
+                prop->type = PROP_JSVAL;
+            hres = jsval_copy(desc->value, &prop->u.val);
+            if(FAILED(hres)) {
+                prop->u.val = jsval_undefined();
+                return hres;
+            }
+        }
+    }else if(desc->explicit_getter || desc->explicit_setter) {
+        FIXME("accessor property\n");
+        return E_NOTIMPL;
+    }
+
+    prop->flags = (prop->flags & ~desc->mask) | (desc->flags & desc->mask);
     return S_OK;
+}
+
+HRESULT jsdisp_define_data_property(jsdisp_t *obj, const WCHAR *name, unsigned flags, jsval_t value)
+{
+    property_desc_t prop_desc = { flags, flags, TRUE, value };
+    return jsdisp_define_property(obj, name, &prop_desc);
 }

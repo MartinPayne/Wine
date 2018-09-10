@@ -58,6 +58,7 @@ typedef struct
     ITaskDefinition *task;
     IExecAction *action;
     LPWSTR task_name;
+    UINT flags;
     HRESULT status;
     WORD idle_minutes, deadline_minutes;
     DWORD priority, maxRunTime;
@@ -65,6 +66,7 @@ typedef struct
     DWORD trigger_count;
     TASK_TRIGGER *trigger;
     BOOL is_dirty;
+    USHORT instance_count;
 } TaskImpl;
 
 static inline TaskImpl *impl_from_ITask(ITask *iface)
@@ -268,18 +270,30 @@ static HRESULT WINAPI MSTASK_ITask_GetIdleWait(ITask *iface, WORD *idle_minutes,
     return S_OK;
 }
 
-static HRESULT WINAPI MSTASK_ITask_Run(
-        ITask* iface)
+static HRESULT WINAPI MSTASK_ITask_Run(ITask *iface)
 {
-    FIXME("(%p): stub\n", iface);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p)\n", iface);
+
+    if (This->status == SCHED_S_TASK_NOT_SCHEDULED)
+        return SCHED_E_TASK_NOT_READY;
+
+    This->flags |= 0x04000000;
+    return IPersistFile_Save(&This->IPersistFile_iface, NULL, FALSE);
 }
 
-static HRESULT WINAPI MSTASK_ITask_Terminate(
-        ITask* iface)
+static HRESULT WINAPI MSTASK_ITask_Terminate(ITask *iface)
 {
-    FIXME("(%p): stub\n", iface);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p)\n", iface);
+
+    if (!This->instance_count)
+        return SCHED_E_TASK_NOT_RUNNING;
+
+    This->flags |= 0x08000000;
+    return IPersistFile_Save(&This->IPersistFile_iface, NULL, FALSE);
 }
 
 static HRESULT WINAPI MSTASK_ITask_EditWorkItem(
@@ -305,7 +319,7 @@ static HRESULT WINAPI MSTASK_ITask_GetStatus(ITask *iface, HRESULT *status)
 
     TRACE("(%p, %p)\n", iface, status);
 
-    *status = This->status;
+    *status = This->instance_count ? SCHED_S_TASK_RUNNING : This->status;
     return S_OK;
 }
 
@@ -487,8 +501,10 @@ static HRESULT WINAPI MSTASK_ITask_SetFlags(
 
 static HRESULT WINAPI MSTASK_ITask_GetFlags(ITask *iface, DWORD *flags)
 {
-    FIXME("(%p, %p): stub\n", iface, flags);
-    *flags = 0;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p)\n", iface, flags);
+    *flags = LOWORD(This->flags);
     return S_OK;
 }
 
@@ -855,7 +871,7 @@ static HRESULT load_job_data(TaskImpl *This, BYTE *data, DWORD size)
     const FIXDLEN_DATA *fixed;
     const SYSTEMTIME *st;
     DWORD unicode_strings_size, data_size, triggers_size;
-    USHORT instance_count, trigger_count, i;
+    USHORT trigger_count, i;
     const USHORT *signature;
     TASK_TRIGGER *task_trigger;
 
@@ -888,7 +904,9 @@ static HRESULT load_job_data(TaskImpl *This, BYTE *data, DWORD size)
     This->maxRunTime = fixed->maximum_runtime;
     TRACE("exit_code %#x\n", fixed->exit_code);
     TRACE("status %08x\n", fixed->status);
+    This->status = fixed->status;
     TRACE("flags %08x\n", fixed->flags);
+    This->flags = fixed->flags;
     st = &fixed->last_runtime;
     TRACE("last_runtime %d/%d/%d wday %d %d:%d:%d.%03d\n",
             st->wDay, st->wMonth, st->wYear, st->wDayOfWeek,
@@ -901,8 +919,8 @@ static HRESULT load_job_data(TaskImpl *This, BYTE *data, DWORD size)
         return SCHED_E_INVALID_TASK;
     }
 
-    instance_count = *(const USHORT *)(data + sizeof(*fixed));
-    TRACE("instance count %u\n", instance_count);
+    This->instance_count = *(const USHORT *)(data + sizeof(*fixed));
+    TRACE("instance count %u\n", This->instance_count);
 
     if (fixed->name_size_offset + sizeof(USHORT) < size)
         unicode_strings_size = load_unicode_strings(task, data + fixed->name_size_offset, size - fixed->name_size_offset);
@@ -1189,7 +1207,7 @@ static HRESULT WINAPI MSTASK_IPersistFile_Save(IPersistFile *iface, LPCOLESTR ta
     FIXDLEN_DATA fixed;
     WORD word, user_data_size = 0;
     HANDLE hfile;
-    DWORD size, ver, disposition;
+    DWORD size, ver, disposition, try;
     TaskImpl *This = impl_from_IPersistFile(iface);
     ITask *task = &This->ITask_iface;
     LPWSTR appname = NULL, params = NULL, workdir = NULL, creator = NULL, comment = NULL;
@@ -1246,13 +1264,21 @@ static HRESULT WINAPI MSTASK_IPersistFile_Save(IPersistFile *iface, LPCOLESTR ta
     fixed.priority = This->priority;
     fixed.maximum_runtime = This->maxRunTime;
     fixed.exit_code = 0;
-    fixed.status = SCHED_S_TASK_HAS_NOT_RUN;
-    fixed.flags = 0;
+    if (This->status == SCHED_S_TASK_NOT_SCHEDULED && This->trigger_count)
+        This->status = SCHED_S_TASK_HAS_NOT_RUN;
+    fixed.status = This->status;
+    fixed.flags = This->flags;
     memset(&fixed.last_runtime, 0, sizeof(fixed.last_runtime));
 
-    hfile = CreateFileW(task_name, GENERIC_WRITE, 0, NULL, disposition, 0, 0);
-    if (hfile == INVALID_HANDLE_VALUE)
-        return HRESULT_FROM_WIN32(GetLastError());
+    try = 1;
+    for (;;)
+    {
+        hfile = CreateFileW(task_name, GENERIC_READ | GENERIC_WRITE, 0, NULL, disposition, 0, 0);
+        if (hfile != INVALID_HANDLE_VALUE) break;
+
+        if (try++ >= 3) return HRESULT_FROM_WIN32(GetLastError());
+        Sleep(100);
+    }
 
     if (!WriteFile(hfile, &fixed, sizeof(fixed), &size, NULL))
     {
@@ -1260,9 +1286,8 @@ static HRESULT WINAPI MSTASK_IPersistFile_Save(IPersistFile *iface, LPCOLESTR ta
         goto failed;
     }
 
-    /* Instance Count */
-    word = 0;
-    if (!WriteFile(hfile, &word, sizeof(word), &size, NULL))
+    /* Instance Count: don't touch it in the client */
+    if (SetFilePointer(hfile, sizeof(word), NULL, FILE_CURRENT) == INVALID_SET_FILE_POINTER)
     {
         hr = HRESULT_FROM_WIN32(GetLastError());
         goto failed;
@@ -1464,6 +1489,7 @@ HRESULT TaskConstructor(ITaskService *service, const WCHAR *name, ITask **task)
     This->ref = 1;
     This->task = taskdef;
     This->task_name = heap_strdupW(task_name);
+    This->flags = 0;
     This->status = SCHED_S_TASK_NOT_SCHEDULED;
     This->idle_minutes = 10;
     This->deadline_minutes = 60;
@@ -1472,6 +1498,7 @@ HRESULT TaskConstructor(ITaskService *service, const WCHAR *name, ITask **task)
     This->trigger_count = 0;
     This->trigger = NULL;
     This->is_dirty = FALSE;
+    This->instance_count = 0;
 
     /* Default time is 3 days = 259200000 ms */
     This->maxRunTime = 259200000;

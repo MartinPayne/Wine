@@ -970,6 +970,9 @@ static DWORD APPINFO_SetOption(object_header_t *hdr, DWORD option, void *buf, DW
         heap_free(ai->agent);
         if (!(ai->agent = heap_strdupW(buf))) return ERROR_OUTOFMEMORY;
         return ERROR_SUCCESS;
+    case INTERNET_OPTION_REFRESH:
+        FIXME("INTERNET_OPTION_REFRESH\n");
+        return ERROR_SUCCESS;
     }
 
     return INET_SetOption(hdr, option, buf, size);
@@ -2600,6 +2603,10 @@ BOOL WINAPI InternetQueryOptionA(HINTERNET hInternet, DWORD dwOption,
 DWORD INET_SetOption(object_header_t *hdr, DWORD option, void *buf, DWORD size)
 {
     switch(option) {
+    case INTERNET_OPTION_SETTINGS_CHANGED:
+        FIXME("INTERNETOPTION_SETTINGS_CHANGED semi-stub\n");
+        collect_connections(COLLECT_CONNECTIONS);
+        return ERROR_SUCCESS;
     case INTERNET_OPTION_CALLBACK:
         WARN("Not settable option %u\n", option);
         return ERROR_INTERNET_OPTION_NOT_SETTABLE;
@@ -2607,6 +2614,8 @@ DWORD INET_SetOption(object_header_t *hdr, DWORD option, void *buf, DWORD size)
     case INTERNET_OPTION_MAX_CONNS_PER_1_0_SERVER:
         WARN("Called on global option %u\n", option);
         return ERROR_INTERNET_INVALID_OPERATION;
+    case INTERNET_OPTION_REFRESH:
+        return ERROR_INTERNET_INCORRECT_HANDLE_TYPE;
     }
 
     return ERROR_INTERNET_INVALID_OPTION;
@@ -2652,11 +2661,6 @@ static DWORD set_global_option(DWORD option, void *buf, DWORD size)
         connect_timeout = *(ULONG*)buf;
         return ERROR_SUCCESS;
 
-    case INTERNET_OPTION_SETTINGS_CHANGED:
-        FIXME("INTERNETOPTION_SETTINGS_CHANGED semi-stub\n");
-        collect_connections(COLLECT_CONNECTIONS);
-        return ERROR_SUCCESS;
-
     case INTERNET_OPTION_SUPPRESS_BEHAVIOR:
         FIXME("INTERNET_OPTION_SUPPRESS_BEHAVIOR stub\n");
 
@@ -2667,7 +2671,7 @@ static DWORD set_global_option(DWORD option, void *buf, DWORD size)
         return ERROR_SUCCESS;
     }
 
-    return ERROR_INTERNET_INVALID_OPTION;
+    return INET_SetOption(NULL, option, buf, size);
 }
 
 /***********************************************************************

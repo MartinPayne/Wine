@@ -184,7 +184,7 @@ HRESULT setup_arguments_object(script_ctx_t *ctx, call_frame_t *frame)
     if(SUCCEEDED(hres))
         hres = jsdisp_propput_dontenum(&args->jsdisp, caleeW, jsval_disp(to_disp(&args->function->dispex)));
     if(SUCCEEDED(hres))
-        hres = jsdisp_propput(frame->base_scope->jsobj, argumentsW, PROPF_DONTDELETE, jsval_obj(&args->jsdisp));
+        hres = jsdisp_propput(frame->base_scope->jsobj, argumentsW, PROPF_WRITABLE, jsval_obj(&args->jsdisp));
     if(FAILED(hres)) {
         jsdisp_release(&args->jsdisp);
         return hres;
@@ -356,12 +356,6 @@ static HRESULT Function_get_length(script_ctx_t *ctx, jsdisp_t *jsthis, jsval_t 
 
     *r = jsval_number(function_from_jsdisp(jsthis)->length);
     return S_OK;
-}
-
-static HRESULT Function_set_length(script_ctx_t *ctx, jsdisp_t *jsthis, jsval_t value)
-{
-    FIXME("\n");
-    return E_NOTIMPL;
 }
 
 static HRESULT Function_toString(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, unsigned argc, jsval_t *argv,
@@ -588,9 +582,9 @@ static void Function_destructor(jsdisp_t *dispex)
 
 static const builtin_prop_t Function_props[] = {
     {applyW,                 Function_apply,                 PROPF_METHOD|2},
-    {argumentsW,             NULL, 0,                        Function_get_arguments, builtin_set_const},
+    {argumentsW,             NULL, 0,                        Function_get_arguments},
     {callW,                  Function_call,                  PROPF_METHOD|1},
-    {lengthW,                NULL, 0,                        Function_get_length,    Function_set_length},
+    {lengthW,                NULL, 0,                        Function_get_length},
     {toStringW,              Function_toString,              PROPF_METHOD}
 };
 
@@ -604,8 +598,8 @@ static const builtin_info_t Function_info = {
 };
 
 static const builtin_prop_t FunctionInst_props[] = {
-    {argumentsW,             NULL, 0,                        Function_get_arguments, builtin_set_const},
-    {lengthW,                NULL, 0,                        Function_get_length,    Function_set_length}
+    {argumentsW,             NULL, 0,                        Function_get_arguments},
+    {lengthW,                NULL, 0,                        Function_get_length}
 };
 
 static const builtin_info_t FunctionInst_info = {
@@ -661,7 +655,8 @@ HRESULT create_builtin_function(script_ctx_t *ctx, builtin_invoke_t value_proc, 
         return hres;
 
     if(builtin_info)
-        hres = jsdisp_propput_const(&function->dispex, lengthW, jsval_number(function->length));
+        hres = jsdisp_define_data_property(&function->dispex, lengthW, 0,
+                                           jsval_number(function->length));
     if(SUCCEEDED(hres))
         hres = set_prototype(ctx, &function->dispex, prototype);
     if(FAILED(hres)) {

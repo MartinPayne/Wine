@@ -235,7 +235,7 @@ WCHAR *msi_create_temp_file( MSIDATABASE *db )
     return ret;
 }
 
-static MSIBINARY *create_temp_binary( MSIPACKAGE *package, LPCWSTR source, BOOL dll )
+static MSIBINARY *create_temp_binary(MSIPACKAGE *package, LPCWSTR source)
 {
     static const WCHAR query[] = {
         'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ',
@@ -272,11 +272,6 @@ static MSIBINARY *create_temp_binary( MSIPACKAGE *package, LPCWSTR source, BOOL 
     CloseHandle( file );
     if (r != ERROR_SUCCESS) goto error;
 
-    /* keep a reference to prevent the dll from being unloaded */
-    if (dll && !(binary->module = LoadLibraryW( tmpfile )))
-    {
-        ERR( "failed to load dll %s (%u)\n", debugstr_w( tmpfile ), GetLastError() );
-    }
     binary->source = strdupW( source );
     binary->tmpfile = tmpfile;
     list_add_tail( &package->binaries, &binary->entry );
@@ -292,7 +287,7 @@ error:
     return NULL;
 }
 
-static MSIBINARY *get_temp_binary( MSIPACKAGE *package, LPCWSTR source, BOOL dll )
+static MSIBINARY *get_temp_binary(MSIPACKAGE *package, LPCWSTR source)
 {
     MSIBINARY *binary;
 
@@ -302,7 +297,7 @@ static MSIBINARY *get_temp_binary( MSIPACKAGE *package, LPCWSTR source, BOOL dll
             return binary;
     }
 
-    return create_temp_binary( package, source, dll );
+    return create_temp_binary(package, source);
 }
 
 static void file_running_action(MSIPACKAGE* package, HANDLE Handle,
@@ -579,11 +574,18 @@ UINT __wine_msi_call_dll_function(const GUID *guid)
 
 static DWORD WINAPI DllThread( LPVOID arg )
 {
-    WCHAR buffer[64] = {'m','s','i','e','x','e','c','.','e','x','e',' ','-','E','m','b','e','d','d','i','n','g',' ',0};
+    static const WCHAR msiexecW[] = {'\\','m','s','i','e','x','e','c','.','e','x','e',0};
+    static const WCHAR argsW[] = {' ','-','E','m','b','e','d','d','i','n','g',' ',0};
+    msi_custom_action_info *info;
     PROCESS_INFORMATION pi = {0};
     STARTUPINFOW si = {0};
+    WCHAR buffer[MAX_PATH], cmdline[MAX_PATH + 60];
     RPC_STATUS status;
     GUID *guid = arg;
+    void *cookie;
+    BOOL wow64;
+    DWORD arch;
+    BOOL ret;
     DWORD rc;
 
     TRACE("custom action (%x) started\n", GetCurrentThreadId() );
@@ -605,8 +607,28 @@ static DWORD WINAPI DllThread( LPVOID arg )
         return status;
     }
 
-    StringFromGUID2(guid, buffer + strlenW(buffer), 39);
-    CreateProcessW(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    info = find_action_by_guid(guid);
+    ret = GetBinaryTypeW(info->source, &arch);
+    release_custom_action_data(info);
+
+    if (sizeof(void *) == 8 && ret && arch == SCS_32BIT_BINARY)
+        GetSystemWow64DirectoryW(buffer, MAX_PATH - sizeof(msiexecW)/sizeof(WCHAR));
+    else
+        GetSystemDirectoryW(buffer, MAX_PATH - sizeof(msiexecW)/sizeof(WCHAR));
+    strcatW(buffer, msiexecW);
+    strcpyW(cmdline, buffer);
+    strcatW(cmdline, argsW);
+    StringFromGUID2(guid, cmdline + strlenW(cmdline), 39);
+
+    if (IsWow64Process(GetCurrentProcess(), &wow64) && wow64 && arch == SCS_64BIT_BINARY)
+    {
+        Wow64DisableWow64FsRedirection(&cookie);
+        CreateProcessW(buffer, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        Wow64RevertWow64FsRedirection(cookie);
+    }
+    else
+        CreateProcessW(buffer, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &rc);
     CloseHandle(pi.hProcess);
@@ -667,7 +689,7 @@ static UINT HANDLE_CustomType1( MSIPACKAGE *package, const WCHAR *source, const 
     msi_custom_action_info *info;
     MSIBINARY *binary;
 
-    if (!(binary = get_temp_binary( package, source, TRUE )))
+    if (!(binary = get_temp_binary(package, source)))
         return ERROR_FUNCTION_FAILED;
 
     TRACE("Calling function %s from %s\n", debugstr_w(target), debugstr_w(binary->tmpfile));
@@ -751,7 +773,8 @@ static UINT HANDLE_CustomType2( MSIPACKAGE *package, const WCHAR *source, const 
     HANDLE handle;
     WCHAR *arg;
 
-    if (!(binary = get_temp_binary( package, source, FALSE ))) return ERROR_FUNCTION_FAILED;
+    if (!(binary = get_temp_binary(package, source)))
+        return ERROR_FUNCTION_FAILED;
 
     deformat_string( package, target, &arg );
     TRACE("exe %s arg %s\n", debugstr_w(binary->tmpfile), debugstr_w(arg));

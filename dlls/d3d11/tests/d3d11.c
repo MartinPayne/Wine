@@ -5927,9 +5927,9 @@ static void test_device_context_state(void)
 {
     ID3DDeviceContextState *context_state, *previous_context_state;
     ID3D11SamplerState *sampler, *tmp_sampler;
+    ID3D11DeviceContext1 *context = NULL;
     D3D11_SAMPLER_DESC sampler_desc;
     D3D_FEATURE_LEVEL feature_level;
-    ID3D11DeviceContext1 *context;
     ID3D11Device *d3d11_device;
     ID3D11Device1 *device;
     ULONG refcount;
@@ -5949,11 +5949,17 @@ static void test_device_context_state(void)
         return;
     }
 
-    check_interface(device, &IID_ID3D10Device, FALSE, FALSE);
-    check_interface(device, &IID_ID3D10Device1, FALSE, FALSE);
+    todo_wine check_interface(device, &IID_ID3D10Device, FALSE, FALSE);
+    todo_wine check_interface(device, &IID_ID3D10Device1, FALSE, FALSE);
 
     feature_level = ID3D11Device1_GetFeatureLevel(device);
     ID3D11Device1_GetImmediateContext1(device, &context);
+    todo_wine ok(!!context, "Failed to get immediate context.\n");
+    if (!context)
+    {
+        ID3D11Device1_Release(device);
+        return;
+    }
 
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -15486,6 +15492,7 @@ static void test_check_feature_support(void)
 {
     D3D11_FEATURE_DATA_THREADING threading[2];
     D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS hwopts;
+    D3D11_FEATURE_DATA_ARCHITECTURE_INFO archinfo;
     ID3D11Device *device;
     ULONG refcount;
     HRESULT hr;
@@ -15543,6 +15550,13 @@ static void test_check_feature_support(void)
     hr = ID3D11Device_CheckFeatureSupport(device, D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS, &hwopts, sizeof(hwopts));
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
     trace("Compute shader support via SM4 %#x.\n", hwopts.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x);
+
+    hr = ID3D11Device_CheckFeatureSupport(device, D3D11_FEATURE_ARCHITECTURE_INFO, &archinfo, sizeof(archinfo));
+    ok(hr == S_OK || broken(hr == E_INVALIDARG) /* Not available on all Windows versions. */,
+            "Got unexpected hr %#x.\n", hr);
+    hr = ID3D11Device_CheckFeatureSupport(device, D3D11_FEATURE_ARCHITECTURE_INFO, &archinfo, sizeof(archinfo)*2);
+    ok(hr == E_INVALIDARG /* Not available on all Windows versions but they will return E_INVALIDARG anyways. */,
+            "Got unexpected hr %#x.\n", hr);
 
     refcount = ID3D11Device_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);

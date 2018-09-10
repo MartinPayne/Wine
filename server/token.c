@@ -104,7 +104,8 @@ struct token
     struct list    privileges;      /* privileges available to the token */
     struct list    groups;          /* groups that the user of this token belongs to (sid_and_attributes) */
     SID           *user;            /* SID of user this token represents */
-    SID           *primary_group;   /* SID of user's primary group */
+    SID           *owner;           /* SID of owner (points to user or one of groups) */
+    SID           *primary_group;   /* SID of user's primary group (points to one of groups) */
     unsigned       primary;         /* is this a primary or impersonation token? */
     ACL           *default_dacl;    /* the default DACL to assign to objects created by this user */
     TOKEN_SOURCE   source;          /* source of the token */
@@ -158,11 +159,12 @@ static const struct object_ops token_ops =
     token_destroy              /* destroy */
 };
 
-
 static void token_dump( struct object *obj, int verbose )
 {
-    fprintf( stderr, "Security token\n" );
-    /* FIXME: dump token members */
+    struct token *token = (struct token *)obj;
+    assert( obj->ops == &token_ops );
+    fprintf( stderr, "Token id=%d.%u primary=%u impersonation level=%d\n", token->token_id.high_part,
+             token->token_id.low_part, token->primary, token->impersonation_level );
 }
 
 static unsigned int token_map_access( struct object *obj, unsigned int access )
@@ -581,9 +583,12 @@ static struct token *create_token( unsigned primary, const SID *user,
             group->resource = FALSE;
             group->deny_only = FALSE;
             list_add_tail( &token->groups, &group->entry );
-            /* Use first owner capable group as an owner */
+            /* Use first owner capable group as owner and primary group */
             if (!token->primary_group && group->owner)
+            {
+                token->owner = &group->sid;
                 token->primary_group = &group->sid;
+            }
         }
 
         /* copy privileges */
@@ -653,7 +658,10 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
         memcpy( newgroup, group, size );
         list_add_tail( &token->groups, &newgroup->entry );
         if (src_token->primary_group == &group->sid)
+        {
+            token->owner = &newgroup->sid;
             token->primary_group = &newgroup->sid;
+        }
     }
     assert( token->primary_group );
 
@@ -1392,16 +1400,14 @@ DECL_HANDLER(access_check)
     }
 }
 
-/* retrieves the SID of the user that the token represents */
+/* retrieves an SID from the token */
 DECL_HANDLER(get_token_sid)
 {
     struct token *token;
 
     reply->sid_len = 0;
 
-    if ((token = (struct token *)get_handle_obj( current->process, req->handle,
-                                                 TOKEN_QUERY,
-                                                 &token_ops )))
+    if ((token = (struct token *)get_handle_obj( current->process, req->handle, TOKEN_QUERY, &token_ops )))
     {
         const SID *sid = NULL;
 
@@ -1415,18 +1421,8 @@ DECL_HANDLER(get_token_sid)
             sid = token->primary_group;
             break;
         case TokenOwner:
-        {
-            struct group *group;
-            LIST_FOR_EACH_ENTRY( group, &token->groups, struct group, entry )
-            {
-                if (group->owner)
-                {
-                    sid = &group->sid;
-                    break;
-                }
-            }
+            sid = token->owner;
             break;
-        }
         case TokenLogonSid:
             sid = (const SID *)&builtin_logon_sid;
             break;

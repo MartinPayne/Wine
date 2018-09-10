@@ -205,6 +205,13 @@ case $host in
     CFLAGS="$CFLAGS -marm -mfloat-abi=$float_abi"
     AC_SUBST(TARGETFLAGS,"-marm -mfloat-abi=$float_abi")
     ;;
+  aarch64*)
+    AC_MSG_CHECKING([whether $CC supports __builtin_ms_va_list])
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>]], [[void func(__builtin_ms_va_list *args);]])],
+                      [AC_MSG_RESULT([yes])],
+                      [AC_MSG_RESULT([no])
+                       AC_MSG_ERROR([You need clang >= 5.0 to build Wine for arm64.])])
+    ;;
   i[[3456789]]86*)
     enable_win16=${enable_win16:-yes}
     ;;
@@ -1669,7 +1676,7 @@ then
         [AC_CHECK_HEADERS([krb5/krb5.h])
          if test "$ac_cv_header_krb5_krb5_h" = "yes"
          then
-             WINE_CHECK_SONAME(krb5,krb5_init_context,,[KRB5_CFLAGS=""],[$KRB5_LIBS])
+             WINE_CHECK_SONAME(krb5,krb5_is_config_principal,,[KRB5_CFLAGS=""],[$KRB5_LIBS])
          else
              KRB5_CFLAGS=""
          fi])
@@ -1677,7 +1684,7 @@ else
     with_gssapi=${with_gssapi:-no}
 fi
 WINE_NOTICE_WITH(krb5,[test "x$ac_cv_lib_soname_krb5" = "x"],
-                 [libkrb5 ${notice_platform}development files not found, Kerberos won't be supported.])
+                 [libkrb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.])
 
 dnl **** Check for gssapi ****
 if test "x$with_gssapi" != "xno"
@@ -1756,6 +1763,7 @@ fi
 WINE_NOTICE_WITH(mpg123,[test "x$ac_cv_lib_mpg123_mpg123_feed" != xyes -a x"$ac_cv_header_CoreAudio_CoreAudio_h" != xyes],
                  [libmpg123 ${notice_platform}development files not found (or too old), mp3 codec won't be supported.],
                  [enable_l3codeca_acm])
+test "x$ac_cv_lib_mpg123_mpg123_feed" = xyes || enable_mp3dmod=${enable_mp3dmod:-no}
 
 dnl **** Check for OpenAL 1.1 ****
 if test "$ac_cv_header_AL_al_h" = "yes"
@@ -3043,6 +3051,7 @@ WINE_CONFIG_MAKEFILE(dlls/atl110)
 WINE_CONFIG_MAKEFILE(dlls/atl80)
 WINE_CONFIG_MAKEFILE(dlls/atl80/tests)
 WINE_CONFIG_MAKEFILE(dlls/atl90)
+WINE_CONFIG_MAKEFILE(dlls/atmlib)
 WINE_CONFIG_MAKEFILE(dlls/authz)
 WINE_CONFIG_MAKEFILE(dlls/avicap32)
 WINE_CONFIG_MAKEFILE(dlls/avifil32)
@@ -3194,6 +3203,7 @@ WINE_CONFIG_MAKEFILE(dlls/dmime)
 WINE_CONFIG_MAKEFILE(dlls/dmime/tests)
 WINE_CONFIG_MAKEFILE(dlls/dmloader)
 WINE_CONFIG_MAKEFILE(dlls/dmloader/tests)
+WINE_CONFIG_MAKEFILE(dlls/dmoguids)
 WINE_CONFIG_MAKEFILE(dlls/dmscript)
 WINE_CONFIG_MAKEFILE(dlls/dmscript/tests)
 WINE_CONFIG_MAKEFILE(dlls/dmstyle)
@@ -3278,8 +3288,10 @@ WINE_CONFIG_MAKEFILE(dlls/ext-ms-win-rtcore-ntuser-syscolors-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/ext-ms-win-rtcore-ntuser-sysparams-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/ext-ms-win-security-credui-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/ext-ms-win-security-cryptui-l1-1-0)
+WINE_CONFIG_MAKEFILE(dlls/ext-ms-win-uxtheme-themes-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/faultrep)
 WINE_CONFIG_MAKEFILE(dlls/faultrep/tests)
+WINE_CONFIG_MAKEFILE(dlls/feclient)
 WINE_CONFIG_MAKEFILE(dlls/fltlib)
 WINE_CONFIG_MAKEFILE(dlls/fltmgr.sys)
 WINE_CONFIG_MAKEFILE(dlls/fntcache)
@@ -3388,6 +3400,7 @@ WINE_CONFIG_MAKEFILE(dlls/mmsystem.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/monodebg.vxd,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/mountmgr.sys)
 WINE_CONFIG_MAKEFILE(dlls/mouse.drv16,enable_win16)
+WINE_CONFIG_MAKEFILE(dlls/mp3dmod)
 WINE_CONFIG_MAKEFILE(dlls/mpr)
 WINE_CONFIG_MAKEFILE(dlls/mpr/tests)
 WINE_CONFIG_MAKEFILE(dlls/mprapi)
@@ -3459,6 +3472,7 @@ WINE_CONFIG_MAKEFILE(dlls/msvcp90/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcr100)
 WINE_CONFIG_MAKEFILE(dlls/msvcr100/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcr110)
+WINE_CONFIG_MAKEFILE(dlls/msvcr110/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcr120)
 WINE_CONFIG_MAKEFILE(dlls/msvcr120/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcr120_app)
@@ -3504,6 +3518,7 @@ WINE_CONFIG_MAKEFILE(dlls/ntdll/tests)
 WINE_CONFIG_MAKEFILE(dlls/ntdsapi)
 WINE_CONFIG_MAKEFILE(dlls/ntdsapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/ntoskrnl.exe)
+WINE_CONFIG_MAKEFILE(dlls/ntoskrnl.exe/tests)
 WINE_CONFIG_MAKEFILE(dlls/ntprint)
 WINE_CONFIG_MAKEFILE(dlls/ntprint/tests)
 WINE_CONFIG_MAKEFILE(dlls/objsel)
@@ -3762,6 +3777,7 @@ WINE_CONFIG_MAKEFILE(dlls/wlanapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/wldap32)
 WINE_CONFIG_MAKEFILE(dlls/wldap32/tests)
 WINE_CONFIG_MAKEFILE(dlls/wmasf)
+WINE_CONFIG_MAKEFILE(dlls/wmcodecdspuuid)
 WINE_CONFIG_MAKEFILE(dlls/wmi)
 WINE_CONFIG_MAKEFILE(dlls/wmiutils)
 WINE_CONFIG_MAKEFILE(dlls/wmiutils/tests)
@@ -3918,6 +3934,7 @@ WINE_CONFIG_MAKEFILE(programs/winetest)
 WINE_CONFIG_MAKEFILE(programs/winevdm,enable_win16)
 WINE_CONFIG_MAKEFILE(programs/winhelp.exe16,enable_win16)
 WINE_CONFIG_MAKEFILE(programs/winhlp32)
+WINE_CONFIG_MAKEFILE(programs/winmgmt)
 WINE_CONFIG_MAKEFILE(programs/winoldap.mod16,enable_win16)
 WINE_CONFIG_MAKEFILE(programs/winver)
 WINE_CONFIG_MAKEFILE(programs/wmic)
