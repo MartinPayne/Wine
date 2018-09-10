@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2018-07-20 08:43+0300\n"
+"PO-Revision-Date: 2018-08-17 19:36+0300\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -2227,7 +2227,7 @@ msgstr ""
 msgid "&File name:"
 msgstr "&Failas:"
 
-#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:309
+#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:313
 msgid "B&rowse..."
 msgstr "Pari&nkti..."
 
@@ -10179,7 +10179,7 @@ msgstr "Ana&loginis"
 msgid "Digi&tal"
 msgstr "Skai&tmeninis"
 
-#: clock.rc:35 notepad.rc:53 winecfg.rc:303 winefile.rc:63 wordpad.rc:84
+#: clock.rc:35 notepad.rc:53 winecfg.rc:307 winefile.rc:63 wordpad.rc:84
 msgid "&Font..."
 msgstr "Š&riftas..."
 
@@ -10683,14 +10683,14 @@ msgid ""
 "Specifying no file type after the equal sign removes the current\n"
 "association, if any.\n"
 msgstr ""
-"ASSOC parodo ar modifikuoja failų prievardžių sąsajas.\n"
+"ASSOC parodo ar modifikuoja failų prievardžių susiejimus.\n"
 "\n"
 "Sintaksė: ASSOC [.prv[=[failoTipas]]]\n"
 "\n"
-"ASSOC be parametrų parodo dabartines failų sąsajas.\n"
-"Jei naudojama tik su failo prievardžiu, parodo dabartinę sąsają.\n"
-"Po lygybės ženklo nenurodžius failo tipo pašalina dabartinę sąsają, jei "
-"yra.\n"
+"ASSOC be parametrų parodo dabartinius failų susiejimus.\n"
+"Jei naudojama tik su failo prievardžiu, parodo dabartinį susiejimą.\n"
+"Po lygybės ženklo nenurodžius failo tipo pašalina dabartinį\n"
+"susiejimą, jei yra.\n"
 
 #: cmd.rc:300
 msgid ""
@@ -10805,7 +10805,7 @@ msgid ""
 "Enter HELP <command> for further information on any of the above commands.\n"
 msgstr ""
 "CMD įtaisytos komandos yra:\n"
-"ASSOC\t\tRodyti ar modifikuoti failų prievardžių sąsajas\n"
+"ASSOC\t\tRodyti ar modifikuoti failų prievardžių susiejimus\n"
 "ATTRIB\t\tRodyti ar keisti DOS failo požymius\n"
 "CALL\t\tKviesti komandų failą iš kito komandų failo\n"
 "CD (CHDIR)\tPakeisti dabartinį numatytąjį katalogą\n"
@@ -14216,10 +14216,18 @@ msgid "C&olor:"
 msgstr "S&palva:"
 
 #: winecfg.rc:304
+msgid "MIME types"
+msgstr "MIME tipai"
+
+#: winecfg.rc:305
+msgid "Manage file &associations"
+msgstr "Valdyti failų susie&jimus"
+
+#: winecfg.rc:308
 msgid "Folders"
 msgstr "Aplankai"
 
-#: winecfg.rc:307
+#: winecfg.rc:311
 msgid "&Link to:"
 msgstr "S&usieti su:"
 

@@ -37,6 +37,21 @@
 
 #define SWAPCHAIN_FLAG_SHADER_INPUT             0x1
 
+static unsigned int use_adapter_idx;
+static BOOL use_warp_adapter;
+static BOOL use_mt = TRUE;
+
+static struct test_entry
+{
+    union
+    {
+        void (*test)(void);
+        void (*test_fl)(D3D_FEATURE_LEVEL fl);
+    } u;
+    D3D_FEATURE_LEVEL fl;
+} *mt_tests;
+size_t mt_tests_size, mt_test_count;
+
 struct format_support
 {
     DXGI_FORMAT format;
@@ -94,6 +109,89 @@ struct swapchain_desc
     DXGI_SWAP_EFFECT swap_effect;
     DWORD flags;
 };
+
+static void queue_test_entry(const struct test_entry *t)
+{
+    if (mt_test_count >= mt_tests_size)
+    {
+        mt_tests_size = max(16, mt_tests_size * 2);
+        mt_tests = heap_realloc(mt_tests, mt_tests_size * sizeof(*t));
+    }
+    mt_tests[mt_test_count++] = *t;
+}
+
+static void queue_test_fl(void (*test)(const D3D_FEATURE_LEVEL fl), D3D_FEATURE_LEVEL fl)
+{
+    struct test_entry t;
+
+    t.u.test_fl = test;
+    t.fl = fl;
+    queue_test_entry(&t);
+}
+
+static void queue_test(void (*test)(void))
+{
+    struct test_entry t;
+
+    t.u.test = test;
+    t.fl = 0;
+    queue_test_entry(&t);
+}
+
+static void run_mt_test(const struct test_entry *t)
+{
+    if (t->fl)
+        t->u.test_fl(t->fl);
+    else
+        t->u.test();
+}
+
+static DWORD WINAPI thread_func(void *ctx)
+{
+    LONG *i = ctx, j;
+
+    while (*i < mt_test_count)
+    {
+        j = *i;
+        if (InterlockedCompareExchange(i, j + 1, j) == j)
+            run_mt_test(&mt_tests[j]);
+    }
+
+    return 0;
+}
+
+static void run_queued_tests(void)
+{
+    unsigned int thread_count, i;
+    HANDLE *threads;
+    SYSTEM_INFO si;
+    LONG test_idx;
+
+    if (!use_mt)
+    {
+        for (i = 0; i < mt_test_count; ++i)
+        {
+            run_mt_test(&mt_tests[i]);
+        }
+
+        return;
+    }
+
+    GetSystemInfo(&si);
+    thread_count = si.dwNumberOfProcessors;
+    threads = heap_calloc(thread_count, sizeof(*threads));
+    for (i = 0, test_idx = 0; i < thread_count; ++i)
+    {
+        threads[i] = CreateThread(NULL, 0, thread_func, &test_idx, 0, NULL);
+        ok(!!threads[i], "Failed to create thread %u.\n", i);
+    }
+    WaitForMultipleObjects(thread_count, threads, TRUE, INFINITE);
+    for (i = 0; i < thread_count; ++i)
+    {
+        CloseHandle(threads[i]);
+    }
+    heap_free(threads);
+}
 
 static void set_box(D3D11_BOX *box, UINT left, UINT top, UINT front, UINT right, UINT bottom, UINT back)
 {
@@ -1138,9 +1236,6 @@ static void check_texture_uvec4_(unsigned int line, ID3D11Texture2D *texture,
     for (sub_resource_idx = 0; sub_resource_idx < sub_resource_count; ++sub_resource_idx)
         check_texture_sub_resource_uvec4_(line, texture, sub_resource_idx, NULL, expected_value);
 }
-
-static BOOL use_warp_adapter;
-static unsigned int use_adapter_idx;
 
 static IDXGIAdapter *create_adapter(void)
 {
@@ -11471,7 +11566,7 @@ static void test_update_subresource(void)
         {
             color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
             ok(compare_color(color, expected_colors[j + i * 4], 1),
-                    "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                     color, j, i, expected_colors[j + i * 4]);
         }
     }
@@ -11487,7 +11582,7 @@ static void test_update_subresource(void)
         {
             color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
             ok(compare_color(color, bitmap_data[j + i * 4], 1),
-                    "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                     color, j, i, bitmap_data[j + i * 4]);
         }
     }
@@ -11510,8 +11605,8 @@ static void test_copy_subresource_region(void)
     ID3D11SamplerState *sampler_state;
     ID3D11ShaderResourceView *ps_srv;
     D3D11_SAMPLER_DESC sampler_desc;
-    ID3D11DeviceContext *context;
     ID3D11DeviceContext1 *context1;
+    ID3D11DeviceContext *context;
     struct vec4 float_colors[16];
     struct resource_readback rb;
     ID3D11PixelShader *ps;
@@ -11678,7 +11773,7 @@ static void test_copy_subresource_region(void)
         {
             color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
             ok(compare_color(color, expected_colors[j + i * 4], 1),
-                    "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                     color, j, i, expected_colors[j + i * 4]);
         }
     }
@@ -11694,7 +11789,7 @@ static void test_copy_subresource_region(void)
         {
             color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
             ok(compare_color(color, bitmap_data[j + i * 4], 1),
-                    "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                     color, j, i, bitmap_data[j + i * 4]);
         }
     }
@@ -11726,7 +11821,7 @@ static void test_copy_subresource_region(void)
             {
                 color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
                 ok(compare_color(color, bitmap_data[j + i * 4], 1),
-                        "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                        "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                         color, j, i, bitmap_data[j + i * 4]);
             }
         }
@@ -11801,7 +11896,7 @@ static void test_copy_subresource_region(void)
         {
             color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
             ok(compare_color(color, bitmap_data[j + i * 4], 1),
-                    "Got unexpected color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
                     color, j, i, bitmap_data[j + i * 4]);
         }
     }
@@ -11810,6 +11905,207 @@ static void test_copy_subresource_region(void)
     ID3D11Buffer_Release(dst_buffer);
     ID3D11Buffer_Release(src_buffer);
     ID3D11PixelShader_Release(ps);
+    release_test_context(&test_context);
+}
+
+static void test_copy_subresource_region_3d(void)
+{
+    ID3D11ShaderResourceView *dst_srv, *src_srv;
+    ID3D11Texture3D *dst_texture, *src_texture;
+    D3D11_SUBRESOURCE_DATA resource_data[4];
+    struct d3d11_test_context test_context;
+    D3D11_TEXTURE2D_DESC texture2d_desc;
+    D3D11_TEXTURE3D_DESC texture3d_desc;
+    ID3D11SamplerState *sampler_state;
+    D3D11_SAMPLER_DESC sampler_desc;
+    ID3D11DeviceContext *context;
+    struct resource_readback rb;
+    ID3D11Texture2D *texture2d;
+    ID3D11PixelShader *ps;
+    ID3D11Device *device;
+    unsigned int i, j;
+    DWORD data[4][16];
+    D3D11_BOX box;
+    DWORD color;
+    HRESULT hr;
+
+    static const DWORD ps_code[] =
+    {
+#if 0
+        Texture3D t;
+        SamplerState s;
+
+        float4 main(float4 position : SV_POSITION) : SV_Target
+        {
+            return t.Sample(s, position.xyz / float3(640, 480, 1));
+        }
+#endif
+        0x43425844, 0x27b15ae8, 0xbebf46f7, 0x6cd88d8d, 0x5118de51, 0x00000001, 0x00000134, 0x00000003,
+        0x0000002c, 0x00000060, 0x00000094, 0x4e475349, 0x0000002c, 0x00000001, 0x00000008, 0x00000020,
+        0x00000000, 0x00000001, 0x00000003, 0x00000000, 0x0000070f, 0x505f5653, 0x5449534f, 0x004e4f49,
+        0x4e47534f, 0x0000002c, 0x00000001, 0x00000008, 0x00000020, 0x00000000, 0x00000000, 0x00000003,
+        0x00000000, 0x0000000f, 0x545f5653, 0x65677261, 0xabab0074, 0x52444853, 0x00000098, 0x00000040,
+        0x00000026, 0x0300005a, 0x00106000, 0x00000000, 0x04002858, 0x00107000, 0x00000000, 0x00005555,
+        0x04002064, 0x00101072, 0x00000000, 0x00000001, 0x03000065, 0x001020f2, 0x00000000, 0x02000068,
+        0x00000001, 0x0a000038, 0x00100072, 0x00000000, 0x00101246, 0x00000000, 0x00004002, 0x3acccccd,
+        0x3b088889, 0x3f800000, 0x00000000, 0x09000045, 0x001020f2, 0x00000000, 0x00100246, 0x00000000,
+        0x00107e46, 0x00000000, 0x00106000, 0x00000000, 0x0100003e,
+    };
+    static const DWORD bitmap_data[] =
+    {
+        0xff0000ff, 0xff00ffff, 0xff00ff00, 0xffffff00,
+        0xffff0000, 0xffff00ff, 0xff000000, 0xff7f7f7f,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xff000000,
+        0xffffffff, 0xff000000, 0xff000000, 0xff000000,
+    };
+
+    if (!init_test_context(&test_context, NULL))
+        return;
+    device = test_context.device;
+    context = test_context.immediate_context;
+
+    texture3d_desc.Width = 4;
+    texture3d_desc.Height = 4;
+    texture3d_desc.Depth = 4;
+    texture3d_desc.MipLevels = 1;
+    texture3d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texture3d_desc.Usage = D3D11_USAGE_DEFAULT;
+    texture3d_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texture3d_desc.CPUAccessFlags = 0;
+    texture3d_desc.MiscFlags = 0;
+
+    hr = ID3D11Device_CreateTexture3D(device, &texture3d_desc, NULL, &src_texture);
+    ok(hr == S_OK, "Failed to create 3d texture, hr %#x.\n", hr);
+    hr = ID3D11Device_CreateTexture3D(device, &texture3d_desc, NULL, &dst_texture);
+    ok(hr == S_OK, "Failed to create 3d texture, hr %#x.\n", hr);
+
+    texture2d_desc.Width = 4;
+    texture2d_desc.Height = 4;
+    texture2d_desc.MipLevels = 1;
+    texture2d_desc.ArraySize = 4;
+    texture2d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texture2d_desc.SampleDesc.Count = 1;
+    texture2d_desc.SampleDesc.Quality = 0;
+    texture2d_desc.Usage = D3D11_USAGE_IMMUTABLE;
+    texture2d_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texture2d_desc.CPUAccessFlags = 0;
+    texture2d_desc.MiscFlags = 0;
+
+    for (i = 0; i < ARRAY_SIZE(*data); ++i)
+    {
+        data[0][i] = 0xff0000ff;
+        data[1][i] = bitmap_data[i];
+        data[2][i] = 0xff00ff00;
+        data[3][i] = 0xffff00ff;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(resource_data); ++i)
+    {
+        resource_data[i].pSysMem = data[i];
+        resource_data[i].SysMemPitch = texture2d_desc.Width * sizeof(data[0][0]);
+        resource_data[i].SysMemSlicePitch = 0;
+    }
+
+    hr = ID3D11Device_CreateTexture2D(device, &texture2d_desc, resource_data, &texture2d);
+    ok(hr == S_OK, "Failed to create 2d texture, hr %#x.\n", hr);
+
+    hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)src_texture, NULL, &src_srv);
+    ok(hr == S_OK, "Failed to create shader resource view, hr %#x.\n", hr);
+    hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)dst_texture, NULL, &dst_srv);
+    ok(hr == S_OK, "Failed to create shader resource view, hr %#x.\n", hr);
+
+    sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.MipLODBias = 0.0f;
+    sampler_desc.MaxAnisotropy = 0;
+    sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sampler_desc.BorderColor[0] = 0.0f;
+    sampler_desc.BorderColor[1] = 0.0f;
+    sampler_desc.BorderColor[2] = 0.0f;
+    sampler_desc.BorderColor[3] = 0.0f;
+    sampler_desc.MinLOD = 0.0f;
+    sampler_desc.MaxLOD = 0.0f;
+
+    hr = ID3D11Device_CreateSamplerState(device, &sampler_desc, &sampler_state);
+    ok(SUCCEEDED(hr), "Failed to create sampler state, hr %#x.\n", hr);
+
+    hr = ID3D11Device_CreatePixelShader(device, ps_code, sizeof(ps_code), NULL, &ps);
+    ok(hr == S_OK, "Failed to create pixel shader, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &src_srv);
+    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler_state);
+    ID3D11DeviceContext_PSSetShader(context, ps, NULL, 0);
+
+    set_box(&box, 0, 0, 0, 4, 4, 1);
+    for (i = 0; i < ARRAY_SIZE(resource_data); ++i)
+    {
+        ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)src_texture, 0,
+                0, 0, i, (ID3D11Resource *)texture2d, i, &box);
+    }
+    draw_quad(&test_context);
+    check_texture_color(test_context.backbuffer, 0xff0000ff, 1);
+    draw_quad_z(&test_context, 0.25f);
+    get_texture_readback(test_context.backbuffer, 0, &rb);
+    for (i = 0; i < 4; ++i)
+    {
+        for (j = 0; j < 4; ++j)
+        {
+            color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
+            ok(compare_color(color, bitmap_data[j + i * 4], 1),
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    color, j, i, bitmap_data[j + i * 4]);
+        }
+    }
+    release_resource_readback(&rb);
+    draw_quad_z(&test_context, 0.5f);
+    check_texture_color(test_context.backbuffer, 0xff00ff00, 1);
+    draw_quad_z(&test_context, 1.0f);
+    check_texture_color(test_context.backbuffer, 0xffff00ff, 1);
+
+    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &dst_srv);
+
+    set_box(&box, 0, 0, 0, 4, 4, 2);
+    ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)dst_texture, 0,
+            0, 0, 2, (ID3D11Resource *)src_texture, 0, &box);
+    set_box(&box, 0, 0, 2, 4, 4, 4);
+    ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)dst_texture, 0,
+            0, 0, 0, (ID3D11Resource *)src_texture, 0, &box);
+
+    set_box(&box, 0, 0, 0, 4, 4, 1);
+    for (i = 0; i < ARRAY_SIZE(resource_data); ++i)
+    {
+        ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)src_texture, 0,
+                0, 0, i, (ID3D11Resource *)texture2d, i, &box);
+    }
+    draw_quad(&test_context);
+    check_texture_color(test_context.backbuffer, 0xff00ff00, 1);
+    draw_quad_z(&test_context, 0.25f);
+    check_texture_color(test_context.backbuffer, 0xffff00ff, 1);
+    draw_quad_z(&test_context, 0.5f);
+    check_texture_color(test_context.backbuffer, 0xff0000ff, 1);
+    draw_quad_z(&test_context, 1.0f);
+    get_texture_readback(test_context.backbuffer, 0, &rb);
+    for (i = 0; i < 4; ++i)
+    {
+        for (j = 0; j < 4; ++j)
+        {
+            color = get_readback_color(&rb, 80 + j * 160, 60 + i * 120, 0);
+            ok(compare_color(color, bitmap_data[j + i * 4], 1),
+                    "Got color 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    color, j, i, bitmap_data[j + i * 4]);
+        }
+    }
+    release_resource_readback(&rb);
+
+    ID3D11PixelShader_Release(ps);
+    ID3D11SamplerState_Release(sampler_state);
+    ID3D11ShaderResourceView_Release(dst_srv);
+    ID3D11ShaderResourceView_Release(src_srv);
+    ID3D11Texture2D_Release(texture2d);
+    ID3D11Texture3D_Release(dst_texture);
+    ID3D11Texture3D_Release(src_texture);
     release_test_context(&test_context);
 }
 
@@ -17297,7 +17593,7 @@ static void test_fl9_draw(const D3D_FEATURE_LEVEL feature_level)
     release_test_context(&test_context);
 }
 
-static void run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL begin,
+static void queue_for_each_feature_level_in_range(D3D_FEATURE_LEVEL begin,
         D3D_FEATURE_LEVEL end, void (*test_func)(const D3D_FEATURE_LEVEL fl))
 {
     static const D3D_FEATURE_LEVEL feature_levels[] =
@@ -17316,19 +17612,19 @@ static void run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL begin,
     for (i = 0; i < ARRAY_SIZE(feature_levels); ++i)
     {
         if (begin <= feature_levels[i] && feature_levels[i] <= end)
-            test_func(feature_levels[i]);
+            queue_test_fl(test_func, feature_levels[i]);
     }
 }
 
-static void run_for_each_feature_level(void (*test_func)(const D3D_FEATURE_LEVEL fl))
+static void queue_for_each_feature_level(void (*test_func)(const D3D_FEATURE_LEVEL fl))
 {
-    run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_9_1,
+    queue_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_9_1,
             D3D_FEATURE_LEVEL_11_1, test_func);
 }
 
-static void run_for_each_9_x_feature_level(void (*test_func)(const D3D_FEATURE_LEVEL fl))
+static void queue_for_each_9_x_feature_level(void (*test_func)(const D3D_FEATURE_LEVEL fl))
 {
-    run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_9_1,
+    queue_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_9_1,
             D3D_FEATURE_LEVEL_9_3, test_func);
 }
 
@@ -27730,135 +28026,140 @@ START_TEST(d3d11)
             use_warp_adapter = TRUE;
         else if (!strcmp(argv[i], "--adapter") && i + 1 < argc)
             use_adapter_idx = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--single"))
+            use_mt = FALSE;
     }
 
     print_adapter_info();
 
-    test_create_device();
-    run_for_each_feature_level(test_device_interfaces);
-    test_get_immediate_context();
-    test_create_texture1d();
-    test_texture1d_interfaces();
-    test_create_texture2d();
-    test_texture2d_interfaces();
-    test_create_texture3d();
-    test_texture3d_interfaces();
-    test_create_buffer();
-    test_create_depthstencil_view();
-    test_depthstencil_view_interfaces();
-    test_create_rendertarget_view();
-    test_create_shader_resource_view();
-    run_for_each_feature_level(test_create_shader);
-    test_create_sampler_state();
-    test_create_blend_state();
-    test_create_depthstencil_state();
-    test_create_rasterizer_state();
-    test_create_query();
-    test_occlusion_query();
-    test_pipeline_statistics_query();
-    test_timestamp_query();
-    test_device_removed_reason();
-    test_private_data();
-    run_for_each_feature_level(test_state_refcounting);
-    test_device_context_state();
-    test_blend();
-    test_texture1d();
-    test_texture();
-    test_cube_maps();
-    test_depth_stencil_sampling();
-    test_sample_c_lz();
-    test_multiple_render_targets();
-    test_render_target_views();
-    test_layered_rendering();
-    test_scissor();
-    test_clear_state();
-    test_il_append_aligned();
-    test_instance_id();
-    test_fragment_coords();
-    test_update_subresource();
-    test_copy_subresource_region();
-    test_resource_map();
-    run_for_each_feature_level(test_resource_access);
-    test_check_multisample_quality_levels();
-    run_for_each_feature_level(test_swapchain_formats);
-    test_swapchain_views();
-    test_swapchain_flip();
-    test_clear_render_target_view_1d();
-    test_clear_render_target_view_2d();
-    test_clear_render_target_view_3d();
-    test_clear_depth_stencil_view();
-    test_clear_buffer_unordered_access_view();
-    test_initial_depth_stencil_state();
-    test_draw_depth_only();
-    test_draw_uav_only();
-    test_cb_relative_addressing();
-    test_vs_input_relative_addressing();
-    test_getdc();
-    test_shader_stage_input_output_matching();
-    test_shader_interstage_interface();
-    test_sm4_if_instruction();
-    test_sm4_breakc_instruction();
-    test_sm4_continuec_instruction();
-    test_sm4_discard_instruction();
-    test_sm5_swapc_instruction();
-    test_create_input_layout();
-    test_input_assembler();
-    test_null_sampler();
-    test_check_feature_support();
-    test_create_unordered_access_view();
-    test_immediate_constant_buffer();
-    test_fp_specials();
-    test_uint_shader_instructions();
-    test_index_buffer_offset();
-    test_face_culling();
-    test_line_antialiasing_blending();
-    run_for_each_feature_level(test_required_format_support);
-    run_for_each_9_x_feature_level(test_fl9_draw);
-    test_ddy();
-    test_shader_input_registers_limits();
-    test_unbind_shader_resource_view();
-    test_stencil_separate();
-    test_uav_load();
-    test_cs_uav_store();
-    test_uav_store_immediate_constant();
-    test_ps_cs_uav_binding();
-    test_atomic_instructions();
-    test_sm4_ret_instruction();
-    test_primitive_restart();
-    test_resinfo_instruction();
-    test_sm5_bufinfo_instruction();
-    test_sampleinfo_instruction();
-    test_render_target_device_mismatch();
-    test_buffer_srv();
-    run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0,
+    queue_test(test_create_device);
+    queue_for_each_feature_level(test_device_interfaces);
+    queue_test(test_get_immediate_context);
+    queue_test(test_create_texture1d);
+    queue_test(test_texture1d_interfaces);
+    queue_test(test_create_texture2d);
+    queue_test(test_texture2d_interfaces);
+    queue_test(test_create_texture3d);
+    queue_test(test_texture3d_interfaces);
+    queue_test(test_create_buffer);
+    queue_test(test_create_depthstencil_view);
+    queue_test(test_depthstencil_view_interfaces);
+    queue_test(test_create_rendertarget_view);
+    queue_test(test_create_shader_resource_view);
+    queue_for_each_feature_level(test_create_shader);
+    queue_test(test_create_sampler_state);
+    queue_test(test_create_blend_state);
+    queue_test(test_create_depthstencil_state);
+    queue_test(test_create_rasterizer_state);
+    queue_test(test_create_query);
+    queue_test(test_occlusion_query);
+    queue_test(test_pipeline_statistics_query);
+    queue_test(test_timestamp_query);
+    queue_test(test_device_removed_reason);
+    queue_test(test_private_data);
+    queue_for_each_feature_level(test_state_refcounting);
+    queue_test(test_device_context_state);
+    queue_test(test_blend);
+    queue_test(test_texture1d);
+    queue_test(test_texture);
+    queue_test(test_cube_maps);
+    queue_test(test_depth_stencil_sampling);
+    queue_test(test_sample_c_lz);
+    queue_test(test_multiple_render_targets);
+    queue_test(test_render_target_views);
+    queue_test(test_layered_rendering);
+    queue_test(test_scissor);
+    queue_test(test_clear_state);
+    queue_test(test_il_append_aligned);
+    queue_test(test_instance_id);
+    queue_test(test_fragment_coords);
+    queue_test(test_update_subresource);
+    queue_test(test_copy_subresource_region);
+    queue_test(test_copy_subresource_region_3d);
+    queue_test(test_resource_map);
+    queue_for_each_feature_level(test_resource_access);
+    queue_test(test_check_multisample_quality_levels);
+    queue_for_each_feature_level(test_swapchain_formats);
+    queue_test(test_swapchain_views);
+    queue_test(test_swapchain_flip);
+    queue_test(test_clear_render_target_view_1d);
+    queue_test(test_clear_render_target_view_2d);
+    queue_test(test_clear_render_target_view_3d);
+    queue_test(test_clear_depth_stencil_view);
+    queue_test(test_clear_buffer_unordered_access_view);
+    queue_test(test_initial_depth_stencil_state);
+    queue_test(test_draw_depth_only);
+    queue_test(test_draw_uav_only);
+    queue_test(test_cb_relative_addressing);
+    queue_test(test_vs_input_relative_addressing);
+    queue_test(test_getdc);
+    queue_test(test_shader_stage_input_output_matching);
+    queue_test(test_shader_interstage_interface);
+    queue_test(test_sm4_if_instruction);
+    queue_test(test_sm4_breakc_instruction);
+    queue_test(test_sm4_continuec_instruction);
+    queue_test(test_sm4_discard_instruction);
+    queue_test(test_sm5_swapc_instruction);
+    queue_test(test_create_input_layout);
+    queue_test(test_input_assembler);
+    queue_test(test_null_sampler);
+    queue_test(test_check_feature_support);
+    queue_test(test_create_unordered_access_view);
+    queue_test(test_immediate_constant_buffer);
+    queue_test(test_fp_specials);
+    queue_test(test_uint_shader_instructions);
+    queue_test(test_index_buffer_offset);
+    queue_test(test_face_culling);
+    queue_test(test_line_antialiasing_blending);
+    queue_for_each_feature_level(test_required_format_support);
+    queue_for_each_9_x_feature_level(test_fl9_draw);
+    queue_test(test_ddy);
+    queue_test(test_shader_input_registers_limits);
+    queue_test(test_unbind_shader_resource_view);
+    queue_test(test_stencil_separate);
+    queue_test(test_uav_load);
+    queue_test(test_cs_uav_store);
+    queue_test(test_uav_store_immediate_constant);
+    queue_test(test_ps_cs_uav_binding);
+    queue_test(test_atomic_instructions);
+    queue_test(test_sm4_ret_instruction);
+    queue_test(test_primitive_restart);
+    queue_test(test_resinfo_instruction);
+    queue_test(test_sm5_bufinfo_instruction);
+    queue_test(test_sampleinfo_instruction);
+    queue_test(test_render_target_device_mismatch);
+    queue_test(test_buffer_srv);
+    queue_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0,
             test_unaligned_raw_buffer_access);
-    test_uav_counters();
-    test_dispatch_indirect();
-    test_compute_shader_registers();
-    test_tgsm();
-    test_geometry_shader();
-    test_quad_tessellation();
-    test_stream_output();
-    test_fl10_stream_output_desc();
-    test_stream_output_resume();
-    test_stream_output_components();
-    test_stream_output_vs();
-    test_gather();
-    test_gather_c();
-    test_depth_bias();
-    test_fractional_viewports();
-    run_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0, test_negative_viewports);
-    test_early_depth_stencil();
-    test_conservative_depth_output();
-    test_format_compatibility();
-    test_clip_distance();
-    test_combined_clip_and_cull_distances();
-    test_generate_mips();
-    test_alpha_to_coverage();
-    test_unbound_multisample_texture();
-    test_multiple_viewports();
-    test_multisample_resolve();
-    test_sample_shading();
-    test_sample_mask();
-    test_depth_clip();
+    queue_test(test_uav_counters);
+    queue_test(test_dispatch_indirect);
+    queue_test(test_compute_shader_registers);
+    queue_test(test_tgsm);
+    queue_test(test_geometry_shader);
+    queue_test(test_quad_tessellation);
+    queue_test(test_stream_output);
+    queue_test(test_fl10_stream_output_desc);
+    queue_test(test_stream_output_resume);
+    queue_test(test_stream_output_components);
+    queue_test(test_stream_output_vs);
+    queue_test(test_gather);
+    queue_test(test_gather_c);
+    queue_test(test_depth_bias);
+    queue_test(test_fractional_viewports);
+    queue_for_each_feature_level_in_range(D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0, test_negative_viewports);
+    queue_test(test_early_depth_stencil);
+    queue_test(test_conservative_depth_output);
+    queue_test(test_format_compatibility);
+    queue_test(test_clip_distance);
+    queue_test(test_combined_clip_and_cull_distances);
+    queue_test(test_generate_mips);
+    queue_test(test_alpha_to_coverage);
+    queue_test(test_unbound_multisample_texture);
+    queue_test(test_multiple_viewports);
+    queue_test(test_multisample_resolve);
+    queue_test(test_sample_shading);
+    queue_test(test_sample_mask);
+    queue_test(test_depth_clip);
+
+    run_queued_tests();
 }

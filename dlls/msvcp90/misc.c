@@ -1771,6 +1771,7 @@ DEFINE_RTTI_DATA0(_Runtime_object, 0, ".?AV_Runtime_object@details@Concurrency@@
 
 #endif
 
+#if _MSVCP_VER >= 100
 typedef struct __Concurrent_vector_base_v4
 {
     void* (__cdecl *allocator)(struct __Concurrent_vector_base_v4 *, MSVCP_size_t);
@@ -1780,25 +1781,142 @@ typedef struct __Concurrent_vector_base_v4
     void **segment;
 } _Concurrent_vector_base_v4;
 
+#define STORAGE_SIZE ARRAY_SIZE(this->storage)
+#define SEGMENT_SIZE (sizeof(void*) * 8)
+
+typedef struct compact_block
+{
+    MSVCP_size_t first_block;
+    void *blocks[SEGMENT_SIZE];
+    int size_check;
+}compact_block;
+
+/* based on wined3d_log2i from wined3d.h */
+/* Return the integer base-2 logarithm of (x|1). Result is 0 for x == 0. */
+static inline unsigned int log2i(unsigned int x)
+{
+#ifdef HAVE___BUILTIN_CLZ
+    return __builtin_clz(x|1) ^ 0x1f;
+#else
+    static const unsigned int l[] =
+    {
+        ~0u, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    };
+    unsigned int i;
+
+    x |= 1;
+    return (i = x >> 16) ? (x = i >> 8) ? l[x] + 24 : l[i] + 16 : (i = x >> 8) ? l[i] + 8 : l[x];
+#endif
+}
+
+/* ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KAII@Z */
+/* ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KA_K_K@Z */
+MSVCP_size_t __cdecl _vector_base_v4__Segment_index_of(MSVCP_size_t x)
+{
+    unsigned int half;
+
+    TRACE("(%lu)\n", x);
+
+    if((sizeof(x) == 8) && (half = x >> 32))
+        return log2i(half) + 32;
+
+    return log2i(x);
+}
+
+/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IBEXI@Z */
+/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IEBAX_K@Z */
+DEFINE_THISCALL_WRAPPER(_vector_base_v4__Internal_throw_exception, 8)
+void __thiscall _vector_base_v4__Internal_throw_exception(void/*_vector_base_v4*/ *this, MSVCP_size_t idx)
+{
+    static const struct {
+        exception_type type;
+        const char *msg;
+    } exceptions[] = {
+        { EXCEPTION_OUT_OF_RANGE, "Index out of range" },
+        { EXCEPTION_OUT_OF_RANGE, "Index out of segments table range" },
+        { EXCEPTION_RANGE_ERROR,  "Index is inside segment which failed to be allocated" },
+    };
+
+    TRACE("(%p %lu)\n", this, idx);
+
+    if(idx < ARRAY_SIZE(exceptions))
+        throw_exception(exceptions[idx].type, exceptions[idx].msg);
+}
+
+#ifdef _WIN64
+#define InterlockedCompareExchangeSizeT(dest, exchange, cmp) InterlockedCompareExchangeSize((MSVCP_size_t *)dest, (MSVCP_size_t)exchange, (MSVCP_size_t)cmp)
+static MSVCP_size_t InterlockedCompareExchangeSize(MSVCP_size_t volatile *dest, MSVCP_size_t exchange, MSVCP_size_t cmp)
+{
+    MSVCP_size_t v;
+
+    v = InterlockedCompareExchange64((LONGLONG*)dest, exchange, cmp);
+
+    return v;
+}
+#else
+#define InterlockedCompareExchangeSizeT(dest, exchange, cmp) InterlockedCompareExchange((LONG*)dest, (MSVCP_size_t)exchange, (MSVCP_size_t)cmp)
+#endif
+
+#define SEGMENT_ALLOC_MARKER ((void*)1)
+
+static void concurrent_vector_alloc_segment(_Concurrent_vector_base_v4 *this,
+        MSVCP_size_t seg, MSVCP_size_t element_size)
+{
+    int spin;
+
+    while(!this->segment[seg] || this->segment[seg] == SEGMENT_ALLOC_MARKER)
+    {
+        spin = 0;
+        while(this->segment[seg] == SEGMENT_ALLOC_MARKER)
+            spin_wait(&spin);
+        if(!InterlockedCompareExchangeSizeT((this->segment + seg),
+                    SEGMENT_ALLOC_MARKER, 0))
+        __TRY
+        {
+            if(seg == 0)
+                this->segment[seg] = this->allocator(this, element_size * (1 << this->first_block));
+            else if(seg < this->first_block)
+                this->segment[seg] = (BYTE**)this->segment[0]
+                        + element_size * (1 << seg);
+            else
+                this->segment[seg] = this->allocator(this, element_size * (1 << seg));
+        }
+        __EXCEPT_ALL
+        {
+            this->segment[seg] = NULL;
+            throw_exception(EXCEPTION_RERAISE, NULL);
+        }
+        __ENDTRY
+        if(!this->segment[seg])
+            _vector_base_v4__Internal_throw_exception(this, 2);
+    }
+}
+
 /* ??1_Concurrent_vector_base_v4@details@Concurrency@@IAE@XZ */
 /* ??1_Concurrent_vector_base_v4@details@Concurrency@@IEAA@XZ */
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4_dtor, 4)
 void __thiscall _Concurrent_vector_base_v4_dtor(
         _Concurrent_vector_base_v4 *this)
 {
-    FIXME("(%p) stub\n", this);
-}
+    TRACE("(%p)\n", this);
 
-/* ?_Internal_assign@_Concurrent_vector_base_v4@details@Concurrency@@IAEXABV123@IP6AXPAXI@ZP6AX1PBXI@Z4@Z */
-/* ?_Internal_assign@_Concurrent_vector_base_v4@details@Concurrency@@IEAAXAEBV123@_KP6AXPEAX1@ZP6AX2PEBX1@Z5@Z */
-DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_assign, 24)
-void __thiscall _Concurrent_vector_base_v4__Internal_assign(
-        _Concurrent_vector_base_v4 *this, const _Concurrent_vector_base_v4 *v,
-        MSVCP_size_t len, void (__cdecl *func0)(void*, MSVCP_size_t),
-        void (__cdecl *func1)(void*, const void*, MSVCP_size_t),
-        void (__cdecl *func2)(void*, const void*, MSVCP_size_t))
-{
-    FIXME("(%p %p %ld %p %p %p) stub\n", this, v, len, func0, func1, func2);
+    if(this->segment != this->storage)
+        free(this->segment);
 }
 
 /* ?_Internal_capacity@_Concurrent_vector_base_v4@details@Concurrency@@IBEIXZ */
@@ -1807,8 +1925,55 @@ DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_capacity, 4)
 MSVCP_size_t __thiscall _Concurrent_vector_base_v4__Internal_capacity(
         const _Concurrent_vector_base_v4 *this)
 {
-    FIXME("(%p) stub\n", this);
-    return 0;
+    MSVCP_size_t last_block;
+    int i;
+
+    TRACE("(%p)\n", this);
+
+    last_block = (this->segment == this->storage ? STORAGE_SIZE : SEGMENT_SIZE);
+    for(i = 0; i < last_block; i++)
+    {
+        if(!this->segment[i])
+            return !i ? 0 : 1 << i;
+    }
+    return 1 << i;
+}
+
+/* ?_Internal_reserve@_Concurrent_vector_base_v4@details@Concurrency@@IAEXIII@Z */
+/* ?_Internal_reserve@_Concurrent_vector_base_v4@details@Concurrency@@IEAAX_K00@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_reserve, 16)
+void __thiscall _Concurrent_vector_base_v4__Internal_reserve(
+        _Concurrent_vector_base_v4 *this, MSVCP_size_t size,
+        MSVCP_size_t element_size, MSVCP_size_t max_size)
+{
+    MSVCP_size_t block_idx, capacity;
+    int i;
+    void **new_segment;
+
+    TRACE("(%p %ld %ld %ld)\n", this, size, element_size, max_size);
+
+    if(size > max_size) _vector_base_v4__Internal_throw_exception(this, 0);
+    capacity = _Concurrent_vector_base_v4__Internal_capacity(this);
+    if(size <= capacity) return;
+    block_idx = _vector_base_v4__Segment_index_of(size - 1);
+    if(!this->first_block)
+        InterlockedCompareExchangeSizeT(&this->first_block, block_idx + 1, 0);
+    i = _vector_base_v4__Segment_index_of(capacity);
+    if(this->storage == this->segment) {
+        for(; i <= block_idx && i < STORAGE_SIZE; i++)
+            concurrent_vector_alloc_segment(this, i, element_size);
+        if(block_idx >= STORAGE_SIZE) {
+            new_segment = malloc(SEGMENT_SIZE * sizeof(void*));
+            if(new_segment == NULL) _vector_base_v4__Internal_throw_exception(this, 2);
+            memset(new_segment, 0, SEGMENT_SIZE * sizeof(*new_segment));
+            memcpy(new_segment, this->storage, STORAGE_SIZE * sizeof(*new_segment));
+            if(InterlockedCompareExchangePointer((void*)&this->segment, new_segment,
+                        this->storage) != this->storage)
+                free(new_segment);
+        }
+    }
+    for(; i <= block_idx; i++)
+        concurrent_vector_alloc_segment(this, i, element_size);
 }
 
 /* ?_Internal_clear@_Concurrent_vector_base_v4@details@Concurrency@@IAEIP6AXPAXI@Z@Z */
@@ -1817,20 +1982,80 @@ DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_clear, 8)
 MSVCP_size_t __thiscall _Concurrent_vector_base_v4__Internal_clear(
         _Concurrent_vector_base_v4 *this, void (__cdecl *clear)(void*, MSVCP_size_t))
 {
-    FIXME("(%p %p) stub\n", this, clear);
-    return 0;
+    MSVCP_size_t seg_no, elems;
+    int i;
+
+    TRACE("(%p %p)\n", this, clear);
+
+    seg_no = this->early_size  ? _vector_base_v4__Segment_index_of(this->early_size) + 1 : 0;
+    for(i = seg_no - 1; i >= 0; i--) {
+        elems = this->early_size - (1 << i & ~1);
+        clear(this->segment[i], elems);
+        this->early_size -= elems;
+    }
+    while(seg_no < (this->segment == this->storage ? STORAGE_SIZE : SEGMENT_SIZE)) {
+        if(!this->segment[seg_no]) break;
+        seg_no++;
+    }
+    return seg_no;
 }
 
 /* ?_Internal_compact@_Concurrent_vector_base_v4@details@Concurrency@@IAEPAXIPAXP6AX0I@ZP6AX0PBXI@Z@Z */
 /* ?_Internal_compact@_Concurrent_vector_base_v4@details@Concurrency@@IEAAPEAX_KPEAXP6AX10@ZP6AX1PEBX0@Z@Z */
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_compact, 20)
 void * __thiscall _Concurrent_vector_base_v4__Internal_compact(
-        _Concurrent_vector_base_v4 *this, MSVCP_size_t len, void *v,
+        _Concurrent_vector_base_v4 *this, MSVCP_size_t element_size, void *v,
         void (__cdecl *clear)(void*, MSVCP_size_t),
         void (__cdecl *copy)(void*, const void*, MSVCP_size_t))
 {
-    FIXME("(%p %ld %p %p %p) stub\n", this, len, v, clear, copy);
-    return NULL;
+    compact_block *b;
+    MSVCP_size_t size, alloc_size, seg_no, alloc_seg, copy_element, clear_element;
+    int i;
+
+    TRACE("(%p %ld %p %p %p)\n", this, element_size, v, clear, copy);
+
+    size = this->early_size;
+    alloc_size = _Concurrent_vector_base_v4__Internal_capacity(this);
+    if(alloc_size == 0) return NULL;
+    alloc_seg = _vector_base_v4__Segment_index_of(alloc_size - 1);
+    if(!size) {
+        this->first_block = 0;
+        b = v;
+        b->first_block = alloc_seg + 1;
+        memset(b->blocks, 0, sizeof(b->blocks));
+        memcpy(b->blocks, this->segment,
+                (alloc_seg + 1) * sizeof(this->segment[0]));
+        memset(this->segment, 0, sizeof(this->segment[0]) * (alloc_seg + 1));
+        return v;
+    }
+    seg_no = _vector_base_v4__Segment_index_of(size - 1);
+    if(this->first_block == (seg_no + 1) && seg_no == alloc_seg) return NULL;
+    b = v;
+    b->first_block = this->first_block;
+    memset(b->blocks, 0, sizeof(b->blocks));
+    memcpy(b->blocks, this->segment,
+            (alloc_seg + 1) * sizeof(this->segment[0]));
+    if(this->first_block == (seg_no + 1) && seg_no != alloc_seg) {
+        memset(b->blocks, 0, sizeof(b->blocks[0]) * (seg_no + 1));
+        memset(&this->segment[seg_no + 1], 0, sizeof(this->segment[0]) * (alloc_seg - seg_no));
+        return v;
+    }
+    memset(this->segment, 0,
+            (alloc_seg + 1) * sizeof(this->segment[0]));
+    this->first_block = 0;
+    _Concurrent_vector_base_v4__Internal_reserve(this, size, element_size,
+            MSVCP_SIZE_T_MAX / element_size);
+    for(i = 0; i < seg_no; i++)
+        copy(this->segment[i], b->blocks[i], i ? 1 << i : 2);
+    copy_element = size - ((1 << seg_no) & ~1);
+    if(copy_element > 0)
+        copy(this->segment[seg_no], b->blocks[seg_no], copy_element);
+    for(i = 0; i < seg_no; i++)
+        clear(b->blocks[i], i ? 1 << i : 2);
+    clear_element = size - ((1 << seg_no) & ~1);
+    if(clear_element > 0)
+        clear(b->blocks[seg_no], clear_element);
+    return v;
 }
 
 /* ?_Internal_copy@_Concurrent_vector_base_v4@details@Concurrency@@IAEXABV123@IP6AXPAXPBXI@Z@Z */
@@ -1838,9 +2063,87 @@ void * __thiscall _Concurrent_vector_base_v4__Internal_compact(
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_copy, 16)
 void __thiscall _Concurrent_vector_base_v4__Internal_copy(
         _Concurrent_vector_base_v4 *this, const _Concurrent_vector_base_v4 *v,
-        MSVCP_size_t len, void (__cdecl *copy)(void*, const void*, MSVCP_size_t))
+        MSVCP_size_t element_size, void (__cdecl *copy)(void*, const void*, MSVCP_size_t))
 {
-    FIXME("(%p %p %ld %p) stub\n", this, v, len, copy);
+    MSVCP_size_t seg_no, v_size;
+    int i;
+
+    TRACE("(%p %p %ld %p)\n", this, v, element_size, copy);
+
+    v_size = v->early_size;
+    if(!v_size) {
+        this->early_size = 0;
+       return;
+    }
+    _Concurrent_vector_base_v4__Internal_reserve(this, v_size,
+            element_size, MSVCP_SIZE_T_MAX / element_size);
+    seg_no = _vector_base_v4__Segment_index_of(v_size - 1);
+    for(i = 0; i < seg_no; i++)
+        copy(this->segment[i], v->segment[i], i ? 1 << i : 2);
+    copy(this->segment[i], v->segment[i], v_size - (1 << i & ~1));
+    this->early_size = v_size;
+}
+
+/* ?_Internal_assign@_Concurrent_vector_base_v4@details@Concurrency@@IAEXABV123@IP6AXPAXI@ZP6AX1PBXI@Z4@Z */
+/* ?_Internal_assign@_Concurrent_vector_base_v4@details@Concurrency@@IEAAXAEBV123@_KP6AXPEAX1@ZP6AX2PEBX1@Z5@Z */
+DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_assign, 24)
+void __thiscall _Concurrent_vector_base_v4__Internal_assign(
+        _Concurrent_vector_base_v4 *this, const _Concurrent_vector_base_v4 *v,
+        MSVCP_size_t element_size, void (__cdecl *clear)(void*, MSVCP_size_t),
+        void (__cdecl *assign)(void*, const void*, MSVCP_size_t),
+        void (__cdecl *copy)(void*, const void*, MSVCP_size_t))
+{
+    MSVCP_size_t v_size, seg_no, v_seg_no, remain_element;
+    int i;
+
+    TRACE("(%p %p %ld %p %p %p)\n", this, v, element_size, clear, assign, copy);
+
+    v_size = v->early_size;
+    if(!v_size) {
+        _Concurrent_vector_base_v4__Internal_clear(this, clear);
+        return;
+    }
+    if(!this->early_size) {
+        _Concurrent_vector_base_v4__Internal_copy(this, v, element_size, copy);
+        return;
+    }
+    seg_no = _vector_base_v4__Segment_index_of(this->early_size - 1);
+    v_seg_no = _vector_base_v4__Segment_index_of(v_size - 1);
+
+    for(i = 0; i < min(seg_no, v_seg_no); i++)
+        assign(this->segment[i], v->segment[i], i ? 1 << i : 2);
+    remain_element = min(this->early_size, v_size) - (1 << i & ~1);
+    if(remain_element != 0)
+        assign(this->segment[i], v->segment[i], remain_element);
+
+    if(this->early_size > v_size)
+    {
+        if((i ? 1 << i : 2) - remain_element > 0)
+            clear((BYTE**)this->segment[i] + element_size * remain_element,
+                    (i ? 1 << i : 2) - remain_element);
+        if(i < seg_no)
+        {
+            for(i++; i < seg_no; i++)
+                clear(this->segment[i], 1 << i);
+            clear(this->segment[i], this->early_size - (1 << i));
+        }
+    }
+    else if(this->early_size < v_size)
+    {
+        if((i ? 1 << i : 2) - remain_element > 0)
+            copy((BYTE**)this->segment[i] + element_size * remain_element,
+                    (BYTE**)v->segment[i] + element_size * remain_element,
+                    (i ? 1 << i : 2) - remain_element);
+        if(i < v_seg_no)
+        {
+            _Concurrent_vector_base_v4__Internal_reserve(this, v_size,
+                    element_size, MSVCP_SIZE_T_MAX / element_size);
+            for(i++; i < v_seg_no; i++)
+                copy(this->segment[i], v->segment[i], 1 << i);
+            copy(this->segment[i], v->segment[i], v->early_size - (1 << i));
+        }
+   }
+    this->early_size = v_size;
 }
 
 /* ?_Internal_grow_by@_Concurrent_vector_base_v4@details@Concurrency@@IAEIIIP6AXPAXPBXI@Z1@Z */
@@ -1850,8 +2153,30 @@ MSVCP_size_t __thiscall _Concurrent_vector_base_v4__Internal_grow_by(
         _Concurrent_vector_base_v4 *this, MSVCP_size_t count, MSVCP_size_t element_size,
         void (__cdecl *copy)(void*, const void*, MSVCP_size_t), const void *v)
 {
-    FIXME("(%p %ld %ld %p %p) stub\n", this, count, element_size, copy, v);
-    return 0;
+    MSVCP_size_t size, seg_no, last_seg_no, remain_size;
+
+    TRACE("(%p %ld %ld %p %p)\n", this, count, element_size, copy, v);
+
+    if(count == 0) return this->early_size;
+    do {
+        size = this->early_size;
+        _Concurrent_vector_base_v4__Internal_reserve(this, size + count, element_size,
+                MSVCP_SIZE_T_MAX / element_size);
+    } while(InterlockedCompareExchangeSizeT(&this->early_size, size + count, size) != size);
+
+    seg_no = size ? _vector_base_v4__Segment_index_of(size - 1) : 0;
+    last_seg_no = _vector_base_v4__Segment_index_of(size + count - 1);
+    remain_size = min(size + count, 1 << (seg_no + 1)) - size;
+    if(remain_size > 0)
+        copy(((BYTE**)this->segment[seg_no] + element_size * (size - ((1 << seg_no) & ~1))), v,
+            remain_size);
+    if(seg_no != last_seg_no)
+    {
+        for(seg_no++; seg_no < last_seg_no; seg_no++)
+            copy(this->segment[seg_no], v, 1 << seg_no);
+        copy(this->segment[last_seg_no], v, size + count - (1 << last_seg_no));
+    }
+    return size;
 }
 
 /* ?_Internal_grow_to_at_least_with_result@_Concurrent_vector_base_v4@details@Concurrency@@IAEIIIP6AXPAXPBXI@Z1@Z */
@@ -1861,49 +2186,112 @@ MSVCP_size_t __thiscall _Concurrent_vector_base_v4__Internal_grow_to_at_least_wi
         _Concurrent_vector_base_v4 *this, MSVCP_size_t count, MSVCP_size_t element_size,
         void (__cdecl *copy)(void*, const void*, MSVCP_size_t), const void *v)
 {
-    FIXME("(%p %ld %ld %p %p) stub\n", this, count, element_size, copy, v);
-    return 0;
+    MSVCP_size_t size, seg_no, last_seg_no, remain_size;
+
+    TRACE("(%p %ld %ld %p %p)\n", this, count, element_size, copy, v);
+
+    _Concurrent_vector_base_v4__Internal_reserve(this, count, element_size,
+            MSVCP_SIZE_T_MAX / element_size);
+    do {
+        size = this->early_size;
+        if(size >= count) return size;
+     } while(InterlockedCompareExchangeSizeT(&this->early_size, count, size) != size);
+
+    seg_no = size ? _vector_base_v4__Segment_index_of(size - 1) : 0;
+    last_seg_no = _vector_base_v4__Segment_index_of(count - 1);
+    remain_size = min(count, 1 << (seg_no + 1)) - size;
+    if(remain_size > 0)
+        copy(((BYTE**)this->segment[seg_no] + element_size * (size - ((1 << seg_no) & ~1))), v,
+            remain_size);
+    if(seg_no != last_seg_no)
+    {
+        for(seg_no++; seg_no < last_seg_no; seg_no++)
+            copy(this->segment[seg_no], v, 1 << seg_no);
+        copy(this->segment[last_seg_no], v, count - (1 << last_seg_no));
+    }
+    return size;
 }
 
 /* ?_Internal_push_back@_Concurrent_vector_base_v4@details@Concurrency@@IAEPAXIAAI@Z */
 /* ?_Internal_push_back@_Concurrent_vector_base_v4@details@Concurrency@@IEAAPEAX_KAEA_K@Z */
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_push_back, 12)
 void * __thiscall _Concurrent_vector_base_v4__Internal_push_back(
-       _Concurrent_vector_base_v4 *this, MSVCP_size_t len1, MSVCP_size_t *len2)
+       _Concurrent_vector_base_v4 *this, MSVCP_size_t element_size, MSVCP_size_t *idx)
 {
-    FIXME("(%p %ld %p) stub\n", this, len1, len2);
-    return NULL;
-}
+    MSVCP_size_t index, seg, segment_base;
+    void *data;
 
-/* ?_Internal_reserve@_Concurrent_vector_base_v4@details@Concurrency@@IAEXIII@Z */
-/* ?_Internal_reserve@_Concurrent_vector_base_v4@details@Concurrency@@IEAAX_K00@Z */
-DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_reserve, 16)
-void __thiscall _Concurrent_vector_base_v4__Internal_reserve(
-        _Concurrent_vector_base_v4 *this, MSVCP_size_t len1,
-        MSVCP_size_t len2, MSVCP_size_t len3)
-{
-    FIXME("(%p %ld %ld %ld) stub\n", this, len1, len2, len3);
+    TRACE("(%p %ld %p)\n", this, element_size, idx);
+
+    do {
+        index = this->early_size;
+        _Concurrent_vector_base_v4__Internal_reserve(this, index + 1,
+                element_size, MSVCP_SIZE_T_MAX / element_size);
+    } while(InterlockedCompareExchangeSizeT(&this->early_size, index + 1, index) != index);
+    seg = _vector_base_v4__Segment_index_of(index);
+    segment_base = (seg == 0) ? 0 : (1 << seg);
+    data = (BYTE*)this->segment[seg] + element_size * (index - segment_base);
+    *idx = index;
+
+    return data;
 }
 
 /* ?_Internal_resize@_Concurrent_vector_base_v4@details@Concurrency@@IAEXIIIP6AXPAXI@ZP6AX0PBXI@Z2@Z */
 /* ?_Internal_resize@_Concurrent_vector_base_v4@details@Concurrency@@IEAAX_K00P6AXPEAX0@ZP6AX1PEBX0@Z3@Z */
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_resize, 28)
 void __thiscall _Concurrent_vector_base_v4__Internal_resize(
-        _Concurrent_vector_base_v4 *this, MSVCP_size_t len1, MSVCP_size_t len2,
-        MSVCP_size_t len3, void (__cdecl *clear)(void*, MSVCP_size_t),
+        _Concurrent_vector_base_v4 *this, MSVCP_size_t resize, MSVCP_size_t element_size,
+        MSVCP_size_t max_size, void (__cdecl *clear)(void*, MSVCP_size_t),
         void (__cdecl *copy)(void*, const void*, MSVCP_size_t), const void *v)
 {
-    FIXME("(%p %ld %ld %ld %p %p %p) stub\n", this, len1, len2, len3, clear, copy, v);
+    MSVCP_size_t size, seg_no, end_seg_no, clear_element;
+
+    TRACE("(%p %ld %ld %ld %p %p %p)\n", this, resize, element_size, max_size, clear, copy, v);
+
+    if(resize > max_size) _vector_base_v4__Internal_throw_exception(this, 0);
+    size = this->early_size;
+    if(resize > size)
+        _Concurrent_vector_base_v4__Internal_grow_to_at_least_with_result(this,
+                resize, element_size, copy, v);
+    else if(resize == 0)
+        _Concurrent_vector_base_v4__Internal_clear(this, clear);
+    else if(resize < size)
+    {
+        seg_no = _vector_base_v4__Segment_index_of(size - 1);
+        end_seg_no = _vector_base_v4__Segment_index_of(resize - 1);
+        clear_element = size - (seg_no ? 1 << seg_no : 2);
+        if(clear_element > 0)
+            clear(this->segment[seg_no], clear_element);
+        if(seg_no) seg_no--;
+        for(; seg_no > end_seg_no; seg_no--)
+            clear(this->segment[seg_no], 1 << seg_no);
+        clear_element = (1 << (end_seg_no + 1)) - resize;
+        if(clear_element > 0)
+            clear((BYTE**)this->segment[end_seg_no] + element_size * (resize - ((1 << end_seg_no) & ~1)),
+                    clear_element);
+        this->early_size = resize;
+    }
 }
 
 /* ?_Internal_swap@_Concurrent_vector_base_v4@details@Concurrency@@IAEXAAV123@@Z */
 /* ?_Internal_swap@_Concurrent_vector_base_v4@details@Concurrency@@IEAAXAEAV123@@Z */
 DEFINE_THISCALL_WRAPPER(_Concurrent_vector_base_v4__Internal_swap, 8)
 void __thiscall _Concurrent_vector_base_v4__Internal_swap(
-        _Concurrent_vector_base_v4 *this, const _Concurrent_vector_base_v4 *v)
+        _Concurrent_vector_base_v4 *this, _Concurrent_vector_base_v4 *v)
 {
-    FIXME("(%p %p) stub\n", this, v);
+    _Concurrent_vector_base_v4 temp;
+
+    TRACE("(%p %p)\n", this, v);
+
+    temp = *this;
+    *this = *v;
+    *v = temp;
+    if(v->segment == this->storage)
+        v->segment = v->storage;
+    if(this->segment == v->storage)
+        this->segment = this->storage;
 }
+#endif
 
 #ifndef __GNUC__
 void __asm_dummy_vtables(void) {
@@ -2374,75 +2762,6 @@ _Ph _Ph_1 = {0}, _Ph_2 = {0}, _Ph_3 = {0}, _Ph_4 = {0}, _Ph_5 = {0};
 _Ph _Ph_6 = {0}, _Ph_7 = {0}, _Ph_8 = {0}, _Ph_9 = {0}, _Ph_10 = {0};
 _Ph _Ph_11 = {0}, _Ph_12 = {0}, _Ph_13 = {0}, _Ph_14 = {0}, _Ph_15 = {0};
 _Ph _Ph_16 = {0}, _Ph_17 = {0}, _Ph_18 = {0}, _Ph_19 = {0}, _Ph_20 = {0};
-#endif
-
-#if _MSVCP_VER >= 100
-/* based on wined3d_log2i from wined3d.h */
-/* Return the integer base-2 logarithm of (x|1). Result is 0 for x == 0. */
-static inline unsigned int log2i(unsigned int x)
-{
-#ifdef HAVE___BUILTIN_CLZ
-    return __builtin_clz(x|1) ^ 0x1f;
-#else
-    static const unsigned int l[] =
-    {
-        ~0u, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
-          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    };
-    unsigned int i;
-
-    x |= 1;
-    return (i = x >> 16) ? (x = i >> 8) ? l[x] + 24 : l[i] + 16 : (i = x >> 8) ? l[i] + 8 : l[x];
-#endif
-}
-
-/* ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KAII@Z */
-/* ?_Segment_index_of@_Concurrent_vector_base_v4@details@Concurrency@@KA_K_K@Z */
-MSVCP_size_t __cdecl _vector_base_v4__Segment_index_of(MSVCP_size_t x)
-{
-    unsigned int half;
-
-    TRACE("(%lu)\n", x);
-
-    if((sizeof(x) == 8) && (half = x >> 32))
-        return log2i(half) + 32;
-
-    return log2i(x);
-}
-
-/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IBEXI@Z */
-/* ?_Internal_throw_exception@_Concurrent_vector_base_v4@details@Concurrency@@IEBAX_K@Z */
-DEFINE_THISCALL_WRAPPER(_vector_base_v4__Internal_throw_exception, 8)
-void __thiscall _vector_base_v4__Internal_throw_exception(void/*_vector_base_v4*/ *this, MSVCP_size_t idx)
-{
-    static const struct {
-        exception_type type;
-        const char *msg;
-    } exceptions[] = {
-        { EXCEPTION_OUT_OF_RANGE, "Index out of range" },
-        { EXCEPTION_OUT_OF_RANGE, "Index out of segments table range" },
-        { EXCEPTION_RANGE_ERROR,  "Index is inside segment which failed to be allocated" },
-    };
-
-    TRACE("(%p %lu)\n", this, idx);
-
-    if(idx < ARRAY_SIZE(exceptions))
-        throw_exception(exceptions[idx].type, exceptions[idx].msg);
-}
 #endif
 
 #if _MSVCP_VER >= 140

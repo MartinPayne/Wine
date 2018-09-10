@@ -380,7 +380,6 @@ static UINT wait_process_handle(MSIPACKAGE* package, UINT type,
 
 typedef struct _msi_custom_action_info {
     struct list entry;
-    LONG refs;
     MSIPACKAGE *package;
     LPWSTR source;
     LPWSTR target;
@@ -388,32 +387,24 @@ typedef struct _msi_custom_action_info {
     LPWSTR action;
     INT type;
     GUID guid;
+    DWORD arch;
 } msi_custom_action_info;
 
-static void release_custom_action_data( msi_custom_action_info *info )
+static void free_custom_action_data( msi_custom_action_info *info )
 {
     EnterCriticalSection( &msi_custom_action_cs );
 
-    if (!--info->refs)
-    {
-        list_remove( &info->entry );
-        if (info->handle)
-            CloseHandle( info->handle );
-        msi_free( info->action );
-        msi_free( info->source );
-        msi_free( info->target );
-        msiobj_release( &info->package->hdr );
-        msi_free( info );
-    }
+    list_remove( &info->entry );
+    if (info->handle)
+        CloseHandle( info->handle );
+    msi_free( info->action );
+    msi_free( info->source );
+    msi_free( info->target );
+    msiobj_release( &info->package->hdr );
+    msi_free( info );
 
     LeaveCriticalSection( &msi_custom_action_cs );
 }
-
-/* must be called inside msi_custom_action_cs if info is in the pending custom actions list */
-static void addref_custom_action_data( msi_custom_action_info *info )
-{
-    info->refs++;
- }
 
 static UINT wait_thread_handle( msi_custom_action_info *info )
 {
@@ -428,7 +419,7 @@ static UINT wait_thread_handle( msi_custom_action_info *info )
         if (!(info->type & msidbCustomActionTypeContinue))
             rc = custom_get_thread_return( info->package, info->handle );
 
-        release_custom_action_data( info );
+        free_custom_action_data( info );
     }
     else
     {
@@ -449,7 +440,6 @@ static msi_custom_action_info *find_action_by_guid( const GUID *guid )
     {
         if (IsEqualGUID( &info->guid, guid ))
         {
-            addref_custom_action_data( info );
             found = TRUE;
             break;
         }
@@ -581,7 +571,6 @@ UINT CDECL __wine_msi_call_dll_function(const GUID *guid)
 
     FreeLibrary(hModule);
 
-    MsiCloseHandle(hPackage);
     midl_user_free(dll);
     midl_user_free(proc);
 
@@ -590,7 +579,7 @@ UINT CDECL __wine_msi_call_dll_function(const GUID *guid)
 
 static DWORD custom_start_server(MSIPACKAGE *package, DWORD arch)
 {
-    static const WCHAR pipe_name[] = {'\\','\\','.','\\','p','i','p','e','\\','m','s','i','c','a','_','%','x',0};
+    static const WCHAR pipe_name[] = {'\\','\\','.','\\','p','i','p','e','\\','m','s','i','c','a','_','%','x','_','%','d',0};
     static const WCHAR msiexecW[] = {'\\','m','s','i','e','x','e','c','.','e','x','e',0};
     static const WCHAR argsW[] = {'%','s',' ','-','E','m','b','e','d','d','i','n','g',' ','%','d',0};
 
@@ -606,9 +595,11 @@ static DWORD custom_start_server(MSIPACKAGE *package, DWORD arch)
         (arch == SCS_64BIT_BINARY && package->custom_server_64_process))
         return ERROR_SUCCESS;
 
-    sprintfW(buffer, pipe_name, GetCurrentProcessId());
+    sprintfW(buffer, pipe_name, GetCurrentProcessId(), arch == SCS_32BIT_BINARY ? 32 : 64);
     pipe = CreateNamedPipeW(buffer, PIPE_ACCESS_DUPLEX, 0, 1, sizeof(DWORD64),
         sizeof(GUID), 0, NULL);
+    if (pipe == INVALID_HANDLE_VALUE)
+        ERR("Failed to create custom action client pipe: %u\n", GetLastError());
 
     if (sizeof(void *) == 8 && arch == SCS_32BIT_BINARY)
         GetSystemWow64DirectoryW(path, MAX_PATH - sizeof(msiexecW)/sizeof(WCHAR));
@@ -661,45 +652,16 @@ void custom_stop_server(HANDLE process, HANDLE pipe)
 static DWORD WINAPI custom_client_thread(void *arg)
 {
     msi_custom_action_info *info = arg;
-    RPC_STATUS status;
     DWORD64 thread64;
     HANDLE process;
     HANDLE thread;
     HANDLE pipe;
-    DWORD arch;
     DWORD size;
-    BOOL ret;
     UINT rc;
 
     CoInitializeEx(NULL, COINIT_MULTITHREADED); /* needed to marshal streams */
 
-    if (!info->package->rpc_server_started)
-    {
-        status = RpcServerUseProtseqEpW(ncalrpcW, RPC_C_PROTSEQ_MAX_REQS_DEFAULT,
-            endpoint_lrpcW, NULL);
-        if (status != RPC_S_OK)
-        {
-            ERR("RpcServerUseProtseqEp failed: %#x\n", status);
-            return status;
-        }
-
-        status = RpcServerRegisterIfEx(s_IWineMsiRemote_v0_0_s_ifspec, NULL, NULL,
-            RPC_IF_AUTOLISTEN, RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
-        if (status != RPC_S_OK)
-        {
-            ERR("RpcServerRegisterIfEx failed: %#x\n", status);
-            return status;
-        }
-
-        info->package->rpc_server_started = 1;
-    }
-
-    ret = GetBinaryTypeW(info->source, &arch);
-    if (!ret)
-        arch = (sizeof(void *) == 8 ? SCS_64BIT_BINARY : SCS_32BIT_BINARY);
-
-    custom_start_server(info->package, arch);
-    if (arch == SCS_32BIT_BINARY)
+    if (info->arch == SCS_32BIT_BINARY)
     {
         process = info->package->custom_server_32_process;
         pipe = info->package->custom_server_32_pipe;
@@ -710,17 +672,23 @@ static DWORD WINAPI custom_client_thread(void *arg)
         pipe = info->package->custom_server_64_pipe;
     }
 
+    EnterCriticalSection(&msi_custom_action_cs);
+
     if (!WriteFile(pipe, &info->guid, sizeof(info->guid), &size, NULL) ||
         size != sizeof(info->guid))
     {
         ERR("Failed to write to custom action client pipe: %u\n", GetLastError());
+        LeaveCriticalSection(&msi_custom_action_cs);
         return GetLastError();
     }
     if (!ReadFile(pipe, &thread64, sizeof(thread64), &size, NULL) || size != sizeof(thread64))
     {
         ERR("Failed to read from custom action client pipe: %u\n", GetLastError());
+        LeaveCriticalSection(&msi_custom_action_cs);
         return GetLastError();
     }
+
+    LeaveCriticalSection(&msi_custom_action_cs);
 
     if (DuplicateHandle(process, (HANDLE)(DWORD_PTR)thread64, GetCurrentProcess(),
         &thread, 0, FALSE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE))
@@ -740,13 +708,14 @@ static msi_custom_action_info *do_msidbCustomActionTypeDll(
     MSIPACKAGE *package, INT type, LPCWSTR source, LPCWSTR target, LPCWSTR action )
 {
     msi_custom_action_info *info;
+    RPC_STATUS status;
+    BOOL ret;
 
     info = msi_alloc( sizeof *info );
     if (!info)
         return NULL;
 
     msiobj_addref( &package->hdr );
-    info->refs = 2; /* 1 for our caller and 1 for thread we created */
     info->package = package;
     info->type = type;
     info->target = strdupW( target );
@@ -758,12 +727,37 @@ static msi_custom_action_info *do_msidbCustomActionTypeDll(
     list_add_tail( &msi_pending_custom_actions, &info->entry );
     LeaveCriticalSection( &msi_custom_action_cs );
 
+    if (!package->rpc_server_started)
+    {
+        status = RpcServerUseProtseqEpW(ncalrpcW, RPC_C_PROTSEQ_MAX_REQS_DEFAULT,
+            endpoint_lrpcW, NULL);
+        if (status != RPC_S_OK)
+        {
+            ERR("RpcServerUseProtseqEp failed: %#x\n", status);
+            return NULL;
+        }
+
+        status = RpcServerRegisterIfEx(s_IWineMsiRemote_v0_0_s_ifspec, NULL, NULL,
+            RPC_IF_AUTOLISTEN, RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
+        if (status != RPC_S_OK)
+        {
+            ERR("RpcServerRegisterIfEx failed: %#x\n", status);
+            return NULL;
+        }
+
+        info->package->rpc_server_started = 1;
+    }
+
+    ret = GetBinaryTypeW(source, &info->arch);
+    if (!ret)
+        info->arch = (sizeof(void *) == 8 ? SCS_64BIT_BINARY : SCS_32BIT_BINARY);
+
+    custom_start_server(package, info->arch);
+
     info->handle = CreateThread(NULL, 0, custom_client_thread, info, 0, NULL);
     if (!info->handle)
     {
-        /* release both references */
-        release_custom_action_data( info );
-        release_custom_action_data( info );
+        free_custom_action_data( info );
         return NULL;
     }
 
@@ -1050,7 +1044,6 @@ static DWORD ACTION_CallScript( const GUID *guid )
     else
         ERR("failed to create handle for %p\n", info->package );
 
-    release_custom_action_data( info );
     return r;
 }
 
@@ -1079,7 +1072,6 @@ static msi_custom_action_info *do_msidbCustomActionTypeScript(
         return NULL;
 
     msiobj_addref( &package->hdr );
-    info->refs = 2; /* 1 for our caller and 1 for thread we created */
     info->package = package;
     info->type = type;
     info->target = strdupW( function );
@@ -1094,9 +1086,7 @@ static msi_custom_action_info *do_msidbCustomActionTypeScript(
     info->handle = CreateThread( NULL, 0, ScriptThread, &info->guid, 0, NULL );
     if (!info->handle)
     {
-        /* release both references */
-        release_custom_action_data( info );
-        release_custom_action_data( info );
+        free_custom_action_data( info );
         return NULL;
     }
 
@@ -1246,6 +1236,7 @@ static BOOL action_type_matches_script( UINT type, UINT script )
     switch (script)
     {
     case SCRIPT_NONE:
+        return FALSE;
     case SCRIPT_INSTALL:
         return !(type & msidbCustomActionTypeCommit) && !(type & msidbCustomActionTypeRollback);
     case SCRIPT_COMMIT:
@@ -1489,7 +1480,8 @@ void ACTION_FinishCustomActions(const MSIPACKAGE* package)
     EnterCriticalSection( &msi_custom_action_cs );
     LIST_FOR_EACH_ENTRY_SAFE( info, cursor, &msi_pending_custom_actions, msi_custom_action_info, entry )
     {
-        if (info->package == package) release_custom_action_data( info );
+        if (info->package == package)
+            free_custom_action_data( info );
     }
     LeaveCriticalSection( &msi_custom_action_cs );
 }
@@ -1507,6 +1499,5 @@ UINT __cdecl s_remote_GetActionInfo(const GUID *guid, int *type, LPWSTR *dll, LP
     *dll = strdupW(info->source);
     *func = strdupWtoA(info->target);
 
-    release_custom_action_data(info);
     return ERROR_SUCCESS;
 }

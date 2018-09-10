@@ -37,6 +37,7 @@ static HRESULT (WINAPI *pCreateDXGIFactory1)(REFIID iid, void **factory);
 static HRESULT (WINAPI *pCreateDXGIFactory2)(UINT flags, REFIID iid, void **factory);
 
 static PFN_D3D12_CREATE_DEVICE pD3D12CreateDevice;
+static PFN_D3D12_GET_DEBUG_INTERFACE pD3D12GetDebugInterface;
 
 static ULONG get_refcount(IUnknown *iface)
 {
@@ -500,6 +501,47 @@ static ID3D12CommandQueue *create_d3d12_direct_queue(ID3D12Device *device)
             &IID_ID3D12CommandQueue, (void **)&queue);
     ok(hr == S_OK, "Failed to create command queue, hr %#x.\n", hr);
     return queue;
+}
+
+static HRESULT wait_for_fence(ID3D12Fence *fence, UINT64 value)
+{
+    HANDLE event;
+    HRESULT hr;
+    DWORD ret;
+
+    if (ID3D12Fence_GetCompletedValue(fence) >= value)
+        return S_OK;
+
+    if (!(event = CreateEventA(NULL, FALSE, FALSE, NULL)))
+        return E_FAIL;
+
+    if (FAILED(hr = ID3D12Fence_SetEventOnCompletion(fence, value, event)))
+    {
+        CloseHandle(event);
+        return hr;
+    }
+
+    ret = WaitForSingleObject(event, INFINITE);
+    CloseHandle(event);
+    return ret == WAIT_OBJECT_0 ? S_OK : E_FAIL;
+}
+
+#define wait_queue_idle(a, b) wait_queue_idle_(__LINE__, a, b)
+static void wait_queue_idle_(unsigned int line, ID3D12Device *device, ID3D12CommandQueue *queue)
+{
+    ID3D12Fence *fence;
+    HRESULT hr;
+
+    hr = ID3D12Device_CreateFence(device, 0, D3D12_FENCE_FLAG_NONE,
+            &IID_ID3D12Fence, (void **)&fence);
+    ok_(__FILE__, line)(hr == S_OK, "Failed to create fence, hr %#x.\n", hr);
+
+    hr = ID3D12CommandQueue_Signal(queue, fence, 1);
+    ok_(__FILE__, line)(hr == S_OK, "Failed to signal fence, hr %#x.\n", hr);
+    hr = wait_for_fence(fence, 1);
+    ok_(__FILE__, line)(hr == S_OK, "Failed to wait for fence, hr %#x.\n", hr);
+
+    ID3D12Fence_Release(fence);
 }
 
 #define get_factory(a, b, c) get_factory_(__LINE__, a, b, c)
@@ -3645,9 +3687,8 @@ static void test_swapchain_backbuffer_index(IUnknown *device, BOOL is_d3d12)
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
         swapchain_desc.SwapEffect = tests[i].swap_effect;
-        expected_hr = !is_d3d12 || tests[i].supported_in_d3d12 ? S_OK : DXGI_ERROR_INVALID_CALL;
+        expected_hr = is_d3d12 && !tests[i].supported_in_d3d12 ? DXGI_ERROR_INVALID_CALL : S_OK;
         hr = IDXGIFactory_CreateSwapChain(factory, (IUnknown *)device, &swapchain_desc, &swapchain);
-        todo_wine_if(is_d3d12 && tests[i].supported_in_d3d12)
         ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
         if (FAILED(hr))
             continue;
@@ -3991,6 +4032,8 @@ static void run_on_d3d12(void (*test_func)(IUnknown *device, BOOL is_d3d12))
 
     test_func((IUnknown *)queue, TRUE);
 
+    wait_queue_idle(device, queue);
+
     refcount = ID3D12CommandQueue_Release(queue);
     ok(!refcount, "Command queue has %u references left.\n", refcount);
     refcount = ID3D12Device_Release(device);
@@ -4000,7 +4043,9 @@ static void run_on_d3d12(void (*test_func)(IUnknown *device, BOOL is_d3d12))
 START_TEST(device)
 {
     HMODULE dxgi_module, d3d12_module;
+    BOOL enable_debug_layer = FALSE;
     unsigned int argc, i;
+    ID3D12Debug *debug;
     char **argv;
 
     dxgi_module = GetModuleHandleA("dxgi.dll");
@@ -4013,7 +4058,9 @@ START_TEST(device)
     argc = winetest_get_mainargs(&argv);
     for (i = 2; i < argc; ++i)
     {
-        if (!strcmp(argv[i], "--warp"))
+        if (!strcmp(argv[i], "--validate"))
+            enable_debug_layer = TRUE;
+        else if (!strcmp(argv[i], "--warp"))
             use_warp_adapter = TRUE;
         else if (!strcmp(argv[i], "--adapter") && i + 1 < argc)
             use_adapter_idx = atoi(argv[++i]);
@@ -4049,6 +4096,13 @@ START_TEST(device)
     }
 
     pD3D12CreateDevice = (void *)GetProcAddress(d3d12_module, "D3D12CreateDevice");
+    pD3D12GetDebugInterface = (void *)GetProcAddress(d3d12_module, "D3D12GetDebugInterface");
+
+    if (enable_debug_layer && SUCCEEDED(pD3D12GetDebugInterface(&IID_ID3D12Debug, (void **)&debug)))
+    {
+        ID3D12Debug_EnableDebugLayer(debug);
+        ID3D12Debug_Release(debug);
+    }
 
     run_on_d3d12(test_swapchain_backbuffer_index);
 

@@ -206,13 +206,15 @@ static HRESULT WINAPI WAVEParserImpl_seek(IMediaSeeking *iface)
 
     if (newpos > endpos)
     {
-        WARN("Requesting position %x%08x beyond end of stream %x%08x\n", (DWORD)(newpos>>32), (DWORD)newpos, (DWORD)(endpos>>32), (DWORD)endpos);
+        WARN("Requesting position %s beyond end of stream %s\n",
+             wine_dbgstr_longlong(newpos), wine_dbgstr_longlong(endpos));
         return E_INVALIDARG;
     }
 
     if (curpos/1000000 == newpos/1000000)
     {
-        TRACE("Requesting position %x%08x same as current position %x%08x\n", (DWORD)(newpos>>32), (DWORD)newpos, (DWORD)(curpos>>32), (DWORD)curpos);
+        TRACE("Requesting position %s same as current position %s\n",
+              wine_dbgstr_longlong(newpos), wine_dbgstr_longlong(curpos));
         return S_OK;
     }
 
@@ -306,14 +308,11 @@ static HRESULT WAVEParser_InputPin_PreConnect(IPin * iface, IPin * pConnectPin, 
         return E_FAIL;
     }
 
-    if (hr == S_OK)
-    {
-        pWAVEParser->StartOfFile = MEDIATIME_FROM_BYTES(pos + sizeof(RIFFCHUNK));
-        pWAVEParser->EndOfFile = MEDIATIME_FROM_BYTES(pos + chunk.cb + sizeof(RIFFCHUNK));
-    }
-
     if (hr != S_OK)
         return E_FAIL;
+
+    pWAVEParser->StartOfFile = MEDIATIME_FROM_BYTES(pos + sizeof(RIFFCHUNK));
+    pWAVEParser->EndOfFile = MEDIATIME_FROM_BYTES(pos + chunk.cb + sizeof(RIFFCHUNK));
 
     props->cbAlign = ((WAVEFORMATEX*)amt.pbFormat)->nBlockAlign;
     props->cbPrefix = 0;

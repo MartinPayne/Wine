@@ -1693,16 +1693,6 @@ NTSTATUS WINAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc
         if (!status) status = DIR_unmount_device( handle );
         return status;
 
-    case FSCTL_PIPE_DISCONNECT:
-        status = server_ioctl_file( handle, event, apc, apc_context, io, code,
-                                    in_buffer, in_size, out_buffer, out_size );
-        if (!status)
-        {
-            int fd = server_remove_fd_from_cache( handle );
-            if (fd != -1) close( fd );
-        }
-        return status;
-
     case FSCTL_PIPE_IMPERSONATE:
         FIXME("FSCTL_PIPE_IMPERSONATE: impersonating self\n");
         status = RtlImpersonateSelf( SecurityImpersonation );
@@ -3256,7 +3246,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, PIO_STATUS_BLOCK io
         }
         break;
     case FileFsAttributeInformation:
-        if (length < offsetof( FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName[sizeof(ntfsW)/sizeof(WCHAR)] ))
+        if (length < offsetof( FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName[ARRAY_SIZE( ntfsW )] ))
             io->u.Status = STATUS_BUFFER_TOO_SMALL;
         else
         {

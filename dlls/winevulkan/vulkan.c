@@ -513,7 +513,7 @@ VkResult WINAPI wine_vkAllocateCommandBuffers(VkDevice device,
                 wine_dbgstr_longlong(allocate_info_host.commandPool),
                 allocate_info_host.level);
 
-        if (!(buffers[i] = heap_alloc_zero(sizeof(*buffers))))
+        if (!(buffers[i] = heap_alloc_zero(sizeof(**buffers))))
         {
             res = VK_ERROR_OUT_OF_HOST_MEMORY;
             break;
@@ -1162,4 +1162,14 @@ static void *wine_vk_get_global_proc_addr(const char *name)
         }
     }
     return NULL;
+}
+
+/*
+ * Wrapper around driver vkGetInstanceProcAddr implementation.
+ * Allows winelib applications to access Vulkan functions with Wine
+ * additions and native ABI.
+ */
+void *native_vkGetInstanceProcAddrWINE(VkInstance instance, const char *name)
+{
+    return vk_funcs->p_vkGetInstanceProcAddr(instance, name);
 }

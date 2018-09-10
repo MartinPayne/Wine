@@ -418,8 +418,15 @@ BEGIN
 	VK_F5, FCIDM_SHVIEW_REFRESH, VIRTKEY
 END
 
+/* FIXME: Following resource is not yet added */
+/* @makedep: document.ico */
+IDI_SHELL_FILE ICON document.ico
+
 /* @makedep: document.ico */
 IDI_SHELL_DOCUMENT ICON document.ico
+
+/* @makedep: window.ico */
+IDI_SHELL_WINDOW ICON window.ico
 
 /* @makedep: folder.ico */
 IDI_SHELL_FOLDER ICON folder.ico
@@ -434,6 +441,14 @@ IDI_SHELL_FOLDER_OPEN_SMALL ICON folder_open.ico
 IDI_SHELL_FOLDER_OPEN_LARGE ICON folder_open.ico
 /* @makedep: folder_open.ico */
 IDI_SHELL_FOLDER_SMALL_XP ICON folder_open.ico
+
+/* FIXME: Following resource is not yet added */
+/* @makedep: floppy.ico */
+IDI_SHELL_5_12_FLOPPY ICON floppy.ico
+
+/* FIXME: Following resource is not yet added */
+/* @makedep: floppy.ico */
+IDI_SHELL_3_14_FLOPPY ICON floppy.ico
 
 /* @makedep: floppy.ico */
 IDI_SHELL_FLOPPY ICON floppy.ico

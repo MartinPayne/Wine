@@ -487,7 +487,7 @@
 @ stdcall GetDriveTypeW(wstr) kernel32.GetDriveTypeW
 # @ stub GetDurationFormatEx
 @ stdcall GetDynamicTimeZoneInformation(ptr) kernel32.GetDynamicTimeZoneInformation
-# @ stub GetDynamicTimeZoneInformationEffectiveYears
+@ stdcall GetDynamicTimeZoneInformationEffectiveYears(ptr ptr ptr) kernel32.GetDynamicTimeZoneInformationEffectiveYears
 # @ stub GetEffectivePackageStatusForUser
 # @ stub GetEightBitStringToUnicodeSizeRoutine
 # @ stub GetEightBitStringToUnicodeStringRoutine
@@ -1456,7 +1456,7 @@
 # @ stub SetProcessDefaultCpuSets
 # @ stub SetProcessGroupAffinity
 # @ stub SetProcessInformation
-# @ stub SetProcessMitigationPolicy
+@ stdcall SetProcessMitigationPolicy(long ptr long) kernel32.SetProcessMitigationPolicy
 # @ stub SetProcessPreferredUILanguages
 @ stdcall SetProcessPriorityBoost(long long) kernel32.SetProcessPriorityBoost
 @ stdcall SetProcessShutdownParameters(long long) kernel32.SetProcessShutdownParameters

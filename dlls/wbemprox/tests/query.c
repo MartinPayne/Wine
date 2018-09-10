@@ -1368,25 +1368,28 @@ static void test_Win32_PhysicalMemory( IWbemServices *services )
     hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    type = 0xdeadbeef;
-    VariantInit( &val );
-    hr = IWbemClassObject_Get( obj, capacityW, 0, &val, &type, NULL );
-    ok( hr == S_OK, "failed to get capacity %08x\n", hr );
-    ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
-    ok( type == CIM_UINT64, "unexpected type 0x%x\n", type );
-    trace( "capacity %s\n", wine_dbgstr_w(V_BSTR( &val )) );
-    VariantClear( &val );
+    if (count > 0)
+    {
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, capacityW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "failed to get capacity %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT64, "unexpected type 0x%x\n", type );
+        trace( "capacity %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
 
-    type = 0xdeadbeef;
-    VariantInit( &val );
-    hr = IWbemClassObject_Get( obj, memorytypeW, 0, &val, &type, NULL );
-    ok( hr == S_OK, "failed to get memory type %08x\n", hr );
-    ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
-    ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
-    trace( "memorytype %u\n", V_I4( &val ) );
-    VariantClear( &val );
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, memorytypeW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "failed to get memory type %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "memorytype %u\n", V_I4( &val ) );
+        VariantClear( &val );
 
-    IWbemClassObject_Release( obj );
+        IWbemClassObject_Release( obj );
+    }
     IEnumWbemClassObject_Release( result );
     SysFreeString( query );
     SysFreeString( wql );
@@ -1706,6 +1709,56 @@ static void test_Win32_Printer( IWbemServices *services )
     SysFreeString( wql );
 }
 
+static void test_Win32_PnPEntity( IWbemServices *services )
+{
+    HRESULT hr;
+    IEnumWbemClassObject *enm;
+    IWbemClassObject *obj;
+    VARIANT val;
+    CIMTYPE type;
+    ULONG count, i;
+    BSTR bstr;
+
+    static WCHAR win32_pnpentityW[] = {'W','i','n','3','2','_','P','n','P','E','n','t','i','t','y',0};
+    static const WCHAR deviceidW[] = {'D','e','v','i','c','e','I','d',0};
+
+    bstr = SysAllocString( win32_pnpentityW );
+
+    hr = IWbemServices_CreateInstanceEnum( services, bstr, 0, NULL, &enm );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    SysFreeString( bstr );
+    bstr = SysAllocString( deviceidW );
+
+    while (1)
+    {
+        hr = IEnumWbemClassObject_Next( enm, 1000, 1, &obj, &count );
+        ok( (count == 1 && (hr == WBEM_S_FALSE || hr == WBEM_S_NO_ERROR)) ||
+                (count == 0 && (hr == WBEM_S_FALSE || hr == WBEM_S_TIMEDOUT)),
+                "got %08x with %u objects returned\n", hr, count );
+
+        if (count == 0)
+            break;
+
+        for (i = 0; i < count; ++i)
+        {
+            hr = IWbemClassObject_Get( obj, bstr, 0, &val, &type, NULL );
+            ok( hr == S_OK, "got %08x\n", hr );
+
+            if (SUCCEEDED( hr ))
+            {
+                ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+                ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+                VariantClear( &val );
+            }
+        }
+    }
+
+    SysFreeString( bstr );
+
+    IEnumWbemClassObject_Release( enm );
+}
+
 START_TEST(query)
 {
     static const WCHAR cimv2W[] = {'R','O','O','T','\\','C','I','M','V','2',0};
@@ -1750,6 +1803,7 @@ START_TEST(query)
     test_Win32_Processor( services );
     test_Win32_VideoController( services );
     test_Win32_Printer( services );
+    test_Win32_PnPEntity( services );
 
     SysFreeString( path );
     IWbemServices_Release( services );

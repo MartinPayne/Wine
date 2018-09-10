@@ -41,6 +41,7 @@
 #include "wine/vulkan_driver.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
+WINE_DECLARE_DEBUG_CHANNEL(fps);
 
 #ifdef SONAME_LIBVULKAN
 
@@ -55,7 +56,6 @@ static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 static XContext vulkan_hwnd_context;
 
-typedef VkFlags VkXlibSurfaceCreateFlagsKHR;
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 
 struct wine_vk_surface
@@ -514,8 +514,34 @@ static VkResult X11DRV_vkGetSwapchainImagesKHR(VkDevice device,
 
 static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *present_info)
 {
+    VkResult res;
+
     TRACE("%p, %p\n", queue, present_info);
-    return pvkQueuePresentKHR(queue, present_info);
+
+    res = pvkQueuePresentKHR(queue, present_info);
+
+    if (TRACE_ON(fps))
+    {
+        static unsigned long frames, frames_total;
+        static long prev_time, start_time;
+        DWORD time;
+
+        time = GetTickCount();
+        frames++;
+        frames_total++;
+        if (time - prev_time > 1500)
+        {
+            TRACE_(fps)("%p @ approx %.2ffps, total %.2ffps\n",
+                    queue, 1000.0 * frames / (time - prev_time),
+                    1000.0 * frames_total / (time - start_time));
+            prev_time = time;
+            frames = 0;
+            if (!start_time)
+                start_time = time;
+        }
+    }
+
+    return res;
 }
 
 static const struct vulkan_funcs vulkan_funcs =

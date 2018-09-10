@@ -49,6 +49,7 @@
 #include "wbemcli.h"
 #include "wbemprov.h"
 #include "iphlpapi.h"
+#include "netioapi.h"
 #include "tlhelp32.h"
 #include "d3d10.h"
 #include "winternl.h"
@@ -58,6 +59,7 @@
 #include "sddl.h"
 #include "ntsecapi.h"
 #include "winspool.h"
+#include "setupapi.h"
 
 #include "wine/debug.h"
 #include "wbemprox_private.h"
@@ -103,6 +105,8 @@ static const WCHAR class_physicalmediaW[] =
     {'W','i','n','3','2','_','P','h','y','s','i','c','a','l','M','e','d','i','a',0};
 static const WCHAR class_physicalmemoryW[] =
     {'W','i','n','3','2','_','P','h','y','s','i','c','a','l','M','e','m','o','r','y',0};
+static const WCHAR class_pnpentityW[] =
+    {'W','i','n','3','2','_','P','n','P','E','n','t','i','t','y',0};
 static const WCHAR class_printerW[] =
     {'W','i','n','3','2','_','P','r','i','n','t','e','r',0};
 static const WCHAR class_process_getowner_outW[] =
@@ -255,10 +259,14 @@ static const WCHAR prop_interfacetypeW[] =
     {'I','n','t','e','r','f','a','c','e','T','y','p','e',0};
 static const WCHAR prop_intvalueW[] =
     {'I','n','t','e','g','e','r','V','a','l','u','e',0};
+static const WCHAR prop_ipaddressW[] =
+    {'I','P','A','d','d','r','e','s','s',0};
 static const WCHAR prop_ipconnectionmetricW[] =
     {'I','P','C','o','n','n','e','c','t','i','o','n','M','e','t','r','i','c',0};
 static const WCHAR prop_ipenabledW[] =
     {'I','P','E','n','a','b','l','e','d',0};
+static const WCHAR prop_ipsubnet[] =
+    {'I','P','S','u','b','n','e','t',0};
 static const WCHAR prop_lastbootuptimeW[] =
     {'L','a','s','t','B','o','o','t','U','p','T','i','m','e',0};
 static const WCHAR prop_levelW[] =
@@ -553,8 +561,10 @@ static const struct column col_networkadapterconfig[] =
     { prop_dnshostnameW,          CIM_STRING|COL_FLAG_DYNAMIC },
     { prop_dnsserversearchorderW, CIM_STRING|CIM_FLAG_ARRAY|COL_FLAG_DYNAMIC },
     { prop_indexW,                CIM_UINT32|COL_FLAG_KEY, VT_I4 },
+    { prop_ipaddressW,            CIM_STRING|CIM_FLAG_ARRAY|COL_FLAG_DYNAMIC },
     { prop_ipconnectionmetricW,   CIM_UINT32, VT_I4 },
     { prop_ipenabledW,            CIM_BOOLEAN },
+    { prop_ipsubnet,              CIM_STRING|CIM_FLAG_ARRAY|COL_FLAG_DYNAMIC },
     { prop_macaddressW,           CIM_STRING|COL_FLAG_DYNAMIC },
     { prop_settingidW,            CIM_STRING|COL_FLAG_DYNAMIC }
 };
@@ -604,6 +614,10 @@ static const struct column col_physicalmemory[] =
 {
     { prop_capacityW,   CIM_UINT64 },
     { prop_memorytypeW, CIM_UINT16, VT_I4 }
+};
+static const struct column col_pnpentity[] =
+{
+    { prop_deviceidW, CIM_STRING|COL_FLAG_DYNAMIC },
 };
 static const struct column col_printer[] =
 {
@@ -970,8 +984,10 @@ struct record_networkadapterconfig
     const WCHAR        *dnshostname;
     const struct array *dnsserversearchorder;
     UINT32              index;
+    const struct array *ipaddress;
     UINT32              ipconnectionmetric;
     int                 ipenabled;
+    const struct array *ipsubnet;
     const WCHAR        *mac_address;
     const WCHAR        *settingid;
 };
@@ -1021,6 +1037,10 @@ struct record_physicalmemory
 {
     UINT64 capacity;
     UINT16 memorytype;
+};
+struct record_pnpentity
+{
+    const WCHAR *device_id;
 };
 struct record_printer
 {
@@ -2426,6 +2446,90 @@ static struct array *get_dnsserversearchorder( IP_ADAPTER_DNS_SERVER_ADDRESS *li
     ret->ptr   = ptr;
     return ret;
 }
+static struct array *get_ipaddress( IP_ADAPTER_UNICAST_ADDRESS_LH *list )
+{
+    IP_ADAPTER_UNICAST_ADDRESS_LH *address;
+    struct array *ret;
+    ULONG buflen, i = 0, count = 0;
+    WCHAR **ptr, buf[54]; /* max IPv6 address length */
+
+    if (!list) return NULL;
+    for (address = list; address; address = address->Next) count++;
+
+    if (!(ret = heap_alloc( sizeof(*ret) ))) return NULL;
+    if (!(ptr = heap_alloc( sizeof(*ptr) * count )))
+    {
+        heap_free( ret );
+        return NULL;
+    }
+    for (address = list; address; address = address->Next)
+    {
+        buflen = sizeof(buf)/sizeof(buf[0]);
+        if (WSAAddressToStringW( address->Address.lpSockaddr, address->Address.iSockaddrLength,
+                                 NULL, buf, &buflen) || !(ptr[i++] = heap_strdupW( buf )))
+        {
+            for (; i > 0; i--) heap_free( ptr[i - 1] );
+            heap_free( ptr );
+            heap_free( ret );
+            return NULL;
+        }
+    }
+    ret->count = count;
+    ret->ptr   = ptr;
+    return ret;
+}
+static struct array *get_ipsubnet( IP_ADAPTER_UNICAST_ADDRESS_LH *list )
+{
+    IP_ADAPTER_UNICAST_ADDRESS_LH *address;
+    struct array *ret;
+    ULONG i = 0, count = 0;
+    WCHAR **ptr;
+
+    if (!list) return NULL;
+    for (address = list; address; address = address->Next) count++;
+
+    if (!(ret = heap_alloc( sizeof(*ret) ))) return NULL;
+    if (!(ptr = heap_alloc( sizeof(*ptr) * count )))
+    {
+        heap_free( ret );
+        return NULL;
+    }
+    for (address = list; address; address = address->Next)
+    {
+        if (address->Address.lpSockaddr->sa_family == AF_INET)
+        {
+            WCHAR buf[INET_ADDRSTRLEN];
+            SOCKADDR_IN addr;
+            ULONG buflen = sizeof(buf)/sizeof(buf[0]);
+
+            memset( &addr, 0, sizeof(addr) );
+            addr.sin_family = AF_INET;
+            if (ConvertLengthToIpv4Mask( address->OnLinkPrefixLength, &addr.sin_addr.S_un.S_addr ) != NO_ERROR
+                    || WSAAddressToStringW( (SOCKADDR*)&addr, sizeof(addr), NULL, buf, &buflen))
+                ptr[i] = NULL;
+            else
+                ptr[i] = heap_strdupW( buf );
+        }
+        else
+        {
+            static const WCHAR fmtW[] = {'%','u',0};
+            WCHAR buf[11];
+
+            sprintfW(buf, fmtW, address->OnLinkPrefixLength);
+            ptr[i] = heap_strdupW( buf );
+        }
+        if (!ptr[i++])
+        {
+            for (; i > 0; i--) heap_free( ptr[i - 1] );
+            heap_free( ptr );
+            heap_free( ret );
+            return NULL;
+        }
+    }
+    ret->count = count;
+    ret->ptr   = ptr;
+    return ret;
+}
 static WCHAR *get_settingid( UINT32 index )
 {
     GUID guid;
@@ -2475,8 +2579,10 @@ static enum fill_status fill_networkadapterconfig( struct table *table, const st
         rec->dnshostname          = get_dnshostname( aa->FirstUnicastAddress );
         rec->dnsserversearchorder = get_dnsserversearchorder( aa->FirstDnsServerAddress );
         rec->index                = aa->u.s.IfIndex;
+        rec->ipaddress            = get_ipaddress( aa->FirstUnicastAddress );
         rec->ipconnectionmetric   = 20;
         rec->ipenabled            = -1;
+        rec->ipsubnet             = get_ipsubnet( aa->FirstUnicastAddress );
         rec->mac_address          = get_mac_address( aa->PhysicalAddress, aa->PhysicalAddressLength );
         rec->settingid            = get_settingid( rec->index );
         if (!match_row( table, row, cond, &status ))
@@ -2510,6 +2616,53 @@ static enum fill_status fill_physicalmemory( struct table *table, const struct e
 
     TRACE("created %u rows\n", row);
     table->num_rows = row;
+    return status;
+}
+
+static enum fill_status fill_pnpentity( struct table *table, const struct expr *cond )
+{
+    struct record_pnpentity *rec;
+    enum fill_status status = FILL_STATUS_UNFILTERED;
+    HDEVINFO device_info_set;
+    SP_DEVINFO_DATA devinfo = {0};
+    DWORD idx;
+
+    device_info_set = SetupDiGetClassDevsW( NULL, NULL, NULL, DIGCF_ALLCLASSES|DIGCF_PRESENT );
+
+    devinfo.cbSize = sizeof(devinfo);
+
+    idx = 0;
+    while (SetupDiEnumDeviceInfo( device_info_set, idx++, &devinfo ))
+    {
+        /* noop */
+    }
+
+    resize_table( table, idx, sizeof(*rec) );
+    table->num_rows = 0;
+    rec = (struct record_pnpentity *)table->data;
+
+    idx = 0;
+    while (SetupDiEnumDeviceInfo( device_info_set, idx++, &devinfo ))
+    {
+        WCHAR device_id[MAX_PATH];
+        if (SetupDiGetDeviceInstanceIdW( device_info_set, &devinfo, device_id,
+                    ARRAY_SIZE(device_id), NULL ))
+        {
+            rec->device_id = heap_strdupW( device_id );
+
+            table->num_rows++;
+            if (!match_row( table, table->num_rows - 1, cond, &status ))
+            {
+                free_row_values( table, table->num_rows - 1 );
+                table->num_rows--;
+            }
+            else
+                rec++;
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList( device_info_set );
+
     return status;
 }
 
@@ -3382,6 +3535,7 @@ static struct table builtin_classes[] =
     { class_paramsW, SIZEOF(col_param), col_param, SIZEOF(data_param), 0, (BYTE *)data_param },
     { class_physicalmediaW, SIZEOF(col_physicalmedia), col_physicalmedia, SIZEOF(data_physicalmedia), 0, (BYTE *)data_physicalmedia },
     { class_physicalmemoryW, SIZEOF(col_physicalmemory), col_physicalmemory, 0, 0, NULL, fill_physicalmemory },
+    { class_pnpentityW, SIZEOF(col_pnpentity), col_pnpentity, 0, 0, NULL, fill_pnpentity },
     { class_printerW, SIZEOF(col_printer), col_printer, 0, 0, NULL, fill_printer },
     { class_processW, SIZEOF(col_process), col_process, 0, 0, NULL, fill_process },
     { class_processorW, SIZEOF(col_processor), col_processor, 0, 0, NULL, fill_processor },

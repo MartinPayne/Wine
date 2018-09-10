@@ -37,11 +37,9 @@
 DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
 static const WCHAR friendly_name[] = {'F','r','i','e','n','d','l','y','N','a','m','e',0};
-static const WCHAR fcc_handlerW[] = {'F','c','c','H','a','n','d','l','e','r',0};
 static const WCHAR deviceW[] = {'@','d','e','v','i','c','e',':',0};
 static const WCHAR clsidW[] = {'C','L','S','I','D',0};
 static const WCHAR waveW[] = {'w','a','v','e',':',0};
-static const WCHAR mrleW[] = {'m','r','l','e',0};
 static const WCHAR dmoW[] = {'d','m','o',':',0};
 static const WCHAR swW[] = {'s','w',':',0};
 static const WCHAR cmW[] = {'c','m',':',0};
@@ -66,8 +64,8 @@ static void test_devenum(IBindCtx *bind_ctx)
     ICreateDevEnum* create_devenum;
     IPropertyBag *prop_bag;
     IMoniker *moniker;
-    BOOL have_mrle = FALSE;
     GUID cat_guid, clsid;
+    WCHAR *displayname;
     VARIANT var;
     HRESULT hr;
 
@@ -84,18 +82,18 @@ static void test_devenum(IBindCtx *bind_ctx)
         ok(hr == S_OK, "IMoniker_BindToStorage failed: %#x\n", hr);
 
         VariantInit(&var);
-        hr = IPropertyBag_Read(prop_bag, friendly_name, &var, NULL);
-        ok(hr == S_OK, "Failed to read FriendlyName: %#x\n", hr);
-
-        if (winetest_debug > 1)
-            trace("%s:\n", wine_dbgstr_w(V_BSTR(&var)));
-
-        VariantClear(&var);
         hr = IPropertyBag_Read(prop_bag, clsidW, &var, NULL);
         ok(hr == S_OK, "Failed to read CLSID: %#x\n", hr);
 
         hr = CLSIDFromString(V_BSTR(&var), &cat_guid);
         ok(hr == S_OK, "got %#x\n", hr);
+
+        VariantClear(&var);
+        hr = IPropertyBag_Read(prop_bag, friendly_name, &var, NULL);
+        ok(hr == S_OK, "Failed to read FriendlyName: %#x\n", hr);
+
+        if (winetest_debug > 1)
+            trace("%s %s:\n", wine_dbgstr_guid(&cat_guid), wine_dbgstr_w(V_BSTR(&var)));
 
         IPropertyBag_Release(prop_bag);
         IMoniker_Release(moniker);
@@ -107,6 +105,9 @@ static void test_devenum(IBindCtx *bind_ctx)
         {
             while (IEnumMoniker_Next(enum_moniker, 1, &moniker, NULL) == S_OK)
             {
+                hr = IMoniker_GetDisplayName(moniker, NULL, NULL, &displayname);
+                ok(hr == S_OK, "got %#x\n", hr);
+
                 hr = IMoniker_GetClassID(moniker, NULL);
                 ok(hr == E_INVALIDARG, "IMoniker_GetClassID should failed %x\n", hr);
 
@@ -123,22 +124,12 @@ static void test_devenum(IBindCtx *bind_ctx)
                 ok(hr == S_OK, "IPropertyBag_Read failed: %#x\n", hr);
 
                 if (winetest_debug > 1)
-                    trace("  %s\n", wine_dbgstr_w(V_BSTR(&var)));
-
-                if (IsEqualGUID(&CLSID_VideoCompressorCategory, &cat_guid)) {
-                    /* Test well known compressor to ensure that we really enumerate codecs */
-                    hr = IPropertyBag_Read(prop_bag, fcc_handlerW, &var, NULL);
-                    if (SUCCEEDED(hr)) {
-                        ok(V_VT(&var) == VT_BSTR, "V_VT(var) = %d\n", V_VT(&var));
-                        if(!lstrcmpW(V_BSTR(&var), mrleW))
-                            have_mrle = TRUE;
-                        VariantClear(&var);
-                    }
-                }
+                    trace("  %s %s\n", wine_dbgstr_w(displayname), wine_dbgstr_w(V_BSTR(&var)));
 
                 hr = IMoniker_BindToObject(moniker, bind_ctx, NULL, &IID_IUnknown, NULL);
                 ok(hr == E_POINTER, "got %#x\n", hr);
 
+                CoTaskMemFree(displayname);
                 IPropertyBag_Release(prop_bag);
                 IMoniker_Release(moniker);
             }
@@ -147,11 +138,8 @@ static void test_devenum(IBindCtx *bind_ctx)
     }
 
     ICreateDevEnum_Release(create_devenum);
-
-    /* 64-bit windows are missing mrle codec */
-    if(sizeof(void*) == 4)
-        ok(have_mrle, "mrle codec not found\n");
 }
+
 static void test_moniker_isequal(void)
 {
     HRESULT res;

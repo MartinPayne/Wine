@@ -2,6 +2,7 @@
  * Task dialog control
  *
  * Copyright 2017 Fabian Maurer
+ * Copyright 2018 Zhiyi Zhang
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -212,6 +213,13 @@ static void taskdialog_click_button(struct taskdialog_info *dialog_info, INT id)
     if (hwnd) taskdialog_on_button_click(dialog_info, hwnd);
 }
 
+static void taskdialog_button_set_shield(const struct taskdialog_info *dialog_info, INT id, BOOL elevate)
+{
+    HWND hwnd = taskdialog_find_button(dialog_info->command_links, dialog_info->command_link_count, id);
+    if (!hwnd) hwnd = taskdialog_find_button(dialog_info->buttons, dialog_info->button_count, id);
+    if (hwnd) SendMessageW(hwnd, BCM_SETSHIELD, 0, elevate);
+}
+
 static void taskdialog_enable_radio_button(const struct taskdialog_info *dialog_info, INT id, BOOL enable)
 {
     HWND hwnd = taskdialog_find_button(dialog_info->radio_buttons, dialog_info->radio_button_count, id);
@@ -232,11 +240,66 @@ static HRESULT taskdialog_notify(struct taskdialog_info *dialog_info, UINT notif
                : S_OK;
 }
 
+static void taskdialog_move_controls_vertically(HWND parent, HWND *controls, INT count, INT offset)
+{
+    RECT rect;
+    POINT pt;
+    INT i;
+
+    for (i = 0; i < count; i++)
+    {
+        if (!controls[i]) continue;
+
+        GetWindowRect(controls[i], &rect);
+        pt.x = rect.left;
+        pt.y = rect.top;
+        MapWindowPoints(HWND_DESKTOP, parent, &pt, 1);
+        SetWindowPos(controls[i], 0, pt.x, pt.y + offset, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    }
+}
+
 static void taskdialog_toggle_expando_control(struct taskdialog_info *dialog_info)
 {
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+    const WCHAR *text;
+    RECT info_rect, rect;
+    INT height, offset;
+
     dialog_info->expanded = !dialog_info->expanded;
+    text = dialog_info->expanded ? dialog_info->expanded_text : dialog_info->collapsed_text;
+    SendMessageW(dialog_info->expando_button, WM_SETTEXT, 0, (LPARAM)text);
     ShowWindow(dialog_info->expanded_info, dialog_info->expanded ? SW_SHOWDEFAULT : SW_HIDE);
-    taskdialog_layout(dialog_info);
+
+    GetWindowRect(dialog_info->expanded_info, &info_rect);
+    /* If expanded information starts up not expanded, call taskdialog_layout()
+     * to to set size for expanded information control at least once */
+    if (IsRectEmpty(&info_rect))
+    {
+        taskdialog_layout(dialog_info);
+        return;
+    }
+    height = info_rect.bottom - info_rect.top + dialog_info->m.v_spacing;
+    offset = dialog_info->expanded ? height : -height;
+
+    /* Update vertical layout, move all controls after expanded information */
+    /* Move dialog */
+    GetWindowRect(dialog_info->hwnd, &rect);
+    SetWindowPos(dialog_info->hwnd, 0, 0, 0, rect.right - rect.left, rect.bottom - rect.top + offset,
+                 SWP_NOMOVE | SWP_NOZORDER);
+    /* Move controls */
+    if (!(taskconfig->dwFlags & TDF_EXPAND_FOOTER_AREA))
+    {
+        taskdialog_move_controls_vertically(dialog_info->hwnd, &dialog_info->progress_bar, 1, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, &dialog_info->expando_button, 1, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, &dialog_info->verification_box, 1, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, &dialog_info->footer_icon, 1, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, &dialog_info->footer_text, 1, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, dialog_info->buttons, dialog_info->button_count, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, dialog_info->radio_buttons,
+                                            dialog_info->radio_button_count, offset);
+        taskdialog_move_controls_vertically(dialog_info->hwnd, dialog_info->command_links,
+                                            dialog_info->command_link_count, offset);
+    }
 }
 
 static void taskdialog_on_button_click(struct taskdialog_info *dialog_info, HWND hwnd)
@@ -478,6 +541,28 @@ static void taskdialog_set_icon(struct taskdialog_info *dialog_info, INT element
     }
     else if (element == TDIE_ICON_FOOTER)
         SendMessageW(dialog_info->footer_icon, STM_SETICON, (WPARAM)hicon, 0);
+}
+
+static void taskdialog_set_element_text(struct taskdialog_info *dialog_info, TASKDIALOG_ELEMENTS element,
+                                        const WCHAR *text)
+{
+    HWND hwnd = NULL;
+    WCHAR *textW;
+
+    if (element == TDE_CONTENT)
+        hwnd = dialog_info->content;
+    else if (element == TDE_EXPANDED_INFORMATION)
+        hwnd = dialog_info->expanded_info;
+    else if (element == TDE_FOOTER)
+        hwnd = dialog_info->footer_text;
+    else if (element == TDE_MAIN_INSTRUCTION)
+        hwnd = dialog_info->main_instruction;
+
+    if (!hwnd) return;
+
+    textW = taskdialog_gettext(dialog_info, TRUE, text);
+    SendMessageW(hwnd, WM_SETTEXT, 0, (LPARAM)textW);
+    Free(textW);
 }
 
 static void taskdialog_check_default_radio_buttons(struct taskdialog_info *dialog_info)
@@ -744,6 +829,36 @@ static void taskdialog_add_footer_text(struct taskdialog_info *dialog_info)
                                                        dialog_info->font, taskdialog_hyperlink_enabled(dialog_info));
 }
 
+static LONG taskdialog_get_dialog_width(struct taskdialog_info *dialog_info)
+{
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+    BOOL syslink = taskdialog_hyperlink_enabled(dialog_info);
+    LONG max_width, main_icon_width, screen_width;
+    RECT rect;
+    SIZE size;
+
+    screen_width = taskdialog_get_reference_rect(taskconfig, &rect);
+    if ((taskconfig->dwFlags & TDF_SIZE_TO_CONTENT) && !taskconfig->cxWidth)
+    {
+        max_width = DIALOG_MIN_WIDTH;
+        taskdialog_du_to_px(dialog_info, &max_width, NULL);
+        main_icon_width = dialog_info->m.h_spacing;
+        if (dialog_info->main_icon) main_icon_width += GetSystemMetrics(SM_CXICON);
+        if (dialog_info->content)
+        {
+            taskdialog_get_label_size(dialog_info, dialog_info->content, 0, &size, syslink);
+            max_width = max(max_width, size.cx + main_icon_width + dialog_info->m.h_spacing * 2);
+        }
+    }
+    else
+    {
+        max_width = max(taskconfig->cxWidth, DIALOG_MIN_WIDTH);
+        taskdialog_du_to_px(dialog_info, &max_width, NULL);
+    }
+    max_width = min(max_width, screen_width);
+    return max_width;
+}
+
 static void taskdialog_label_layout(struct taskdialog_info *dialog_info, HWND hwnd, INT start_x, LONG dialog_width,
                                     LONG *dialog_height, BOOL syslink)
 {
@@ -766,7 +881,7 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     BOOL syslink = taskdialog_hyperlink_enabled(dialog_info);
     static BOOL first_time = TRUE;
     RECT ref_rect;
-    LONG screen_width, dialog_width, dialog_height = 0;
+    LONG dialog_width, dialog_height = 0;
     LONG h_spacing, v_spacing;
     LONG main_icon_right, main_icon_bottom;
     LONG expando_right, expando_bottom;
@@ -778,10 +893,8 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     SIZE size;
     INT i;
 
-    screen_width = taskdialog_get_reference_rect(dialog_info->taskconfig, &ref_rect);
-    dialog_width = max(taskconfig->cxWidth, DIALOG_MIN_WIDTH);
-    taskdialog_du_to_px(dialog_info, &dialog_width, 0);
-    dialog_width = min(dialog_width, screen_width);
+    taskdialog_get_reference_rect(dialog_info->taskconfig, &ref_rect);
+    dialog_width = taskdialog_get_dialog_width(dialog_info);
 
     h_spacing = dialog_info->m.h_spacing;
     v_spacing = dialog_info->m.v_spacing;
@@ -827,7 +940,7 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
     for (i = 0; i < dialog_info->radio_button_count; i++)
     {
         x = main_icon_right + h_spacing;
-        y = dialog_height;
+        y = dialog_height + v_spacing;
         taskdialog_get_radio_button_size(dialog_info, dialog_info->radio_buttons[i], dialog_width - x - h_spacing, &size);
         size.cx = dialog_width - x - h_spacing;
         SetWindowPos(dialog_info->radio_buttons[i], 0, x, y, size.cx, size.cy, SWP_NOZORDER);
@@ -989,8 +1102,8 @@ static void taskdialog_layout(struct taskdialog_info *dialog_info)
 
     if (first_time)
     {
-        x = (ref_rect.left + ref_rect.right + dialog_width) / 2;
-        y = (ref_rect.top + ref_rect.bottom + dialog_height) / 2;
+        x = (ref_rect.left + ref_rect.right - dialog_width) / 2;
+        y = (ref_rect.top + ref_rect.bottom - dialog_height) / 2;
         SetWindowPos(dialog_info->hwnd, 0, x, y, dialog_width, dialog_height, SWP_NOZORDER);
         first_time = FALSE;
     }
@@ -1087,8 +1200,16 @@ static void taskdialog_init(struct taskdialog_info *dialog_info, HWND hwnd)
     taskdialog_layout(dialog_info);
 }
 
+static BOOL CALLBACK takdialog_destroy_control(HWND hwnd, LPARAM lParam)
+{
+    DestroyWindow(hwnd);
+    return TRUE;
+}
+
 static void taskdialog_destroy(struct taskdialog_info *dialog_info)
 {
+    EnumChildWindows(dialog_info->hwnd, takdialog_destroy_control, 0);
+
     if (dialog_info->taskconfig->dwFlags & TDF_CALLBACK_TIMER) KillTimer(dialog_info->hwnd, ID_TIMER);
     if (dialog_info->font) DeleteObject(dialog_info->font);
     if (dialog_info->main_instruction_font) DeleteObject(dialog_info->main_instruction_font);
@@ -1112,6 +1233,15 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
     switch (msg)
     {
+        case TDM_NAVIGATE_PAGE:
+            dialog_info->taskconfig = (const TASKDIALOGCONFIG *)lParam;
+            taskdialog_destroy(dialog_info);
+            taskdialog_init(dialog_info, hwnd);
+            taskdialog_notify(dialog_info, TDN_DIALOG_CONSTRUCTED, 0, 0);
+            /* Default radio button click notification is sent before TDN_NAVIGATED */
+            taskdialog_check_default_radio_buttons(dialog_info);
+            taskdialog_notify(dialog_info, TDN_NAVIGATED, 0, 0);
+            break;
         case TDM_CLICK_BUTTON:
             taskdialog_click_button(dialog_info, wParam);
             break;
@@ -1148,6 +1278,13 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         case TDM_SET_PROGRESS_BAR_MARQUEE:
             SendMessageW(dialog_info->progress_bar, PBM_SETMARQUEE, wParam, lParam);
             break;
+        case TDM_SET_ELEMENT_TEXT:
+            taskdialog_set_element_text(dialog_info, wParam, (const WCHAR *)lParam);
+            taskdialog_layout(dialog_info);
+            break;
+        case TDM_UPDATE_ELEMENT_TEXT:
+            taskdialog_set_element_text(dialog_info, wParam, (const WCHAR *)lParam);
+            break;
         case TDM_CLICK_RADIO_BUTTON:
             taskdialog_click_radio_button(dialog_info, wParam);
             break;
@@ -1167,6 +1304,12 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             }
             break;
         }
+        case TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE:
+            taskdialog_button_set_shield(dialog_info, wParam, lParam);
+            break;
+        case TDM_UPDATE_ICON:
+            taskdialog_set_icon(dialog_info, wParam, (HICON)lParam);
+            break;
         case WM_INITDIALOG:
             dialog_info = (struct taskdialog_info *)lParam;
 
