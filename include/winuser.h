@@ -3357,6 +3357,26 @@ typedef struct tagGESTUREINFO {
 } GESTUREINFO, *PGESTUREINFO;
 typedef GESTUREINFO const * PCGESTUREINFO;
 
+#define POINTER_DEVICE_PRODUCT_STRING_MAX 520
+
+typedef enum tagPOINTER_DEVICE_TYPE {
+    POINTER_DEVICE_TYPE_INTEGRATED_PEN = 0x00000001,
+    POINTER_DEVICE_TYPE_EXTERNAL_PEN   = 0x00000002,
+    POINTER_DEVICE_TYPE_TOUCH          = 0x00000003,
+    POINTER_DEVICE_TYPE_TOUCH_PAD      = 0x00000004,
+    POINTER_DEVICE_TYPE_MAX            = 0xFFFFFFFF
+} POINTER_DEVICE_TYPE;
+
+typedef struct tagPOINTER_DEVICE_INFO {
+    DWORD               displayOrientation;
+    HANDLE              device;
+    POINTER_DEVICE_TYPE pointerDeviceType;
+    HMONITOR            monitor;
+    ULONG               startingCursorId;
+    USHORT              maxActiveContacts;
+    WCHAR               productString[POINTER_DEVICE_PRODUCT_STRING_MAX];
+} POINTER_DEVICE_INFO;
+
 #if defined(_WINGDI_) && !defined(NOGDI)
 WINUSERAPI LONG        WINAPI ChangeDisplaySettingsA(LPDEVMODEA,DWORD);
 WINUSERAPI LONG        WINAPI ChangeDisplaySettingsW(LPDEVMODEW,DWORD);
@@ -4004,6 +4024,7 @@ WINUSERAPI HDEVNOTIFY  WINAPI RegisterDeviceNotificationA(HANDLE,LPVOID,DWORD);
 WINUSERAPI HDEVNOTIFY  WINAPI RegisterDeviceNotificationW(HANDLE,LPVOID,DWORD);
 #define                       RegisterDeviceNotification WINELIB_NAME_AW(RegisterDeviceNotification)
 WINUSERAPI BOOL        WINAPI RegisterHotKey(HWND,INT,UINT,UINT);
+WINUSERAPI BOOL        WINAPI RegisterPointerDeviceNotifications(HWND,BOOL);
 WINUSERAPI HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE,LPCGUID,DWORD);
 WINUSERAPI BOOL        WINAPI RegisterRawInputDevices(PRAWINPUTDEVICE,UINT,UINT);
 WINUSERAPI BOOL        WINAPI RegisterShellHookWindow(HWND);

@@ -125,7 +125,6 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_DSY                              */ "dsy",
     /* WINED3DSIH_DSY_COARSE                       */ "deriv_rty_coarse",
     /* WINED3DSIH_DSY_FINE                         */ "deriv_rty_fine",
-    /* WINED3DSIH_EVAL_SAMPLE_INDEX                */ "eval_sample_index",
     /* WINED3DSIH_ELSE                             */ "else",
     /* WINED3DSIH_EMIT                             */ "emit",
     /* WINED3DSIH_EMIT_STREAM                      */ "emit_stream",
@@ -134,6 +133,7 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_ENDREP                           */ "endrep",
     /* WINED3DSIH_ENDSWITCH                        */ "endswitch",
     /* WINED3DSIH_EQ                               */ "eq",
+    /* WINED3DSIH_EVAL_SAMPLE_INDEX                */ "eval_sample_index",
     /* WINED3DSIH_EXP                              */ "exp",
     /* WINED3DSIH_EXPP                             */ "expp",
     /* WINED3DSIH_F16TOF32                         */ "f16tof32",
@@ -3532,7 +3532,7 @@ void find_vs_compile_args(const struct wined3d_state *state, const struct wined3
             && state->render_states[WINED3D_RS_CLIPPLANEENABLE];
     args->point_size = state->gl_primitive_type == GL_POINTS;
     args->per_vertex_point_size = shader->reg_maps.point_size;
-    args->next_shader_type = hull_shader? WINED3D_SHADER_TYPE_HULL
+    args->next_shader_type = hull_shader ? WINED3D_SHADER_TYPE_HULL
             : geometry_shader ? WINED3D_SHADER_TYPE_GEOMETRY : WINED3D_SHADER_TYPE_PIXEL;
     if (shader->reg_maps.shader_version.major >= 4)
         args->next_shader_input_count = hull_shader ? hull_shader->limits->packed_input

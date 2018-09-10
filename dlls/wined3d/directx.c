@@ -1857,22 +1857,15 @@ static enum wined3d_pci_vendor wined3d_guess_card_vendor(const char *gl_vendor_s
     return HW_VENDOR_NVIDIA;
 }
 
-static enum wined3d_d3d_level d3d_level_from_caps(const struct shader_caps *shader_caps, const struct fragment_caps *fragment_caps, DWORD glsl_version)
+static enum wined3d_d3d_level d3d_level_from_caps(const struct shader_caps *shader_caps,
+        const struct fragment_caps *fragment_caps)
 {
     if (shader_caps->vs_version >= 5)
         return WINED3D_D3D_LEVEL_11;
     if (shader_caps->vs_version == 4)
         return WINED3D_D3D_LEVEL_10;
     if (shader_caps->vs_version == 3)
-    {
-        /* wined3d with default settings at the moment doesn't expose SM4+ on
-         * Mesa drivers. */
-        if (glsl_version >= MAKEDWORD_VERSION(4, 30))
-            return WINED3D_D3D_LEVEL_11;
-        if (glsl_version >= MAKEDWORD_VERSION(1, 30))
-            return WINED3D_D3D_LEVEL_10;
         return WINED3D_D3D_LEVEL_9_SM3;
-    }
     if (shader_caps->vs_version == 2)
         return WINED3D_D3D_LEVEL_9_SM2;
     if (shader_caps->vs_version == 1)
@@ -2562,9 +2555,9 @@ static enum wined3d_pci_device wined3d_guess_card(const struct shader_caps *shad
      * memory behind our backs if really needed. Note that the amount of video
      * memory can be overruled using a registry setting. */
 
-    unsigned int i;
-    enum wined3d_d3d_level d3d_level = d3d_level_from_caps(shader_caps, fragment_caps, glsl_version);
+    enum wined3d_d3d_level d3d_level = d3d_level_from_caps(shader_caps, fragment_caps);
     enum wined3d_pci_device device;
+    unsigned int i;
 
     for (i = 0; i < ARRAY_SIZE(card_vendor_table); ++i)
     {
@@ -2615,7 +2608,14 @@ static const struct fragment_pipeline *select_fragment_implementation(const stru
 
 static const struct wined3d_shader_backend_ops *select_shader_backend(const struct wined3d_gl_info *gl_info)
 {
-    BOOL glsl = wined3d_settings.glslRequested && gl_info->glsl_version >= MAKEDWORD_VERSION(1, 20);
+    BOOL glsl = wined3d_settings.use_glsl && gl_info->glsl_version >= MAKEDWORD_VERSION(1, 20);
+    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT] && !wined3d_settings.use_glsl)
+    {
+        ERR_(winediag)("Ignoring the UseGLSL registry key. "
+                "GLSL is the only shader backend available on core profile contexts. "
+                "You need to explicitly set GL version to use legacy contexts.\n");
+        glsl = TRUE;
+    }
 
     if (glsl && gl_info->supported[ARB_VERTEX_SHADER] && gl_info->supported[ARB_FRAGMENT_SHADER])
         return &glsl_shader_backend;
@@ -3279,6 +3279,7 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     USE_GL_FUNC(glIsEnabledi)                                  /* OpenGL 3.0 */
     USE_GL_FUNC(glLinkProgram)                                 /* OpenGL 2.0 */
     USE_GL_FUNC(glMapBuffer)                                   /* OpenGL 1.5 */
+    USE_GL_FUNC(glMinSampleShading)                            /* OpenGL 4.0 */
     USE_GL_FUNC(glPointParameteri)                             /* OpenGL 1.4 */
     USE_GL_FUNC(glPointParameteriv)                            /* OpenGL 1.4 */
     USE_GL_FUNC(glShaderSource)                                /* OpenGL 2.0 */

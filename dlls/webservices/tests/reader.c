@@ -67,57 +67,6 @@ static const char data9[] =
 static const char data10[] =
     "<a></b>";
 
-static const char data11[] =
-    "<o:OfficeConfig xmlns:o=\"urn:schemas-microsoft-com:office:office\">"
-    "<o:services o:GenerationTime=\"2015-09-03T18:47:54\">"
-    "<!--Build: 16.0.6202.6852-->"
-    "</o:services>"
-    "</o:OfficeConfig>";
-
-static const char data11b[] =
-    "<o:OfficeConfig xmlns:o=\"urn:schemas-microsoft-com:office:office\">"
-    "<o:services o:GenerationTime=\"2015-09-03T18:47:54\"></o:services>"
-    "<trailing>content</trailing>"
-    "</o:OfficeConfig>";
-
-static const char data12[] =
-    "<services>"
-    "<service><id>1</id></service>"
-    "<service><id>2</id></service>"
-    "</services>";
-
-static const char data13[] =
-    "<services></services>";
-
-static const char data14[] =
-    "<services>"
-    "<wrapper>"
-    "<service><id>1</id></service>"
-    "<service><id>2</id></service>"
-    "</wrapper>"
-    "</services>";
-
-static const char data15[] =
-    "<services>"
-    "<wrapper>"
-    "<service>1</service>"
-    "<service>2</service>"
-    "</wrapper>"
-    "</services>";
-
-static const char data16[] =
-    "<services>"
-    "<wrapper>"
-    "<service name='1'>1</service>"
-    "<service name='2'>2</service>"
-    "</wrapper>"
-    "</services>";
-
-static const char data17[] =
-    "<services>"
-    "<service><name></name></service>"
-    "</services>";
-
 static void test_WsCreateError(void)
 {
     HRESULT hr;
@@ -530,7 +479,7 @@ static void test_WsSetInput(void)
     enc.encoding.encodingType = WS_XML_READER_ENCODING_TYPE_TEXT;
     enc.charSet               = WS_CHARSET_AUTO;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         input.encodedData     = tests[i].data;
         input.encodedDataSize = tests[i].size;
@@ -1225,7 +1174,7 @@ static void test_WsReadNode(void)
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         hr = set_input( reader, tests[i].text, strlen(tests[i].text) );
         ok( hr == S_OK, "got %08x\n", hr );
@@ -1695,7 +1644,7 @@ static void test_WsReadType(void)
     ok( hr == WS_E_INVALID_FORMAT, "got %08x\n", hr );
 
     enum_desc.values       = enum_values;
-    enum_desc.valueCount   = sizeof(enum_values)/sizeof(enum_values[0]);
+    enum_desc.valueCount   = ARRAY_SIZE( enum_values );
     enum_desc.maxByteCount = 3;
     enum_desc.nameIndices  = NULL;
 
@@ -2997,6 +2946,17 @@ static void test_text_field_mapping(void)
 
 static void test_complex_struct_type(void)
 {
+    static const char data[] =
+        "<o:OfficeConfig xmlns:o=\"urn:schemas-microsoft-com:office:office\">"
+        "<o:services o:GenerationTime=\"2015-09-03T18:47:54\">"
+        "<!--Build: 16.0.6202.6852-->"
+        "</o:services>"
+        "</o:OfficeConfig>";
+    static const char data2[] =
+        "<o:OfficeConfig xmlns:o=\"urn:schemas-microsoft-com:office:office\">"
+        "<o:services o:GenerationTime=\"2015-09-03T18:47:54\"></o:services>"
+        "<trailing>content</trailing>"
+        "</o:OfficeConfig>";
     static const WCHAR timestampW[] =
         {'2','0','1','5','-','0','9','-','0','3','T','1','8',':','4','7',':','5','4',0};
     HRESULT hr;
@@ -3035,7 +2995,7 @@ static void test_complex_struct_type(void)
     ok( hr == S_OK, "got %08x\n", hr );
 
     /* element content type mapping */
-    prepare_struct_type_test( reader, data11 );
+    prepare_struct_type_test( reader, data );
 
     hr = WsReadToStartElement( reader, NULL, NULL, NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
@@ -3112,7 +3072,7 @@ static void test_complex_struct_type(void)
     ok( hr == WS_E_INVALID_FORMAT, "got %08x\n", hr );
 
     /* element type mapping */
-    prepare_struct_type_test( reader, data11 );
+    prepare_struct_type_test( reader, data );
 
     hr = WsReadToStartElement( reader, NULL, NULL, NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
@@ -3136,7 +3096,7 @@ static void test_complex_struct_type(void)
     ok( node->nodeType == WS_XML_NODE_TYPE_EOF, "got %u\n", node->nodeType );
 
     /* trailing content */
-    prepare_struct_type_test( reader, data11b );
+    prepare_struct_type_test( reader, data2 );
     hr = WsReadToStartElement( reader, NULL, NULL, NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
@@ -3149,7 +3109,7 @@ static void test_complex_struct_type(void)
     ok( hr == S_OK, "got %08x\n", hr );
     ok( node->nodeType == WS_XML_NODE_TYPE_EOF, "got %u\n", node->nodeType );
 
-    prepare_struct_type_test( reader, data11b );
+    prepare_struct_type_test( reader, data2 );
     hr = WsReadToStartElement( reader, NULL, NULL, NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
@@ -3165,6 +3125,38 @@ static void test_complex_struct_type(void)
 
 static void test_repeating_element(void)
 {
+    static const char data[] =
+        "<services>"
+        "<service><id>1</id></service>"
+        "<service><id>2</id></service>"
+        "</services>";
+    static const char data2[] =
+        "<services></services>";
+    static const char data3[] =
+        "<services>"
+        "<wrapper>"
+        "<service><id>1</id></service>"
+        "<service><id>2</id></service>"
+        "</wrapper>"
+        "</services>";
+    static const char data4[] =
+        "<services>"
+        "<wrapper>"
+        "<service>1</service>"
+        "<service>2</service>"
+        "</wrapper>"
+        "</services>";
+    static const char data5[] =
+        "<services>"
+        "<wrapper>"
+        "<service name='1'>1</service>"
+        "<service name='2'>2</service>"
+        "</wrapper>"
+        "</services>";
+    static const char data6[] =
+        "<services>"
+        "<service><name></name></service>"
+        "</services>";
     static const WCHAR oneW[] = {'1',0}, twoW[] = {'2',0};
     WS_XML_STRING str_name = {4, (BYTE *)"name"};
     WS_XML_STRING str_services = {8, (BYTE *)"services"};
@@ -3214,7 +3206,7 @@ static void test_repeating_element(void)
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    prepare_struct_type_test( reader, data12 );
+    prepare_struct_type_test( reader, data );
 
     memset( &f2, 0, sizeof(f2) );
     f2.mapping   = WS_ELEMENT_FIELD_MAPPING;
@@ -3257,7 +3249,7 @@ static void test_repeating_element(void)
     ok( test->service[1].id == 2, "got %u\n", test->service[1].id );
 
     /* array of pointers */
-    prepare_struct_type_test( reader, data12 );
+    prepare_struct_type_test( reader, data );
     f.options = WS_FIELD_POINTER;
     test4 = NULL;
     hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
@@ -3272,7 +3264,7 @@ static void test_repeating_element(void)
     }
 
     /* item range */
-    prepare_struct_type_test( reader, data13 );
+    prepare_struct_type_test( reader, data2 );
     f.options = 0;
     range.minItemCount = 0;
     range.maxItemCount = 1;
@@ -3286,7 +3278,7 @@ static void test_repeating_element(void)
     ok( !test->service_count, "got %u\n", test->service_count );
 
     /* wrapper element */
-    prepare_struct_type_test( reader, data14 );
+    prepare_struct_type_test( reader, data3 );
     f.itemRange = NULL;
     f.localName = &str_wrapper;
     f.ns        = &str_ns;
@@ -3301,7 +3293,7 @@ static void test_repeating_element(void)
     ok( test->service[1].id == 2, "got %u\n", test->service[1].id );
 
     /* repeating text field mapping */
-    prepare_struct_type_test( reader, data15 );
+    prepare_struct_type_test( reader, data4 );
     f2.mapping   = WS_TEXT_FIELD_MAPPING;
     f2.localName = NULL;
     f2.ns        = NULL;
@@ -3319,7 +3311,7 @@ static void test_repeating_element(void)
     ok( !lstrcmpW( test2->service[1].id, twoW ), "wrong data\n" );
 
     /* repeating attribute field + text field mapping */
-    prepare_struct_type_test( reader, data16 );
+    prepare_struct_type_test( reader, data5 );
     f2.offset    = FIELD_OFFSET(struct service3, id);
     memset( &f3, 0, sizeof(f3) );
     f3.mapping   = WS_ATTRIBUTE_FIELD_MAPPING;
@@ -3344,7 +3336,7 @@ static void test_repeating_element(void)
     ok( !lstrcmpW( test3->service[1].id, twoW ), "wrong data\n" );
 
     /* empty text, item range */
-    prepare_struct_type_test( reader, data17 );
+    prepare_struct_type_test( reader, data6 );
 
     memset( &f2, 0, sizeof(f2) );
     f2.mapping   = WS_ELEMENT_FIELD_MAPPING;
@@ -3534,7 +3526,7 @@ static void test_datetime(void)
 
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         memset( &date, 0, sizeof(date) );
         prepare_type_test( reader, tests[i].str, strlen(tests[i].str) );
@@ -3586,7 +3578,7 @@ static void test_WsDateTimeToFileTime(void)
     hr = WsDateTimeToFileTime( NULL, &ft, NULL );
     ok( hr == E_INVALIDARG, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         memset( &ft, 0, sizeof(ft) );
         hr = WsDateTimeToFileTime( &tests[i].dt, &ft, NULL );
@@ -3724,7 +3716,7 @@ static void test_double(void)
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         val = 0;
         prepare_type_test( reader, tests[i].str, strlen(tests[i].str) );
@@ -4072,7 +4064,7 @@ static void test_entities(void)
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         hr = set_input( reader, tests[i].str, strlen(tests[i].str) );
         ok( hr == S_OK, "%u: got %08x\n", i, hr );
@@ -4636,7 +4628,7 @@ static void test_WsReadQualifiedName(void)
     hr = WsReadQualifiedName( reader, heap, NULL, &localname, NULL, NULL );
     ok( hr == WS_E_INVALID_FORMAT, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         hr = set_input( reader, tests[i].str, strlen(tests[i].str) );
         ok( hr == S_OK, "%u: got %08x\n", i, hr );
@@ -5655,7 +5647,7 @@ static void test_dictionary(void)
 
     UuidCreate( &dict.guid );
     dict.strings     = strings;
-    dict.stringCount = sizeof(strings)/sizeof(strings[0]);
+    dict.stringCount = ARRAY_SIZE( strings );
     dict.isConst     = TRUE;
 
     /* short dictionary element */
@@ -6393,7 +6385,7 @@ static void test_float(void)
     hr = WsCreateReader( NULL, 0, &reader, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( tests ); i++)
     {
         val = 0;
         prepare_type_test( reader, tests[i].str, strlen(tests[i].str) );
@@ -6547,6 +6539,155 @@ static void test_repeating_element_choice(void)
     WsFreeHeap( heap );
 }
 
+static void test_empty_text_field(void)
+{
+    static WS_XML_STRING str_ns = {0, NULL}, str_t = {1, (BYTE *)"t"};
+    HRESULT hr;
+    WS_XML_READER *reader;
+    WS_HEAP *heap;
+    WS_FIELD_DESCRIPTION f, *fields[1];
+    WS_STRUCT_DESCRIPTION s;
+    struct test
+    {
+        WS_STRING str;
+    } *test;
+    struct test2
+    {
+        WCHAR *str;
+    } *test2;
+    struct test3
+    {
+        BOOL bool;
+    } *test3;
+    struct test4
+    {
+        WS_XML_STRING str;
+    } *test4;
+    struct test5
+    {
+        WS_BYTES bytes;
+    } *test5;
+
+    hr = WsCreateHeap( 1 << 16, 0, NULL, 0, &heap, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = WsCreateReader( NULL, 0, &reader, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    memset( &f, 0, sizeof(f) );
+    f.mapping   = WS_TEXT_FIELD_MAPPING;
+    f.type      = WS_STRING_TYPE;
+    f.offset    = FIELD_OFFSET(struct test, str);
+    fields[0] = &f;
+
+    memset( &s, 0, sizeof(s) );
+    s.size          = sizeof(struct test);
+    s.alignment     = TYPE_ALIGNMENT(struct test);
+    s.fields        = fields;
+    s.fieldCount    = 1;
+    s.typeLocalName = &str_t;
+    s.typeNs        = &str_ns;
+
+    test = NULL;
+    prepare_struct_type_test( reader, "<t></t>" );
+    hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
+                     WS_READ_REQUIRED_POINTER, heap, &test, sizeof(test), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( test != NULL, "test not set\n" );
+    ok( !test->str.length, "got %u\n", test->str.length );
+    todo_wine ok( test->str.chars != NULL, "chars not set\n" );
+
+    memset( &f, 0, sizeof(f) );
+    f.mapping   = WS_TEXT_FIELD_MAPPING;
+    f.type      = WS_WSZ_TYPE;
+    f.offset    = FIELD_OFFSET(struct test2, str);
+    fields[0] = &f;
+
+    memset( &s, 0, sizeof(s) );
+    s.size          = sizeof(struct test2);
+    s.alignment     = TYPE_ALIGNMENT(struct test2);
+    s.fields        = fields;
+    s.fieldCount    = 1;
+    s.typeLocalName = &str_t;
+    s.typeNs        = &str_ns;
+
+    test2 = NULL;
+    prepare_struct_type_test( reader, "<t></t>" );
+    hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
+                     WS_READ_REQUIRED_POINTER, heap, &test2, sizeof(test2), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( test2 != NULL, "test2 not set\n" );
+    ok( test2->str != NULL, "str not set\n" );
+    ok( !test2->str[0], "not empty\n" );
+
+    memset( &f, 0, sizeof(f) );
+    f.mapping   = WS_TEXT_FIELD_MAPPING;
+    f.type      = WS_BOOL_TYPE;
+    f.offset    = FIELD_OFFSET(struct test3, bool);
+    fields[0] = &f;
+
+    memset( &s, 0, sizeof(s) );
+    s.size          = sizeof(struct test3);
+    s.alignment     = TYPE_ALIGNMENT(struct test3);
+    s.fields        = fields;
+    s.fieldCount    = 1;
+    s.typeLocalName = &str_t;
+    s.typeNs        = &str_ns;
+
+    prepare_struct_type_test( reader, "<t></t>" );
+    hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
+                     WS_READ_REQUIRED_POINTER, heap, &test3, sizeof(test3), NULL );
+    ok( hr == WS_E_INVALID_FORMAT, "got %08x\n", hr );
+
+    memset( &f, 0, sizeof(f) );
+    f.mapping   = WS_TEXT_FIELD_MAPPING;
+    f.type      = WS_XML_STRING_TYPE;
+    f.offset    = FIELD_OFFSET(struct test4, str);
+    fields[0] = &f;
+
+    memset( &s, 0, sizeof(s) );
+    s.size          = sizeof(struct test4);
+    s.alignment     = TYPE_ALIGNMENT(struct test4);
+    s.fields        = fields;
+    s.fieldCount    = 1;
+    s.typeLocalName = &str_t;
+    s.typeNs        = &str_ns;
+
+    test4 = NULL;
+    prepare_struct_type_test( reader, "<t></t>" );
+    hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
+                     WS_READ_REQUIRED_POINTER, heap, &test4, sizeof(test4), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( test4 != NULL, "test4 not set\n" );
+    ok( !test4->str.length, "got %u\n", test4->str.length );
+    todo_wine ok( test4->str.bytes != NULL, "bytes not set\n" );
+
+    memset( &f, 0, sizeof(f) );
+    f.mapping   = WS_TEXT_FIELD_MAPPING;
+    f.type      = WS_BYTES_TYPE;
+    f.offset    = FIELD_OFFSET(struct test5, bytes);
+    fields[0] = &f;
+
+    memset( &s, 0, sizeof(s) );
+    s.size          = sizeof(struct test5);
+    s.alignment     = TYPE_ALIGNMENT(struct test5);
+    s.fields        = fields;
+    s.fieldCount    = 1;
+    s.typeLocalName = &str_t;
+    s.typeNs        = &str_ns;
+
+    test5 = NULL;
+    prepare_struct_type_test( reader, "<t></t>" );
+    hr = WsReadType( reader, WS_ELEMENT_TYPE_MAPPING, WS_STRUCT_TYPE, &s,
+                     WS_READ_REQUIRED_POINTER, heap, &test5, sizeof(test5), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( test5 != NULL, "test5 not set\n" );
+    ok( !test5->bytes.length, "got %u\n", test5->bytes.length );
+    todo_wine ok( test5->bytes.bytes != NULL, "bytes not set\n" );
+
+    WsFreeReader( reader );
+    WsFreeHeap( heap );
+}
 
 START_TEST(reader)
 {
@@ -6596,4 +6737,5 @@ START_TEST(reader)
     test_union_type();
     test_float();
     test_repeating_element_choice();
+    test_empty_text_field();
 }

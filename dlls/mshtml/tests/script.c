@@ -3378,9 +3378,9 @@ static void run_js_script(const char *test_name)
     trace("running %s...\n", test_name);
 
     ptr = url + lstrlenW(url);
-    ptr += GetModuleFileNameW(NULL, ptr, url + sizeof(url)/sizeof(WCHAR) - ptr);
+    ptr += GetModuleFileNameW(NULL, ptr, url + ARRAY_SIZE(url) - ptr);
     *ptr++ = '/';
-    MultiByteToWideChar(CP_ACP, 0, test_name, -1, ptr, url + sizeof(url)/sizeof(WCHAR) - ptr);
+    MultiByteToWideChar(CP_ACP, 0, test_name, -1, ptr, url + ARRAY_SIZE(url) - ptr);
 
     hres = CreateURLMoniker(NULL, url, &mon);
     ok(hres == S_OK, "CreateURLMoniker failed: %08x\n", hres);
@@ -3425,7 +3425,7 @@ static void run_script_as_http_with_mode(const char *script, const char *opt, co
             "  </body>\n"
             "</html>\n",
             document_mode ? "<!DOCTYPE html>\n" : "",
-            document_mode ? "<meta http-equiv=\"x-ua-compatible\" content=\"IE=" : "",
+            document_mode ? "<meta http-equiv=\"x-ua-compatible\" content=\"Ie=" : "",
             document_mode ? document_mode : "",
             document_mode ? "\">" : "",
             script);

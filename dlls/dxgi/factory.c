@@ -246,108 +246,79 @@ static BOOL STDMETHODCALLTYPE dxgi_factory_IsWindowedStereoEnabled(IWineDXGIFact
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForHwnd(IWineDXGIFactory *iface,
-        IUnknown *device, HWND window, const DXGI_SWAP_CHAIN_DESC1 *swapchain_desc,
+        IUnknown *device, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
         const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc,
         IDXGIOutput *output, IDXGISwapChain1 **swapchain)
 {
-    struct wined3d_swapchain *wined3d_swapchain;
-    struct wined3d_swapchain_desc wined3d_desc;
+    ID3D12CommandQueue *command_queue;
     unsigned int min_buffer_count;
     IWineDXGIDevice *dxgi_device;
     HRESULT hr;
 
-    TRACE("iface %p, device %p, window %p, swapchain_desc %p, fullscreen_desc %p, "
-            "output %p, swapchain %p.\n",
-            iface, device, window, swapchain_desc, fullscreen_desc, output, swapchain);
+    TRACE("iface %p, device %p, window %p, desc %p, fullscreen_desc %p, output %p, swapchain %p.\n",
+            iface, device, window, desc, fullscreen_desc, output, swapchain);
 
-    if (!device || !window || !swapchain_desc || !swapchain)
+    if (!device || !window || !desc || !swapchain)
     {
         WARN("Invalid pointer.\n");
         return DXGI_ERROR_INVALID_CALL;
     }
 
-    if (swapchain_desc->Stereo)
+    if (desc->Stereo)
     {
         FIXME("Stereo swapchains are not supported.\n");
         return DXGI_ERROR_UNSUPPORTED;
     }
 
-    switch (swapchain_desc->SwapEffect)
+    switch (desc->SwapEffect)
     {
         case DXGI_SWAP_EFFECT_DISCARD:
-            wined3d_desc.swap_effect = WINED3D_SWAP_EFFECT_DISCARD;
-            min_buffer_count = 1;
-            break;
-
         case DXGI_SWAP_EFFECT_SEQUENTIAL:
-            wined3d_desc.swap_effect = WINED3D_SWAP_EFFECT_SEQUENTIAL;
             min_buffer_count = 1;
             break;
 
         case DXGI_SWAP_EFFECT_FLIP_DISCARD:
-            wined3d_desc.swap_effect = WINED3D_SWAP_EFFECT_FLIP_DISCARD;
-            min_buffer_count = 2;
-            break;
-
         case DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL:
-            wined3d_desc.swap_effect = WINED3D_SWAP_EFFECT_FLIP_SEQUENTIAL;
             min_buffer_count = 2;
+
+            if (desc->SampleDesc.Count != 1 || desc->SampleDesc.Quality)
+            {
+                WARN("Invalid sample desc %u, %u for swap effect %#x.\n",
+                        desc->SampleDesc.Count, desc->SampleDesc.Quality, desc->SwapEffect);
+                return DXGI_ERROR_INVALID_CALL;
+            }
             break;
 
         default:
-            WARN("Invalid swap effect %u used.\n", swapchain_desc->SwapEffect);
+            WARN("Invalid swap effect %u used.\n", desc->SwapEffect);
             return DXGI_ERROR_INVALID_CALL;
     }
 
-    if (swapchain_desc->BufferCount < min_buffer_count || swapchain_desc->BufferCount > 16)
+    if (desc->BufferCount < min_buffer_count || desc->BufferCount > DXGI_MAX_SWAP_CHAIN_BUFFERS)
     {
-        WARN("BufferCount is %u.\n", swapchain_desc->BufferCount);
+        WARN("BufferCount is %u.\n", desc->BufferCount);
         return DXGI_ERROR_INVALID_CALL;
     }
 
-    if (FAILED(hr = IUnknown_QueryInterface(device, &IID_IWineDXGIDevice, (void **)&dxgi_device)))
+    if (output)
+        FIXME("Ignoring output %p.\n", output);
+
+    if (SUCCEEDED(IUnknown_QueryInterface(device, &IID_IWineDXGIDevice, (void **)&dxgi_device)))
     {
-        ERR("This is not the device we're looking for\n");
+        hr = d3d11_swapchain_create(dxgi_device, window, desc, fullscreen_desc, swapchain);
+        IWineDXGIDevice_Release(dxgi_device);
         return hr;
     }
 
-    if (swapchain_desc->Scaling != DXGI_SCALING_STRETCH)
-        FIXME("Ignoring scaling %#x.\n", swapchain_desc->Scaling);
-    if (swapchain_desc->AlphaMode != DXGI_ALPHA_MODE_IGNORE)
-        FIXME("Ignoring alpha mode %#x.\n", swapchain_desc->AlphaMode);
-    if (fullscreen_desc && fullscreen_desc->ScanlineOrdering)
-        FIXME("Unhandled scanline ordering %#x.\n", fullscreen_desc->ScanlineOrdering);
-    if (fullscreen_desc && fullscreen_desc->Scaling)
-        FIXME("Unhandled mode scaling %#x.\n", fullscreen_desc->Scaling);
-
-    wined3d_desc.backbuffer_width = swapchain_desc->Width;
-    wined3d_desc.backbuffer_height = swapchain_desc->Height;
-    wined3d_desc.backbuffer_format = wined3dformat_from_dxgi_format(swapchain_desc->Format);
-    wined3d_desc.backbuffer_count = swapchain_desc->BufferCount;
-    wined3d_desc.backbuffer_usage = wined3d_usage_from_dxgi_usage(swapchain_desc->BufferUsage);
-    wined3d_sample_desc_from_dxgi(&wined3d_desc.multisample_type,
-            &wined3d_desc.multisample_quality, &swapchain_desc->SampleDesc);
-    wined3d_desc.device_window = window;
-    wined3d_desc.windowed = fullscreen_desc ? fullscreen_desc->Windowed : TRUE;
-    wined3d_desc.enable_auto_depth_stencil = FALSE;
-    wined3d_desc.auto_depth_stencil_format = 0;
-    wined3d_desc.flags = wined3d_swapchain_flags_from_dxgi(swapchain_desc->Flags);
-    wined3d_desc.refresh_rate = fullscreen_desc ? dxgi_rational_to_uint(&fullscreen_desc->RefreshRate) : 0;
-    wined3d_desc.auto_restore_display_mode = TRUE;
-
-    hr = IWineDXGIDevice_create_swapchain(dxgi_device, &wined3d_desc, FALSE, &wined3d_swapchain);
-    IWineDXGIDevice_Release(dxgi_device);
-    if (FAILED(hr))
+    if (SUCCEEDED(IUnknown_QueryInterface(device, &IID_ID3D12CommandQueue, (void **)&command_queue)))
     {
-        WARN("Failed to create swapchain, hr %#x.\n", hr);
+        hr = d3d12_swapchain_create(iface, command_queue, window, desc, fullscreen_desc, swapchain);
+        ID3D12CommandQueue_Release(command_queue);
         return hr;
     }
 
-    wined3d_mutex_lock();
-    *swapchain = wined3d_swapchain_get_parent(wined3d_swapchain);
-    wined3d_mutex_unlock();
-
-    return S_OK;
+    ERR("This is not the device we're looking for.\n");
+    return DXGI_ERROR_UNSUPPORTED;
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForCoreWindow(IWineDXGIFactory *iface,

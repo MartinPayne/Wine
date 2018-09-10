@@ -564,6 +564,7 @@
 # @ stub RtlDosApplyFileIsolationRedirection_Ustr
 @ stdcall RtlDosPathNameToNtPathName_U(wstr ptr ptr ptr)
 @ stdcall RtlDosPathNameToNtPathName_U_WithStatus(wstr ptr ptr ptr)
+@ stdcall RtlDosPathNameToRelativeNtPathName_U_WithStatus(wstr ptr ptr ptr)
 @ stdcall RtlDosSearchPath_U(wstr wstr wstr long ptr ptr)
 # @ stub RtlDosSearchPath_Ustr
 @ stdcall RtlDowncaseUnicodeChar(long)
@@ -844,6 +845,7 @@
 @ stdcall RtlReleaseActivationContext(ptr)
 @ stub RtlReleaseMemoryStream
 @ stdcall RtlReleasePebLock()
+@ stdcall RtlReleaseRelativeName(ptr)
 @ stdcall RtlReleaseResource(ptr)
 @ stdcall RtlReleaseSRWLockExclusive(ptr)
 @ stdcall RtlReleaseSRWLockShared(ptr)

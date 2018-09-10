@@ -20,8 +20,10 @@
 
 import argparse
 import logging
+import os
 import re
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -62,6 +64,8 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
+VK_XML_VERSION = "1.1.76"
+
 # Filenames to create.
 WINE_VULKAN_H = "../../include/wine/vulkan.h"
 WINE_VULKAN_DRIVER_H = "../../include/wine/vulkan_driver.h"
@@ -89,15 +93,18 @@ SUPPORTED_INSTANCE_EXTENSIONS = [
 
 BLACKLISTED_EXTENSIONS = [
     # Handling of VK_EXT_debug_report requires some consideration. The win32
-    # loader already provides it for us and it is somewhat usable. . If we add
+    # loader already provides it for us and it is somewhat usable. If we add
     # plumbing down to the native layer, we will get each message twice as we
     # use 2 loaders (win32+native), but we may get output from the driver.
     # In any case callback conversion is required.
     "VK_EXT_debug_report",
     "VK_EXT_display_control", # Requires VK_EXT_display_surface_counter
+    "VK_EXT_external_memory_dma_buf", # Linux specific
     "VK_EXT_hdr_metadata", # Needs WSI work.
     "VK_GOOGLE_display_timing",
+    "VK_KHR_device_group", # Needs some thought, but part of Vulkan 1.1 Core.
     "VK_KHR_display", # Needs WSI work.
+    "VK_KHR_external_fence",
     "VK_KHR_external_fence_fd",
     "VK_KHR_external_fence_win32",
     "VK_KHR_external_memory",
@@ -105,7 +112,8 @@ BLACKLISTED_EXTENSIONS = [
     # Relates to external_semaphore and needs type conversions in bitflags.
     "VK_KHR_external_semaphore_capabilities",
     "VK_KHR_shared_presentable_image", # Needs WSI work.
-    "VK_NV_external_memory_win32"
+    "VK_KHR_win32_keyed_mutex",
+    "VK_NV_external_memory_win32",
 ]
 
 # The Vulkan loader provides entry-points for core functionality and important
@@ -115,7 +123,7 @@ CORE_EXTENSIONS = [
     "VK_KHR_display_swapchain",
     "VK_KHR_surface",
     "VK_KHR_swapchain",
-    "VK_KHR_win32_surface"
+    "VK_KHR_win32_surface",
 ]
 
 # Functions part of our winevulkan graphics driver interface.
@@ -180,7 +188,7 @@ class Direction(Enum):
 
 
 class VkBaseType(object):
-    def __init__(self, name, _type, requires=None):
+    def __init__(self, name, _type, alias=False, requires=None):
         """ Vulkan base type class.
 
         VkBaseType is mostly used by Vulkan to define its own
@@ -189,17 +197,23 @@ class VkBaseType(object):
         Args:
             name (:obj:'str'): Name of the base type.
             _type (:obj:'str'): Underlaying type
+            alias (bool): type is an alias or not.
             requires (:obj:'str', optional): Other types required.
                 Often bitmask values pull in a *FlagBits type.
         """
         self.name = name
         self.type = _type
+        self.alias = alias
         self.requires = requires
         self.required = False
 
     def definition(self):
-        text = "typedef {0} {1};\n".format(self.type, self.name)
-        return text
+        # Definition is similar for alias or non-alias as type
+        # is already set to alias.
+        return "typedef {0} {1};\n".format(self.type, self.name)
+
+    def is_alias(self):
+        return self.alias
 
 
 class VkConstant(object):
@@ -240,10 +254,13 @@ class VkDefine(object):
         # <type category="define"><name>some_name</name>some_value</type>
         name = name_elem.text
 
-        # VK_API_VERSION is a deprecated constant and we don't really want to parse it or generate
-        # code for it. However the vk.xml feature section still references it.
-        if name == "VK_API_VERSION":
-            return VkDefine(name, "")
+        # Perform minimal parsing for Vulkan constants, which we don't need, but are referenced
+        # elsewhere in vk.xml.
+        # - VK_API_VERSION is a messy, deprecated constant and we don't want generate code for it.
+        # - AHardwareBuffer/ANativeWindow are forard declarations for Android types, which leaked
+        #   into the define region.
+        if name in ["VK_API_VERSION", "AHardwareBuffer", "ANativeWindow"]:
+            return VkDefine(name, None)
 
         # The body of the define is basically unstructured C code. It is not meant for easy parsing.
         # Some lines contain deprecated values or comments, which we try to filter out.
@@ -257,7 +274,11 @@ class VkDefine(object):
         for child in define:
             value += child.text
             if child.tail is not None:
-                value += child.tail
+                # Split comments for VK_API_VERSION_1_0 / VK_API_VERSION_1_1
+                if "//" in child.tail:
+                    value += child.tail.split("//")[0]
+                else:
+                    value += child.tail
 
         return VkDefine(name, value.rstrip(' '))
 
@@ -270,10 +291,16 @@ class VkDefine(object):
 
 
 class VkEnum(object):
-    def __init__(self, name, values):
+    def __init__(self, name, values, alias=False):
         self.name = name
         self.values = values
         self.required = False
+        self.alias = alias
+
+    @staticmethod
+    def from_alias(enum, alias):
+        name = enum.attrib.get("name")
+        return VkEnum(name, alias.values)
 
     @staticmethod
     def from_xml(enum):
@@ -305,6 +332,14 @@ class VkEnum(object):
 
     def add(self, value):
         """ Add a value to enum. """
+
+        # Extensions can add new enum values. When an extension is promoted to Core
+        # the registry defines the value twice once for old extension and once for
+        # new Core features. Ignore the duplicate entry.
+        for v in self.values:
+            if v.value == value.value:
+                LOGGER.debug("Adding duplicate enum value {0} to {1}".format(v, self.name))
+                return
         self.values.append(value)
 
     def definition(self):
@@ -316,6 +351,9 @@ class VkEnum(object):
             text += "    {0},\n".format(value.definition())
         text += "}} {0};\n\n".format(self.name)
         return text
+
+    def is_alias(self):
+        return self.alias
 
 
 class VkEnumValue(object):
@@ -339,11 +377,12 @@ class VkEnumValue(object):
 
 
 class VkFunction(object):
-    def __init__(self, _type=None, name=None, params=[], extension=None):
-        self.extension = extension
+    def __init__(self, _type=None, name=None, params=[], extensions=[], alias=False):
+        self.extensions = []
         self.name = name
         self.type = _type
         self.params = params
+        self.alias = alias
 
         # For some functions we need some extra metadata from FUNCTION_OVERRIDES.
         func_info = FUNCTION_OVERRIDES.get(self.name, None)
@@ -356,9 +395,25 @@ class VkFunction(object):
         self.required = False
 
     @staticmethod
+    def from_alias(command, alias):
+        """ Create VkFunction from an alias command.
+
+        Args:
+            command: xml data for command
+            alias (VkFunction): function to use as a base for types / parameters.
+
+        Returns:
+            VkFunction
+        """
+        func_name = command.attrib.get("name")
+        func_type = alias.type
+        params = alias.params
+
+        return VkFunction(_type=func_type, name=func_name, params=params, alias=True)
+
+    @staticmethod
     def from_xml(command, types):
         proto = command.find("proto")
-
         func_name = proto.find("name").text
         func_type = proto.find("type").text
 
@@ -384,19 +439,19 @@ class VkFunction(object):
 
         return conversions
 
+    def is_alias(self):
+        return self.alias
+
     def is_core_func(self):
         """ Returns whether the function is a Vulkan core function.
         Core functions are APIs defined by the Vulkan spec to be part of the
         Core API as well as several KHR WSI extensions.
         """
 
-        if self.extension is None:
+        if not self.extensions:
             return True
 
-        if self.extension in CORE_EXTENSIONS:
-            return True
-
-        return False
+        return any(ext in self.extensions for ext in CORE_EXTENSIONS)
 
     def is_device_func(self):
         # If none of the other, it must be a device function
@@ -670,7 +725,8 @@ class VkFunctionPointer(object):
             # <type>void</type>*       pUserData,
             # Parsing of the tail (anything past </type>) is tricky since there
             # can be other data on the next line like: const <type>int</type>..
-            const = begin
+
+            const = True if begin and "const" in begin else False
             _type = t.text
             lines = t.tail.split(",\n")
             if lines[0][0] == "*":
@@ -715,11 +771,17 @@ class VkFunctionPointer(object):
 
 
 class VkHandle(object):
-    def __init__(self, name, _type, parent):
+    def __init__(self, name, _type, parent, alias=None):
         self.name = name
         self.type = _type
         self.parent = parent
+        self.alias = alias
         self.required = False
+
+    @staticmethod
+    def from_alias(handle, alias):
+        name = handle.attrib.get("name")
+        return VkHandle(name, alias.type, alias.parent, alias=alias)
 
     @staticmethod
     def from_xml(handle):
@@ -747,13 +809,24 @@ class VkHandle(object):
 
     def definition(self):
         """ Generates handle definition e.g. VK_DEFINE_HANDLE(vkInstance) """
+
+        # Legacy types are typedef'ed to the new type if they are aliases.
+        if self.is_alias():
+            return "typedef {0} {1};\n".format(self.alias.name, self.name)
+
         return "{0}({1})\n".format(self.type, self.name)
+
+    def is_alias(self):
+        return self.alias is not None
 
     def is_dispatchable(self):
         """ Some handles like VkInstance, VkDevice are dispatchable objects,
         which means they contain a dispatch table of function pointers.
         """
         return self.type == "VK_DEFINE_HANDLE"
+
+    def is_required(self):
+        return self.required
 
     def native_handle(self):
         """ Provide access to the native handle of a dispatchable object.
@@ -779,9 +852,10 @@ class VkHandle(object):
 
 
 class VkMember(object):
-    def __init__(self, const=None, _type=None, pointer=None, name=None, array_len=None, dyn_array_len=None, optional=False,
-            extension_structs=None):
+    def __init__(self, const=False, struct_fwd_decl=False,_type=None, pointer=None, name=None, array_len=None,
+            dyn_array_len=None, optional=False, extension_structs=None):
         self.const = const
+        self.struct_fwd_decl = struct_fwd_decl
         self.name = name
         self.pointer = pointer
         self.type = _type
@@ -804,8 +878,8 @@ class VkMember(object):
         return False
 
     def __repr__(self):
-        return "{0} {1} {2} {3} {4} {5}".format(self.const, self.type, self.pointer, self.name, self.array_len,
-                self.dyn_array_len)
+        return "{0} {1} {2} {3} {4} {5} {6}".format(self.const, self.struct_fwd_decl, self.type, self.pointer,
+                self.name, self.array_len, self.dyn_array_len)
 
     @staticmethod
     def from_xml(member):
@@ -814,10 +888,21 @@ class VkMember(object):
         name_elem = member.find("name")
         type_elem = member.find("type")
 
-        const = member.text.strip() if member.text else None
+        const = False
+        struct_fwd_decl = False
         member_type = None
         pointer = None
         array_len = None
+
+        if member.text:
+            if "const" in member.text:
+                const = True
+
+            # Some members contain forward declarations:
+            # - VkBaseInstructure has a member "const struct VkBaseInStructure *pNext"
+            # - VkWaylandSurfaceCreateInfoKHR has a member "struct wl_display *display"
+            if "struct" in member.text:
+                struct_fwd_decl = True
 
         if type_elem is not None:
             member_type = type_elem.text
@@ -854,8 +939,8 @@ class VkMember(object):
                 # Remove brackets around length
                 array_len = name_elem.tail.strip("[]")
 
-        return VkMember(const=const, _type=member_type, pointer=pointer, name=name_elem.text, array_len=array_len,
-                dyn_array_len=dyn_array_len, optional=optional, extension_structs=extension_structs)
+        return VkMember(const=const, struct_fwd_decl=struct_fwd_decl, _type=member_type, pointer=pointer, name=name_elem.text,
+                array_len=array_len, dyn_array_len=dyn_array_len, optional=optional, extension_structs=extension_structs)
 
     def copy(self, input, output, direction):
         """ Helper method for use by conversion logic to generate a C-code statement to copy this member. """
@@ -898,6 +983,9 @@ class VkMember(object):
         text = ""
         if self.is_const():
             text += "const "
+
+        if self.is_struct_forward_declaration():
+            text += "struct "
 
         if conv and self.is_struct():
             text += "{0}_host".format(self.type)
@@ -948,7 +1036,7 @@ class VkMember(object):
         return conversions
 
     def is_const(self):
-        return self.const is not None
+        return self.const
 
     def is_dynamic_array(self):
         """ Returns if the member is an array element.
@@ -972,6 +1060,9 @@ class VkMember(object):
 
     def is_struct(self):
         return self.type_info["category"] == "struct"
+
+    def is_struct_forward_declaration(self):
+        return self.struct_fwd_decl
 
     def is_union(self):
         return self.type_info["category"] == "union"
@@ -1312,11 +1403,11 @@ class VkParam(object):
         if not self.is_struct():
             return False
 
-        # VkSparseImageMemoryRequirements is used by vkGetImageSparseMemoryRequirements.
+        # VkSparseImageMemoryRequirements(2) is used by vkGetImageSparseMemoryRequirements(2).
         # This function is tricky to wrap, because how to wrap depends on whether
-        # pSparseMemoryRequirements is NULL or not. Luckily for VkSparseImageMemoryRequirements
+        # pSparseMemoryRequirements is NULL or not. Luckily for VkSparseImageMemoryRequirements(2)
         # the alignment works out in such a way that no conversion is needed between win32 and Linux.
-        if self.type == "VkSparseImageMemoryRequirements":
+        if self.type in ["VkSparseImageMemoryRequirements", "VkSparseImageMemoryRequirements2"]:
             return False
 
         # If a structure needs alignment changes, it means we need to
@@ -1386,11 +1477,12 @@ class VkParam(object):
 class VkStruct(Sequence):
     """ Class which represents the type union and struct. """
 
-    def __init__(self, name, members, returnedonly, union=False):
+    def __init__(self, name, members, returnedonly, alias=False, union=False):
         self.name = name
         self.members = members
         self.returnedonly = returnedonly
         self.required = False
+        self.alias = alias
         self.union = union
         self.type_info = None # To be set later.
 
@@ -1399,6 +1491,11 @@ class VkStruct(Sequence):
 
     def __len__(self):
         return len(self.members)
+
+    @staticmethod
+    def from_alias(struct, alias):
+        name = struct.attrib.get("name")
+        return VkStruct(name, alias.members, alias.returnedonly, alias=True)
 
     @staticmethod
     def from_xml(struct):
@@ -1442,6 +1539,10 @@ class VkStruct(Sequence):
                 for m in struct:
                     if not (m.is_struct() or m.is_union()):
                         continue
+
+                    # VkBaseInstructure and VkBaseOutStructure reference themselves.
+                    if m.type == struct.name:
+                        break
 
                     found = False
                     # Check if a struct we depend on has already been defined.
@@ -1499,6 +1600,9 @@ class VkStruct(Sequence):
         else:
             text += "}} {0};\n\n".format(self.name)
         return text
+
+    def is_alias(self):
+        return self.alias
 
     def needs_alignment(self):
         """ Check if structure needs alignment for 64-bit data.
@@ -1786,9 +1890,18 @@ class VkGenerator(object):
                 if not any(s.name == conv.struct.name for s in self.host_structs):
                     self.host_structs.append(conv.struct)
 
-    def generate_thunks_c(self, f, prefix):
-        f.write("/* Automatically generated from Vulkan vk.xml; DO NOT EDIT! */\n\n")
+    def _generate_copyright(self, f, spec_file=False):
+        f.write("# " if spec_file else "/* ")
+        f.write("Automatically generated from Vulkan vk.xml; DO NOT EDIT!\n")
+        lines = ["", "This file is generated from Vulkan vk.xml file covered",
+            "by the following copyright and permission notice:"]
+        lines.extend([l.rstrip(" ") for l in self.registry.copyright.splitlines()])
+        for line in lines:
+            f.write("{0}{1}".format("# " if spec_file else " * ", line).rstrip(" ") + "\n")
+        f.write("\n" if spec_file else " */\n\n")
 
+    def generate_thunks_c(self, f, prefix):
+        self._generate_copyright(f)
         f.write("#include \"config.h\"\n")
         f.write("#include \"wine/port.h\"\n\n")
 
@@ -1904,7 +2017,7 @@ class VkGenerator(object):
         f.write("}\n")
 
     def generate_thunks_h(self, f, prefix):
-        f.write("/* Automatically generated from Vulkan vk.xml; DO NOT EDIT! */\n\n")
+        self._generate_copyright(f)
 
         f.write("#ifndef __WINE_VULKAN_THUNKS_H\n")
         f.write("#define __WINE_VULKAN_THUNKS_H\n\n")
@@ -2002,12 +2115,18 @@ class VkGenerator(object):
         f.write("#endif /* __WINE_VULKAN_THUNKS_H */\n")
 
     def generate_vulkan_h(self, f):
-        f.write("/* Automatically generated from Vulkan vk.xml; DO NOT EDIT! */\n\n")
+        self._generate_copyright(f)
         f.write("#ifndef __WINE_VULKAN_H\n")
         f.write("#define __WINE_VULKAN_H\n\n")
 
         f.write("#include <windef.h>\n")
         f.write("#include <stdint.h>\n\n")
+
+        f.write("/* Define WINE_VK_HOST to get 'host' headers. */\n")
+        f.write("#ifdef WINE_VK_HOST\n")
+        f.write("#define VKAPI_CALL\n")
+        f.write('#define WINE_VK_ALIGN(x)\n')
+        f.write("#endif\n\n")
 
         f.write("#ifndef VKAPI_CALL\n")
         f.write("#define VKAPI_CALL __stdcall\n")
@@ -2017,7 +2136,6 @@ class VkGenerator(object):
         f.write("#define VKAPI_PTR VKAPI_CALL\n")
         f.write("#endif\n\n")
 
-        f.write("/* Callers can override WINE_VK_ALIGN if they want 'host' headers. */\n")
         f.write("#ifndef WINE_VK_ALIGN\n")
         f.write("#define WINE_VK_ALIGN DECLSPEC_ALIGN\n")
         f.write("#endif\n\n")
@@ -2035,7 +2153,10 @@ class VkGenerator(object):
             f.write(define.definition())
 
         for handle in self.registry.handles:
-            if handle.required:
+            # For backwards compatiblity also create definitions for aliases.
+            # These types normally don't get pulled in as we use the new types
+            # even in legacy functions if they are aliases.
+            if handle.is_required() or handle.is_alias():
                  f.write(handle.definition())
         f.write("\n")
 
@@ -2088,7 +2209,7 @@ class VkGenerator(object):
         f.write("#endif /* __WINE_VULKAN_H */\n")
 
     def generate_vulkan_driver_h(self, f):
-        f.write("/* Automatically generated from Vulkan vk.xml; DO NOT EDIT! */\n\n")
+        self._generate_copyright(f)
         f.write("#ifndef __WINE_VULKAN_DRIVER_H\n")
         f.write("#define __WINE_VULKAN_DRIVER_H\n\n")
 
@@ -2116,7 +2237,7 @@ class VkGenerator(object):
         f.write("#endif /* __WINE_VULKAN_DRIVER_H */\n")
 
     def generate_vulkan_spec(self, f):
-        f.write("# Automatically generated from Vulkan vk.xml; DO NOT EDIT!\n\n")
+        self._generate_copyright(f, spec_file=True)
         f.write("@ stdcall vk_icdGetInstanceProcAddr(ptr str) wine_vk_icdGetInstanceProcAddr\n")
         f.write("@ stdcall vk_icdNegotiateLoaderICDInterfaceVersion(ptr) wine_vk_icdNegotiateLoaderICDInterfaceVersion\n")
 
@@ -2137,7 +2258,7 @@ class VkGenerator(object):
                 f.write("@ stub {0}\n".format(func.name))
 
     def generate_vulkan_loader_spec(self, f):
-        f.write("# Automatically generated from Vulkan vk.xml; DO NOT EDIT!\n\n")
+        self._generate_copyright(f, spec_file=True)
 
         # Export symbols for all Vulkan Core functions.
         for func in self.registry.funcs.values():
@@ -2187,6 +2308,8 @@ class VkRegistry(object):
         # Pull in any required types and functions.
         self._parse_features(root)
         self._parse_extensions(root)
+
+        self.copyright = root.find('./comment').text
 
     def _mark_command_required(self, command):
         """ Helper function to mark a certain command and the datatypes it needs as required."""
@@ -2245,8 +2368,27 @@ class VkRegistry(object):
         """ Parse command section containing the Vulkan function calls. """
         funcs = {}
         commands = root.findall("./commands/")
+
+        # As of Vulkan 1.1, various extensions got promoted to Core.
+        # The old commands (e.g. KHR) are available for backwards compatibility
+        # and are marked in vk.xml as 'alias' to the non-extension type.
+        # The registry likes to avoid data duplication, so parameters and other
+        # metadata need to be looked up from the Core command.
+        # We parse the alias commands in a second pass.
+        alias_commands = []
         for command in commands:
+            alias_name = command.attrib.get("alias")
+            if alias_name:
+                alias_commands.append(command)
+                continue
+
             func = VkFunction.from_xml(command, self.types)
+            funcs[func.name] = func
+
+        for command in alias_commands:
+            alias_name = command.attrib.get("alias")
+            alias = funcs[alias_name]
+            func = VkFunction.from_alias(command, alias)
             funcs[func.name] = func
 
         # To make life easy for the code generation, separate all function
@@ -2283,9 +2425,14 @@ class VkRegistry(object):
                 enums[name] = VkEnum.from_xml(enum)
             else:
                 # If no type is set, we are dealing with API constants.
-                values = []
                 for value in enum.findall("enum"):
-                    self.consts.append(VkConstant(value.attrib.get("name"), value.attrib.get("value")))
+                    # If enum is an alias, set the value to the alias name.
+                    # E.g. VK_LUID_SIZE_KHR is an alias to VK_LUID_SIZE.
+                    alias = value.attrib.get("alias")
+                    if alias:
+                        self.consts.append(VkConstant(value.attrib.get("name"), alias))
+                    else:
+                        self.consts.append(VkConstant(value.attrib.get("name"), value.attrib.get("value")))
 
         self.enums = OrderedDict(sorted(enums.items()))
 
@@ -2301,7 +2448,7 @@ class VkRegistry(object):
             commands = ext.findall("require/command")
             for command in commands:
                 cmd_name = command.attrib["name"]
-                self.funcs[cmd_name].extension = ext_name
+                self.funcs[cmd_name].extensions.append(ext_name)
 
             # Some extensions are not ready or have numbers reserved as a place holder.
             if ext.attrib["supported"] == "disabled":
@@ -2335,52 +2482,67 @@ class VkRegistry(object):
 
             LOGGER.debug("Loading extension: {0}".format(ext_name))
 
-            # Extensions can add enum values to Core / extension enums, so add these.
-            enums = ext.findall("require/enum")
-            for enum_elem in enums:
-                if "bitpos" in enum_elem.keys():
-                    # We need to add an extra value to an existing enum type.
-                    # E.g. VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_CUBIC_BIT_IMG to VkFormatFeatureFlagBits.
-                    type_name = enum_elem.attrib["extends"]
-                    enum = self.types[type_name]["data"]
-                    enum.add(VkEnumValue(enum_elem.attrib["name"], 1 << int(enum_elem.attrib["bitpos"]), hex=True))
-                elif "offset" in enum_elem.keys():
-                    ext_number = int(ext.attrib["number"])
-                    offset = int(enum_elem.attrib["offset"])
-                    value = EXT_BASE + (ext_number - 1) * EXT_BLOCK_SIZE + offset
-
-                    # Deal with negative values.
-                    direction = enum_elem.attrib.get("dir")
-                    if direction is not None:
-                        value = -value
-
-                    type_name = enum_elem.attrib["extends"]
-                    enum = self.types[type_name]["data"]
-                    enum.add(VkEnumValue(enum_elem.attrib["name"], value))
-
-                elif "value" in enum_elem.keys():
-                    self.consts.append(VkConstant(enum_elem.attrib.get("name"), enum_elem.attrib.get("value")))
+            # Extensions can define one or more require sections each requiring
+            # different features (e.g. Vulkan 1.1). Parse each require section
+            # separately, so we can skip sections we don't want.
+            for require in ext.findall("require"):
+                feature = require.attrib.get("feature")
+                if feature == "VK_VERSION_1_1":
                     continue
-                else:
-                    # This seems to be used to pull in constants e.g. VK_MAX_DEVICE_GROUP_KHX
-                    continue
+
+                # Extensions can add enum values to Core / extension enums, so add these.
+                for enum_elem in require.findall("enum"):
+                    if "bitpos" in enum_elem.keys():
+                        # We need to add an extra value to an existing enum type.
+                        # E.g. VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_CUBIC_BIT_IMG to VkFormatFeatureFlagBits.
+                        type_name = enum_elem.attrib["extends"]
+                        enum = self.types[type_name]["data"]
+                        enum.add(VkEnumValue(enum_elem.attrib["name"], 1 << int(enum_elem.attrib["bitpos"]), hex=True))
+                    elif "offset" in enum_elem.keys():
+                        # Extensions promoted to Core, have the extension number as part
+                        # of the enum value. Else retrieve from the extension tag.
+                        if enum_elem.attrib.get("extnumber") is not None:
+                            ext_number = int(enum_elem.attrib.get("extnumber"))
+                        else:
+                            ext_number = int(ext.attrib["number"])
+                        offset = int(enum_elem.attrib["offset"])
+                        value = EXT_BASE + (ext_number - 1) * EXT_BLOCK_SIZE + offset
+
+                        # Deal with negative values.
+                        direction = enum_elem.attrib.get("dir")
+                        if direction is not None:
+                            value = -value
+
+                        type_name = enum_elem.attrib["extends"]
+                        enum = self.types[type_name]["data"]
+                        enum.add(VkEnumValue(enum_elem.attrib["name"], value))
+
+                    elif "value" in enum_elem.keys():
+                        self.consts.append(VkConstant(enum_elem.attrib.get("name"), enum_elem.attrib.get("value")))
+                        continue
+                    else:
+                        # This seems to be used to pull in constants e.g. VK_MAX_DEVICE_GROUP_KHX
+                        continue
+
+                # Pull in any commands we need. We infer types to pull in from the command
+                # as well.
+                for command in require.findall("command"):
+                    cmd_name = command.attrib["name"]
+                    self._mark_command_required(cmd_name)
 
             # Store a list with extensions.
             ext_info = {"name" : ext_name, "type" : ext_type}
             extensions.append(ext_info)
-
-            # Pull in any commands we need. We infer types to pull in from the command
-            # as well.
-            for command in commands:
-                cmd_name = command.attrib["name"]
-                self._mark_command_required(cmd_name)
 
         # Sort in alphabetical order.
         self.extensions = sorted(extensions, key=lambda ext: ext["name"])
 
     def _parse_features(self, root):
         """ Parse the feature section, which describes Core commands and types needed. """
-        requires = root.findall("./feature/require")
+
+        # For now limit to 1.0 features as various 1.1 features need more work.
+        # In particular interop extensions promoted to Core.
+        requires = root.findall("./feature/[@name='VK_VERSION_1_0']/require")
 
         for require in requires:
             LOGGER.info("Including features for {0}".format(require.attrib.get("comment")))
@@ -2388,8 +2550,10 @@ class VkRegistry(object):
                 # Only deal with command. Other values which appear are enum and type for pulling in some
                 # constants and macros. Tricky to parse, so don't bother right now, we will generate them
                 # anyway for now.
-                name = tag.attrib["name"]
-                if tag.tag == "command":
+                if tag.tag == "comment":
+                    continue
+                elif tag.tag == "command":
+                    name = tag.attrib["name"]
                     self._mark_command_required(name)
                 elif tag.tag == "enum":
                     # We could pull in relevant constants here. Unfortunately
@@ -2399,6 +2563,7 @@ class VkRegistry(object):
                     pass
                 elif tag.tag == "type":
                     # Pull in types which may not have been pulled in through commands.
+                    name = tag.attrib["name"]
 
                     # Skip pull in for vk_platform.h for now.
                     if name == "vk_platform":
@@ -2418,9 +2583,17 @@ class VkRegistry(object):
         handles = []
         structs = []
 
+        alias_types = []
         for t in types:
             type_info = {}
             type_info["category"] = t.attrib.get("category", None)
+
+            # We parse aliases in a second pass when we know more.
+            alias = t.attrib.get("alias")
+            if alias:
+                LOGGER.debug("Alias found: {0}".format(alias))
+                alias_types.append(t)
+                continue
 
             if type_info["category"] in ["include"]:
                 continue
@@ -2444,7 +2617,6 @@ class VkRegistry(object):
                 type_info["data"] = bitmask
 
             if type_info["category"] == "define":
-                name = t.attrib.get("name")
                 define = VkDefine.from_xml(t)
                 defines.append(define)
                 type_info["data"] = define
@@ -2493,6 +2665,37 @@ class VkRegistry(object):
             # names.
             self.types[type_info["name"]] = type_info
 
+        # Second pass for alias types, so we can retrieve all data from
+        # the aliased object.
+        for t in alias_types:
+            type_info = {}
+            type_info["category"] = t.attrib.get("category")
+            type_info["name"] = t.attrib.get("name")
+
+            alias = t.attrib.get("alias")
+
+            if type_info["category"] == "bitmask":
+                bitmask = VkBaseType(type_info["name"], alias, alias=True)
+                bitmasks.append(bitmask)
+                type_info["data"] = bitmask
+
+            if type_info["category"] == "enum":
+                enum = VkEnum.from_alias(t, self.types[alias]["data"])
+                type_info["data"] = enum
+                self.enums[enum.name] = enum
+
+            if type_info["category"] == "handle":
+                handle = VkHandle.from_alias(t, self.types[alias]["data"])
+                handles.append(handle)
+                type_info["data"] = handle
+
+            if type_info["category"] == "struct":
+                struct = VkStruct.from_alias(t, self.types[alias]["data"])
+                structs.append(struct)
+                type_info["data"] = struct
+
+            self.types[type_info["name"]] = type_info
+
         # We need detailed type information during code generation
         # on structs for alignment reasons. Unfortunately structs
         # are parsed among other types, so there is no guarantee
@@ -2506,10 +2709,15 @@ class VkRegistry(object):
         self.base_types = sorted(base_types, key=lambda base_type: base_type.name)
         self.bitmasks = sorted(bitmasks, key=lambda bitmask: bitmask.name)
         self.defines = defines
+        self.enums = OrderedDict(sorted(self.enums.items()))
         self.funcpointers = sorted(funcpointers, key=lambda fp: fp.name)
         self.handles = sorted(handles, key=lambda handle: handle.name)
         self.structs = sorted(structs, key=lambda struct: struct.name)
 
+def download_vk_xml(filename):
+    url = "https://raw.github.com/KhronosGroup/Vulkan-Docs/v{0}/xml/vk.xml".format(VK_XML_VERSION)
+    if not os.path.isfile(filename):
+        urllib.request.urlretrieve(url, filename)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -2523,7 +2731,9 @@ def main():
     else: # > 1
         LOGGER.setLevel(logging.DEBUG)
 
-    registry = VkRegistry("vk.xml")
+    vk_xml = "vk-{0}.xml".format(VK_XML_VERSION)
+    download_vk_xml(vk_xml)
+    registry = VkRegistry(vk_xml)
     generator = VkGenerator(registry)
 
     with open(WINE_VULKAN_H, "w") as f:

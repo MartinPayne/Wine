@@ -21,6 +21,8 @@
 #include "initguid.h"
 #include "dxgi1_6.h"
 #include "d3d11.h"
+#include "d3d12.h"
+#include "wine/heap.h"
 #include "wine/test.h"
 
 enum frame_latency
@@ -33,6 +35,8 @@ static DEVMODEW registry_mode;
 
 static HRESULT (WINAPI *pCreateDXGIFactory1)(REFIID iid, void **factory);
 static HRESULT (WINAPI *pCreateDXGIFactory2)(UINT flags, REFIID iid, void **factory);
+
+static PFN_D3D12_CREATE_DEVICE pD3D12CreateDevice;
 
 static ULONG get_refcount(IUnknown *iface)
 {
@@ -67,6 +71,22 @@ static HRESULT check_interface_(unsigned int line, void *iface, REFIID iid,
     else
         ok_(__FILE__, line)(!out, "Got unexpected pointer %p.\n", out);
     return hr;
+}
+
+static unsigned int check_multisample_quality_levels(IDXGIDevice *dxgi_device,
+        DXGI_FORMAT format, unsigned int sample_count)
+{
+    ID3D10Device *device;
+    unsigned int levels;
+    HRESULT hr;
+
+    hr = IDXGIDevice_QueryInterface(dxgi_device, &IID_ID3D10Device, (void **)&device);
+    ok(hr == S_OK, "Failed to query ID3D10Device, hr %#x.\n", hr);
+    hr = ID3D10Device_CheckMultisampleQualityLevels(device, format, sample_count, &levels);
+    ok(hr == S_OK, "Failed to check multisample quality levels, hr %#x.\n", hr);
+    ID3D10Device_Release(device);
+
+    return levels;
 }
 
 #define MODE_DESC_IGNORE_RESOLUTION        0x00000001u
@@ -373,15 +393,63 @@ static void compute_expected_swapchain_fullscreen_state_after_fullscreen_change_
     }
 }
 
-static IDXGIDevice *create_device(UINT flags)
+static BOOL use_warp_adapter;
+static unsigned int use_adapter_idx;
+
+static IDXGIAdapter *create_adapter(void)
+{
+    IDXGIFactory4 *factory4;
+    IDXGIFactory *factory;
+    IDXGIAdapter *adapter;
+    HRESULT hr;
+
+    if (!use_warp_adapter && !use_adapter_idx)
+        return NULL;
+
+    if (FAILED(hr = CreateDXGIFactory(&IID_IDXGIFactory, (void **)&factory)))
+    {
+        trace("Failed to create IDXGIFactory, hr %#x.\n", hr);
+        return NULL;
+    }
+
+    adapter = NULL;
+    if (use_warp_adapter)
+    {
+        if (SUCCEEDED(hr = IDXGIFactory_QueryInterface(factory, &IID_IDXGIFactory4, (void **)&factory4)))
+        {
+            hr = IDXGIFactory4_EnumWarpAdapter(factory4, &IID_IDXGIAdapter, (void **)&adapter);
+            IDXGIFactory4_Release(factory4);
+        }
+        else
+        {
+            trace("Failed to get IDXGIFactory4, hr %#x.\n", hr);
+        }
+    }
+    else
+    {
+        hr = IDXGIFactory_EnumAdapters(factory, use_adapter_idx, &adapter);
+    }
+    IDXGIFactory_Release(factory);
+    if (FAILED(hr))
+        trace("Failed to get adapter, hr %#x.\n", hr);
+    return adapter;
+}
+
+static IDXGIDevice *create_device(unsigned int flags)
 {
     IDXGIDevice *dxgi_device;
     ID3D10Device1 *device;
+    IDXGIAdapter *adapter;
     HRESULT hr;
 
-    if (SUCCEEDED(D3D10CreateDevice1(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL,
-            flags, D3D10_FEATURE_LEVEL_10_0, D3D10_1_SDK_VERSION, &device)))
+    adapter = create_adapter();
+    hr = D3D10CreateDevice1(adapter, D3D10_DRIVER_TYPE_HARDWARE, NULL,
+            flags, D3D10_FEATURE_LEVEL_10_0, D3D10_1_SDK_VERSION, &device);
+    if (adapter)
+        IDXGIAdapter_Release(adapter);
+    if (SUCCEEDED(hr))
         goto success;
+
     if (SUCCEEDED(D3D10CreateDevice1(NULL, D3D10_DRIVER_TYPE_WARP, NULL,
             flags, D3D10_FEATURE_LEVEL_10_0, D3D10_1_SDK_VERSION, &device)))
         goto success;
@@ -397,6 +465,64 @@ success:
     ID3D10Device1_Release(device);
 
     return dxgi_device;
+}
+
+static ID3D12Device *create_d3d12_device(void)
+{
+    IDXGIAdapter *adapter;
+    ID3D12Device *device;
+    HRESULT hr;
+
+    if (!pD3D12CreateDevice)
+        return NULL;
+
+    adapter = create_adapter();
+    hr = pD3D12CreateDevice((IUnknown *)adapter, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&device);
+    if (adapter)
+        IDXGIAdapter_Release(adapter);
+    if (FAILED(hr))
+        return NULL;
+
+    return device;
+}
+
+static ID3D12CommandQueue *create_d3d12_direct_queue(ID3D12Device *device)
+{
+    D3D12_COMMAND_QUEUE_DESC command_queue_desc;
+    ID3D12CommandQueue *queue;
+    HRESULT hr;
+
+    command_queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    command_queue_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+    command_queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    command_queue_desc.NodeMask = 0;
+    hr = ID3D12Device_CreateCommandQueue(device, &command_queue_desc,
+            &IID_ID3D12CommandQueue, (void **)&queue);
+    ok(hr == S_OK, "Failed to create command queue, hr %#x.\n", hr);
+    return queue;
+}
+
+#define get_factory(a, b, c) get_factory_(__LINE__, a, b, c)
+static void get_factory_(unsigned int line, IUnknown *device, BOOL is_d3d12, IDXGIFactory **factory)
+{
+    IDXGIDevice *dxgi_device;
+    IDXGIAdapter *adapter;
+    HRESULT hr;
+
+    if (is_d3d12)
+    {
+        hr = CreateDXGIFactory(&IID_IDXGIFactory, (void **)factory);
+        ok_(__FILE__, line)(hr == S_OK, "Failed to create factory, hr %#x.\n", hr);
+    }
+    else
+    {
+        dxgi_device = (IDXGIDevice *)device;
+        hr = IDXGIDevice_GetAdapter(dxgi_device, &adapter);
+        ok_(__FILE__, line)(hr == S_OK, "Failed to get adapter, hr %#x.\n", hr);
+        hr = IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory, (void **)factory);
+        ok_(__FILE__, line)(hr == S_OK, "Failed to get parent, hr %#x.\n", hr);
+        IDXGIAdapter_Release(adapter);
+    }
 }
 
 static void test_adapter_desc(void)
@@ -801,7 +927,8 @@ static void test_output(void)
     ok(mode_count >= mode_count_comp, "Got unexpected mode_count %u, expected >= %u.\n", mode_count, mode_count_comp);
     mode_count_comp = mode_count;
 
-    modes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*modes) * (mode_count + 10));
+    modes = heap_calloc(mode_count + 10, sizeof(*modes));
+    ok(!!modes, "Failed to allocate memory.\n");
 
     hr = IDXGIOutput_GetDisplayModeList(output, DXGI_FORMAT_R8G8B8A8_UNORM,
             DXGI_ENUM_MODES_SCALING, NULL, modes);
@@ -845,7 +972,7 @@ static void test_output(void)
         skip("Not enough modes for test, skipping.\n");
     }
 
-    HeapFree(GetProcessHeap(), 0, modes);
+    heap_free(modes);
     IDXGIOutput_Release(output);
     IDXGIAdapter_Release(adapter);
     refcount = IDXGIDevice_Release(device);
@@ -898,7 +1025,8 @@ static void test_find_closest_matching_mode(void)
     hr = IDXGIOutput_GetDisplayModeList(output, DXGI_FORMAT_R8G8B8A8_UNORM, 0, &mode_count, NULL);
     ok(SUCCEEDED(hr), "Failed to list modes, hr %#x.\n", hr);
 
-    modes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*modes) * mode_count);
+    modes = heap_calloc(mode_count, sizeof(*modes));
+    ok(!!modes, "Failed to allocate memory.\n");
 
     hr = IDXGIOutput_GetDisplayModeList(output, DXGI_FORMAT_R8G8B8A8_UNORM, 0, &mode_count, modes);
     ok(SUCCEEDED(hr), "Failed to list modes, hr %#x.\n", hr);
@@ -1024,7 +1152,7 @@ static void test_find_closest_matching_mode(void)
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
     check_mode_desc(&matching_mode, &modes[0], MODE_DESC_CHECK_RESOLUTION & MODE_DESC_CHECK_FORMAT);
 
-    HeapFree(GetProcessHeap(), 0, modes);
+    heap_free(modes);
 
 done:
     IDXGIOutput_Release(output);
@@ -1768,7 +1896,7 @@ static void test_swapchain_fullscreen_state(IDXGISwapChain *swapchain,
         ++output_count;
     }
 
-    output_monitor_info = HeapAlloc(GetProcessHeap(), 0, output_count * sizeof(*output_monitor_info));
+    output_monitor_info = heap_calloc(output_count, sizeof(*output_monitor_info));
     ok(!!output_monitor_info, "Failed to allocate memory.\n");
     for (i = 0; i < output_count; ++i)
     {
@@ -1869,7 +1997,7 @@ static void test_swapchain_fullscreen_state(IDXGISwapChain *swapchain,
         IDXGIOutput_Release(output);
     }
 
-    HeapFree(GetProcessHeap(), 0, output_monitor_info);
+    heap_free(output_monitor_info);
 }
 
 static void test_set_fullscreen(void)
@@ -2185,7 +2313,7 @@ static void test_fullscreen_resize_target(IDXGISwapChain *swapchain,
         return;
     }
 
-    modes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*modes) * mode_count);
+    modes = heap_calloc(mode_count, sizeof(*modes));
     ok(!!modes, "Failed to allocate memory.\n");
 
     hr = IDXGIOutput_GetDisplayModeList(target, DXGI_FORMAT_R8G8B8A8_UNORM, 0, &mode_count, modes);
@@ -2200,24 +2328,29 @@ static void test_fullscreen_resize_target(IDXGISwapChain *swapchain,
             continue;
 
         hr = IDXGIOutput_GetDesc(target, &output_desc);
-        ok(SUCCEEDED(hr), "GetDesc failed, hr %#x.\n", hr);
+        ok(hr == S_OK, "Failed to get desc, hr %#x.\n", hr);
 
         compute_expected_swapchain_fullscreen_state_after_fullscreen_change(&expected_state,
                 &swapchain_desc, &output_desc.DesktopCoordinates, modes[i].Width, modes[i].Height, NULL);
 
         hr = IDXGISwapChain_ResizeTarget(swapchain, &modes[i]);
-        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(hr == S_OK || hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE, "Got unexpected hr %#x.\n", hr);
+        if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
+        {
+            skip("Failed to change to video mode %u.\n", i);
+            break;
+        }
         check_swapchain_fullscreen_state(swapchain, &expected_state);
 
         hr = IDXGIOutput_GetDesc(target, &output_desc);
-        ok(SUCCEEDED(hr), "GetDesc failed, hr %#x.\n", hr);
+        ok(hr == S_OK, "Failed to get desc, hr %#x.\n", hr);
         ok(EqualRect(&output_desc.DesktopCoordinates, &expected_state.fullscreen_state.monitor_rect),
                 "Got desktop coordinates %s, expected %s.\n",
                 wine_dbgstr_rect(&output_desc.DesktopCoordinates),
                 wine_dbgstr_rect(&expected_state.fullscreen_state.monitor_rect));
     }
 
-    HeapFree(GetProcessHeap(), 0, modes);
+    heap_free(modes);
     IDXGIOutput_Release(target);
 }
 
@@ -3205,13 +3338,13 @@ static void test_swapchain_parameters(void)
             0, 0, 640, 480, 0, 0, 0, 0);
 
     hr = IDXGIDevice_QueryInterface(device, &IID_IUnknown, (void **)&obj);
-    ok(SUCCEEDED(hr), "IDXGIDevice does not implement IUnknown.\n");
+    ok(hr == S_OK, "IDXGIDevice does not implement IUnknown.\n");
 
     hr = IDXGIDevice_GetAdapter(device, &adapter);
-    ok(SUCCEEDED(hr), "GetAdapter failed, hr %#x.\n", hr);
-
+    ok(hr == S_OK, "Failed to get adapter, hr %#x.\n", hr);
     hr = IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory, (void **)&factory);
-    ok(SUCCEEDED(hr), "GetParent failed, hr %#x.\n", hr);
+    ok(hr == S_OK, "Failed to get parent, hr %#x.\n", hr);
+    IDXGIAdapter_Release(adapter);
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
@@ -3364,8 +3497,39 @@ static void test_swapchain_parameters(void)
         IDXGISwapChain_Release(swapchain);
     }
 
+    /* multisampling */
+    memset(&desc, 0, sizeof(desc));
+    desc.BufferDesc.Width = registry_mode.dmPelsWidth;
+    desc.BufferDesc.Height = registry_mode.dmPelsHeight;
+    desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 4;
+    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc.BufferCount = 4;
+    desc.OutputWindow = window;
+    desc.Windowed = TRUE;
+    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    hr = IDXGIFactory_CreateSwapChain(factory, obj, &desc, &swapchain);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    hr = IDXGIFactory_CreateSwapChain(factory, obj, &desc, &swapchain);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    if (check_multisample_quality_levels(device, desc.BufferDesc.Format, desc.SampleDesc.Count))
+    {
+        desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        hr = IDXGIFactory_CreateSwapChain(factory, obj, &desc, &swapchain);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        IDXGISwapChain_Release(swapchain);
+        desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+        hr = IDXGIFactory_CreateSwapChain(factory, obj, &desc, &swapchain);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        IDXGISwapChain_Release(swapchain);
+    }
+    else
+    {
+        skip("Multisampling not supported for DXGI_FORMAT_R8G8B8A8_UNORM.\n");
+    }
+
     IDXGIFactory_Release(factory);
-    IDXGIAdapter_Release(adapter);
     IUnknown_Release(obj);
     refcount = IDXGIDevice_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
@@ -3427,6 +3591,93 @@ static void test_swapchain_present(void)
     refcount = IDXGIDevice_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
     DestroyWindow(swapchain_desc.OutputWindow);
+    refcount = IDXGIFactory_Release(factory);
+    ok(!refcount, "Factory has %u references left.\n", refcount);
+}
+
+static void test_swapchain_backbuffer_index(IUnknown *device, BOOL is_d3d12)
+{
+    DXGI_SWAP_CHAIN_DESC swapchain_desc;
+    unsigned int index, expected_index;
+    IDXGISwapChain3 *swapchain3;
+    IDXGISwapChain *swapchain;
+    HRESULT hr, expected_hr;
+    IDXGIFactory *factory;
+    unsigned int i, j;
+    ULONG refcount;
+    RECT rect;
+    BOOL ret;
+
+    static const struct
+    {
+        DXGI_SWAP_EFFECT swap_effect;
+        BOOL supported_in_d3d12;
+    }
+    tests[] =
+    {
+        {DXGI_SWAP_EFFECT_DISCARD, FALSE},
+        {DXGI_SWAP_EFFECT_SEQUENTIAL, FALSE},
+        {DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, TRUE},
+        {DXGI_SWAP_EFFECT_FLIP_DISCARD, TRUE},
+    };
+
+    get_factory(device, is_d3d12, &factory);
+
+    swapchain_desc.BufferDesc.RefreshRate.Numerator = 60;
+    swapchain_desc.BufferDesc.RefreshRate.Denominator = 60;
+    swapchain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapchain_desc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+    swapchain_desc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+    swapchain_desc.SampleDesc.Count = 1;
+    swapchain_desc.SampleDesc.Quality = 0;
+    swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapchain_desc.BufferCount = 4;
+    swapchain_desc.OutputWindow = CreateWindowA("static", "dxgi_test", 0, 0, 0, 400, 200, 0, 0, 0, 0);
+    swapchain_desc.Windowed = TRUE;
+    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    swapchain_desc.Flags = 0;
+
+    ret = GetClientRect(swapchain_desc.OutputWindow, &rect);
+    ok(ret, "Failed to get client rect.\n");
+    swapchain_desc.BufferDesc.Width = rect.right;
+    swapchain_desc.BufferDesc.Height = rect.bottom;
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        swapchain_desc.SwapEffect = tests[i].swap_effect;
+        expected_hr = !is_d3d12 || tests[i].supported_in_d3d12 ? S_OK : DXGI_ERROR_INVALID_CALL;
+        hr = IDXGIFactory_CreateSwapChain(factory, (IUnknown *)device, &swapchain_desc, &swapchain);
+        todo_wine_if(is_d3d12 && tests[i].supported_in_d3d12)
+        ok(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+        if (FAILED(hr))
+            continue;
+
+        hr = IDXGISwapChain_QueryInterface(swapchain, &IID_IDXGISwapChain3, (void **)&swapchain3);
+        if (hr == E_NOINTERFACE)
+        {
+            skip("IDXGISwapChain3 is not supported.\n");
+            IDXGISwapChain_Release(swapchain);
+            goto done;
+        }
+
+        for (j = 0; j < 2 * swapchain_desc.BufferCount; ++j)
+        {
+            index = IDXGISwapChain3_GetCurrentBackBufferIndex(swapchain3);
+            expected_index = is_d3d12 ? j % swapchain_desc.BufferCount : 0;
+            ok(index == expected_index, "Got back buffer index %u, expected %u.\n", index, expected_index);
+            hr = IDXGISwapChain3_Present(swapchain3, 0, 0);
+            ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        }
+
+        IDXGISwapChain3_Release(swapchain3);
+        refcount = IDXGISwapChain_Release(swapchain);
+        ok(!refcount, "Swapchain has %u references left.\n", refcount);
+    }
+
+done:
+    DestroyWindow(swapchain_desc.OutputWindow);
+    refcount = IDXGIFactory_Release(factory);
+    ok(refcount == !is_d3d12, "Got unexpected refcount %u.\n", refcount);
 }
 
 static void test_maximum_frame_latency(void)
@@ -3707,14 +3958,66 @@ static void test_object_wrapping(void)
     ok(!refcount, "Factory has %u references left.\n", refcount);
 }
 
+static void run_on_d3d10(void (*test_func)(IUnknown *device, BOOL is_d3d12))
+{
+    IDXGIDevice *device;
+    ULONG refcount;
+
+    if (!(device = create_device(0)))
+    {
+        skip("Failed to create Direct3D 10 device.\n");
+        return;
+    }
+
+    test_func((IUnknown *)device, FALSE);
+
+    refcount = IDXGIDevice_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+}
+
+static void run_on_d3d12(void (*test_func)(IUnknown *device, BOOL is_d3d12))
+{
+    ID3D12CommandQueue *queue;
+    ID3D12Device *device;
+    ULONG refcount;
+
+    if (!(device = create_d3d12_device()))
+    {
+        skip("Failed to create Direct3D 12 device.\n");
+        return;
+    }
+
+    queue = create_d3d12_direct_queue(device);
+
+    test_func((IUnknown *)queue, TRUE);
+
+    refcount = ID3D12CommandQueue_Release(queue);
+    ok(!refcount, "Command queue has %u references left.\n", refcount);
+    refcount = ID3D12Device_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+}
+
 START_TEST(device)
 {
-    HMODULE dxgi_module = GetModuleHandleA("dxgi.dll");
+    HMODULE dxgi_module, d3d12_module;
+    unsigned int argc, i;
+    char **argv;
+
+    dxgi_module = GetModuleHandleA("dxgi.dll");
     pCreateDXGIFactory1 = (void *)GetProcAddress(dxgi_module, "CreateDXGIFactory1");
     pCreateDXGIFactory2 = (void *)GetProcAddress(dxgi_module, "CreateDXGIFactory2");
 
     registry_mode.dmSize = sizeof(registry_mode);
     ok(EnumDisplaySettingsW(NULL, ENUM_REGISTRY_SETTINGS, &registry_mode), "Failed to get display mode.\n");
+
+    argc = winetest_get_mainargs(&argv);
+    for (i = 2; i < argc; ++i)
+    {
+        if (!strcmp(argv[i], "--warp"))
+            use_warp_adapter = TRUE;
+        else if (!strcmp(argv[i], "--adapter") && i + 1 < argc)
+            use_adapter_idx = atoi(argv[++i]);
+    }
 
     test_adapter_desc();
     test_adapter_luid();
@@ -3734,7 +4037,20 @@ START_TEST(device)
     test_swapchain_resize();
     test_swapchain_parameters();
     test_swapchain_present();
+    run_on_d3d10(test_swapchain_backbuffer_index);
     test_maximum_frame_latency();
     test_output_desc();
     test_object_wrapping();
+
+    if (!(d3d12_module = LoadLibraryA("d3d12.dll")))
+    {
+        skip("Direct3D 12 is not available.\n");
+        return;
+    }
+
+    pD3D12CreateDevice = (void *)GetProcAddress(d3d12_module, "D3D12CreateDevice");
+
+    run_on_d3d12(test_swapchain_backbuffer_index);
+
+    FreeLibrary(d3d12_module);
 }

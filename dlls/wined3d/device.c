@@ -2227,10 +2227,12 @@ struct wined3d_shader * CDECL wined3d_device_get_vertex_shader(const struct wine
     return device->state.shader[WINED3D_SHADER_TYPE_VERTEX];
 }
 
-static void wined3d_device_set_constant_buffer(struct wined3d_device *device,
+void CDECL wined3d_device_set_constant_buffer(struct wined3d_device *device,
         enum wined3d_shader_type type, UINT idx, struct wined3d_buffer *buffer)
 {
     struct wined3d_buffer *prev;
+
+    TRACE("device %p, type %#x, idx %u, buffer %p.\n", device, type, idx, buffer);
 
     if (idx >= MAX_CONSTANT_BUFFERS)
     {
@@ -2251,16 +2253,11 @@ static void wined3d_device_set_constant_buffer(struct wined3d_device *device,
         wined3d_buffer_decref(prev);
 }
 
-void CDECL wined3d_device_set_vs_cb(struct wined3d_device *device, UINT idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_VERTEX, idx, buffer);
-}
-
-static struct wined3d_buffer *wined3d_device_get_constant_buffer(const struct wined3d_device *device,
+struct wined3d_buffer * CDECL wined3d_device_get_constant_buffer(const struct wined3d_device *device,
         enum wined3d_shader_type shader_type, unsigned int idx)
 {
+    TRACE("device %p, shader_type %#x, idx %u.\n", device, shader_type, idx);
+
     if (idx >= MAX_CONSTANT_BUFFERS)
     {
         WARN("Invalid constant buffer index %u.\n", idx);
@@ -2268,13 +2265,6 @@ static struct wined3d_buffer *wined3d_device_get_constant_buffer(const struct wi
     }
 
     return device->state.cb[shader_type][idx];
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_vs_cb(const struct wined3d_device *device, UINT idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_VERTEX, idx);
 }
 
 static void wined3d_device_set_shader_resource_view(struct wined3d_device *device,
@@ -2550,20 +2540,6 @@ struct wined3d_shader * CDECL wined3d_device_get_pixel_shader(const struct wined
     return device->state.shader[WINED3D_SHADER_TYPE_PIXEL];
 }
 
-void CDECL wined3d_device_set_ps_cb(struct wined3d_device *device, UINT idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_PIXEL, idx, buffer);
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_ps_cb(const struct wined3d_device *device, UINT idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_PIXEL, idx);
-}
-
 void CDECL wined3d_device_set_ps_resource_view(struct wined3d_device *device,
         UINT idx, struct wined3d_shader_resource_view *view)
 {
@@ -2762,20 +2738,6 @@ struct wined3d_shader * CDECL wined3d_device_get_hull_shader(const struct wined3
     return device->state.shader[WINED3D_SHADER_TYPE_HULL];
 }
 
-void CDECL wined3d_device_set_hs_cb(struct wined3d_device *device, unsigned int idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_HULL, idx, buffer);
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_hs_cb(const struct wined3d_device *device, unsigned int idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_HULL, idx);
-}
-
 void CDECL wined3d_device_set_hs_resource_view(struct wined3d_device *device,
         unsigned int idx, struct wined3d_shader_resource_view *view)
 {
@@ -2829,20 +2791,6 @@ struct wined3d_shader * CDECL wined3d_device_get_domain_shader(const struct wine
     TRACE("device %p.\n", device);
 
     return device->state.shader[WINED3D_SHADER_TYPE_DOMAIN];
-}
-
-void CDECL wined3d_device_set_ds_cb(struct wined3d_device *device, unsigned int idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_DOMAIN, idx, buffer);
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_ds_cb(const struct wined3d_device *device, unsigned int idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_DOMAIN, idx);
 }
 
 void CDECL wined3d_device_set_ds_resource_view(struct wined3d_device *device,
@@ -2899,20 +2847,6 @@ struct wined3d_shader * CDECL wined3d_device_get_geometry_shader(const struct wi
     return device->state.shader[WINED3D_SHADER_TYPE_GEOMETRY];
 }
 
-void CDECL wined3d_device_set_gs_cb(struct wined3d_device *device, UINT idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_GEOMETRY, idx, buffer);
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_gs_cb(const struct wined3d_device *device, UINT idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_GEOMETRY, idx);
-}
-
 void CDECL wined3d_device_set_gs_resource_view(struct wined3d_device *device,
         UINT idx, struct wined3d_shader_resource_view *view)
 {
@@ -2965,20 +2899,6 @@ struct wined3d_shader * CDECL wined3d_device_get_compute_shader(const struct win
     TRACE("device %p.\n", device);
 
     return device->state.shader[WINED3D_SHADER_TYPE_COMPUTE];
-}
-
-void CDECL wined3d_device_set_cs_cb(struct wined3d_device *device, unsigned int idx, struct wined3d_buffer *buffer)
-{
-    TRACE("device %p, idx %u, buffer %p.\n", device, idx, buffer);
-
-    wined3d_device_set_constant_buffer(device, WINED3D_SHADER_TYPE_COMPUTE, idx, buffer);
-}
-
-struct wined3d_buffer * CDECL wined3d_device_get_cs_cb(const struct wined3d_device *device, unsigned int idx)
-{
-    TRACE("device %p, idx %u.\n", device, idx);
-
-    return wined3d_device_get_constant_buffer(device, WINED3D_SHADER_TYPE_COMPUTE, idx);
 }
 
 void CDECL wined3d_device_set_cs_resource_view(struct wined3d_device *device,
@@ -4418,13 +4338,13 @@ HRESULT CDECL wined3d_device_clear_rendertarget_view(struct wined3d_device *devi
         return WINED3D_OK;
 
     resource = view->resource;
-    if (resource->type != WINED3D_RTYPE_TEXTURE_1D && resource->type != WINED3D_RTYPE_TEXTURE_2D)
+    if (resource->type == WINED3D_RTYPE_BUFFER)
     {
         FIXME("Not implemented for %s resources.\n", debug_d3dresourcetype(resource->type));
         return WINED3DERR_INVALIDCALL;
     }
 
-    if (view->layer_count > 1)
+    if (view->layer_count != max(1, resource->depth >> view->desc.u.texture.level_idx))
     {
         FIXME("Layered clears not implemented.\n");
         return WINED3DERR_INVALIDCALL;

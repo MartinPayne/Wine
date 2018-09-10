@@ -20,6 +20,7 @@
 
 #include <stdarg.h>
 
+#define NONAMELESSUNION
 #include "windef.h"
 #include "atsvc.h"
 #include "mstask.h"
@@ -59,14 +60,28 @@ struct job_t
 {
     struct list entry;
     WCHAR *name;
+    WCHAR *params;
+    WCHAR *curdir;
     AT_ENUM info;
     FIXDLEN_DATA data;
     USHORT instance_count;
+    USHORT trigger_count;
+    TASK_TRIGGER *trigger;
+};
+
+struct running_job_t
+{
+    struct list entry;
+    UUID uuid;
+    HANDLE process;
+    DWORD pid;
 };
 
 static LONG current_jobid = 1;
 
 static struct list at_job_list = LIST_INIT(at_job_list);
+static struct list running_job_list = LIST_INIT(running_job_list);
+
 static CRITICAL_SECTION at_job_list_section;
 static CRITICAL_SECTION_DEBUG cs_debug =
 {
@@ -76,7 +91,236 @@ static CRITICAL_SECTION_DEBUG cs_debug =
 };
 static CRITICAL_SECTION at_job_list_section = { &cs_debug, -1, 0, 0, 0, 0 };
 
-static DWORD load_unicode_strings(const char *data, DWORD limit, AT_ENUM *info)
+static void filetime_add_ms(FILETIME *ft, LONGLONG ms)
+{
+    union u_ftll
+    {
+        FILETIME ft;
+        LONGLONG ll;
+    } *ftll = (union u_ftll *)ft;
+
+    ftll->ll += ms * (ULONGLONG)10000;
+}
+
+static void filetime_add_minutes(FILETIME *ft, LONG minutes)
+{
+    filetime_add_ms(ft, (LONGLONG)minutes * 60 * 1000);
+}
+
+static void filetime_add_hours(FILETIME *ft, LONG hours)
+{
+    filetime_add_minutes(ft, (LONGLONG)hours * 60);
+}
+
+static void filetime_add_days(FILETIME *ft, LONG days)
+{
+    filetime_add_hours(ft, (LONGLONG)days * 24);
+}
+
+static void filetime_add_weeks(FILETIME *ft, ULONG weeks)
+{
+    filetime_add_days(ft, (LONGLONG)weeks * 7);
+}
+
+static void get_begin_time(const TASK_TRIGGER *trigger, FILETIME *ft)
+{
+    SYSTEMTIME st;
+
+    st.wYear = trigger->wBeginYear;
+    st.wMonth = trigger->wBeginMonth;
+    st.wDay = trigger->wBeginDay;
+    st.wDayOfWeek = 0;
+    st.wHour = 0;
+    st.wMinute = 0;
+    st.wSecond = 0;
+    st.wMilliseconds = 0;
+    SystemTimeToFileTime(&st, ft);
+}
+
+static void get_end_time(const TASK_TRIGGER *trigger, FILETIME *ft)
+{
+    SYSTEMTIME st;
+
+    if (!(trigger->rgFlags & TASK_TRIGGER_FLAG_HAS_END_DATE))
+    {
+        ft->dwHighDateTime = ~0u;
+        ft->dwLowDateTime = ~0u;
+        return;
+    }
+
+    st.wYear = trigger->wEndYear;
+    st.wMonth = trigger->wEndMonth;
+    st.wDay = trigger->wEndDay;
+    st.wDayOfWeek = 0;
+    st.wHour = 0;
+    st.wMinute = 0;
+    st.wSecond = 0;
+    st.wMilliseconds = 0;
+    SystemTimeToFileTime(&st, ft);
+}
+
+static BOOL trigger_get_next_runtime(const TASK_TRIGGER *trigger, const FILETIME *current_ft, FILETIME *rt)
+{
+    SYSTEMTIME st, current_st;
+    FILETIME begin_ft, end_ft, trigger_ft;
+
+    if (trigger->rgFlags & TASK_TRIGGER_FLAG_DISABLED)
+        return FALSE;
+
+    FileTimeToSystemTime(current_ft, &current_st);
+
+    get_begin_time(trigger, &begin_ft);
+    get_end_time(trigger, &end_ft);
+
+    switch (trigger->TriggerType)
+    {
+    case TASK_EVENT_TRIGGER_ON_IDLE:
+    case TASK_EVENT_TRIGGER_AT_SYSTEMSTART:
+    case TASK_EVENT_TRIGGER_AT_LOGON:
+        return FALSE;
+
+    case TASK_TIME_TRIGGER_ONCE:
+        st = current_st;
+        st.wHour = trigger->wStartHour;
+        st.wMinute = trigger->wStartMinute;
+        st.wSecond = 0;
+        st.wMilliseconds = 0;
+        SystemTimeToFileTime(&st, &trigger_ft);
+        if (CompareFileTime(&begin_ft, &trigger_ft) <= 0 && CompareFileTime(&trigger_ft, &end_ft) < 0)
+        {
+            *rt = trigger_ft;
+            return TRUE;
+        }
+        break;
+
+    case TASK_TIME_TRIGGER_DAILY:
+        st = current_st;
+        st.wHour = trigger->wStartHour;
+        st.wMinute = trigger->wStartMinute;
+        st.wSecond = 0;
+        st.wMilliseconds = 0;
+        SystemTimeToFileTime(&st, &trigger_ft);
+        while (CompareFileTime(&trigger_ft, &end_ft) < 0)
+        {
+            if (CompareFileTime(&trigger_ft, &begin_ft) >= 0)
+            {
+                *rt = trigger_ft;
+                return TRUE;
+            }
+
+            filetime_add_days(&trigger_ft, trigger->Type.Daily.DaysInterval);
+        }
+        break;
+
+    case TASK_TIME_TRIGGER_WEEKLY:
+        if (!trigger->Type.Weekly.rgfDaysOfTheWeek)
+            break; /* avoid infinite loop */
+
+        st = current_st;
+        st.wHour = trigger->wStartHour;
+        st.wMinute = trigger->wStartMinute;
+        st.wSecond = 0;
+        st.wMilliseconds = 0;
+        SystemTimeToFileTime(&st, &trigger_ft);
+        while (CompareFileTime(&trigger_ft, &end_ft) < 0)
+        {
+            FileTimeToSystemTime(&trigger_ft, &st);
+
+            if (CompareFileTime(&trigger_ft, &begin_ft) >= 0)
+            {
+                if (trigger->Type.Weekly.rgfDaysOfTheWeek & (1 << st.wDayOfWeek))
+                {
+                    *rt = trigger_ft;
+                    return TRUE;
+                }
+            }
+
+            if (st.wDayOfWeek == 0 && trigger->Type.Weekly.WeeksInterval > 1) /* Sunday, goto next week */
+                filetime_add_weeks(&trigger_ft, trigger->Type.Weekly.WeeksInterval - 1);
+            else /* check next weekday */
+                filetime_add_days(&trigger_ft, 1);
+        }
+        break;
+
+    default:
+        FIXME("trigger type %u is not handled\n", trigger->TriggerType);
+        break;
+    }
+
+    return FALSE;
+}
+
+static BOOL job_get_next_runtime(struct job_t *job, FILETIME *current_ft, FILETIME *next_rt)
+{
+    FILETIME trigger_rt;
+    BOOL have_next_rt = FALSE;
+    USHORT i;
+
+    for (i = 0; i < job->trigger_count; i++)
+    {
+        if (trigger_get_next_runtime(&job->trigger[i], current_ft, &trigger_rt))
+        {
+            if (!have_next_rt || CompareFileTime(&trigger_rt, next_rt) < 0)
+            {
+                *next_rt = trigger_rt;
+                have_next_rt = TRUE;
+            }
+        }
+    }
+
+    return have_next_rt;
+}
+
+/* Returns next runtime in UTC */
+BOOL get_next_runtime(LARGE_INTEGER *rt)
+{
+    FILETIME current_ft, job_rt, next_job_rt;
+    BOOL have_next_rt = FALSE;
+    struct job_t *job;
+
+    GetSystemTimeAsFileTime(&current_ft);
+    FileTimeToLocalFileTime(&current_ft, &current_ft);
+
+    EnterCriticalSection(&at_job_list_section);
+
+    LIST_FOR_EACH_ENTRY(job, &at_job_list, struct job_t, entry)
+    {
+        if (job_get_next_runtime(job, &current_ft, &job_rt))
+        {
+            if (!have_next_rt || CompareFileTime(&job_rt, &next_job_rt) < 0)
+            {
+                next_job_rt = job_rt;
+                have_next_rt = TRUE;
+            }
+        }
+    }
+
+    LeaveCriticalSection(&at_job_list_section);
+
+    if (have_next_rt)
+    {
+        LocalFileTimeToFileTime(&next_job_rt, &next_job_rt);
+        rt->u.LowPart = next_job_rt.dwLowDateTime;
+        rt->u.HighPart = next_job_rt.dwHighDateTime;
+    }
+
+    return have_next_rt;
+}
+
+static BOOL job_runs_at(struct job_t *job, FILETIME *begin_ft, FILETIME *end_ft)
+{
+    FILETIME job_ft;
+
+    if (job_get_next_runtime(job, begin_ft, &job_ft))
+    {
+        if (CompareFileTime(&job_ft, end_ft) < 0)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static DWORD load_unicode_strings(const char *data, DWORD limit, struct job_t *job)
 {
     DWORD i, data_size = 0;
     USHORT len;
@@ -101,8 +345,23 @@ static DWORD load_unicode_strings(const char *data, DWORD limit, AT_ENUM *info)
 
         TRACE("string %u: %s\n", i, wine_dbgstr_wn((const WCHAR *)data, len));
 
-        if (i == 0)
-            info->Command = heap_strdupW((const WCHAR *)data);
+        switch (i)
+        {
+        case 0:
+            job->info.Command = heap_strdupW((const WCHAR *)data);
+            break;
+
+        case 1:
+            job->params = heap_strdupW((const WCHAR *)data);
+            break;
+
+        case 2:
+            job->curdir = heap_strdupW((const WCHAR *)data);
+            break;
+
+        default:
+            break;
+        }
 
         data += len * sizeof(WCHAR);
         data_size += len * sizeof(WCHAR);
@@ -116,7 +375,7 @@ static BOOL load_job_data(const char *data, DWORD size, struct job_t *info)
     const FIXDLEN_DATA *fixed;
     const SYSTEMTIME *st;
     DWORD unicode_strings_size, data_size, triggers_size;
-    USHORT triggers_count, i;
+    USHORT i;
     const USHORT *signature;
     const TASK_TRIGGER *trigger;
 
@@ -134,6 +393,12 @@ static BOOL load_job_data(const char *data, DWORD size, struct job_t *info)
     TRACE("product_version %04x\n", fixed->product_version);
     TRACE("file_version %04x\n", fixed->file_version);
     TRACE("uuid %s\n", wine_dbgstr_guid(&fixed->uuid));
+
+    if (fixed->file_version != 0x0001)
+    {
+        TRACE("invalid file version\n");
+        return FALSE;
+    }
 
     TRACE("name_size_offset %04x\n", fixed->name_size_offset);
     TRACE("trigger_offset %04x\n", fixed->trigger_offset);
@@ -162,7 +427,7 @@ static BOOL load_job_data(const char *data, DWORD size, struct job_t *info)
     TRACE("instance count %u\n", info->instance_count);
 
     if (fixed->name_size_offset + sizeof(USHORT) < size)
-        unicode_strings_size = load_unicode_strings(data + fixed->name_size_offset, size - fixed->name_size_offset, &info->info);
+        unicode_strings_size = load_unicode_strings(data + fixed->name_size_offset, size - fixed->name_size_offset, info);
     else
     {
         TRACE("invalid name_size_offset\n");
@@ -175,11 +440,10 @@ static BOOL load_job_data(const char *data, DWORD size, struct job_t *info)
         TRACE("no space for triggers count\n");
         return FALSE;
     }
-    triggers_count = *(const USHORT *)(data + fixed->trigger_offset);
-    TRACE("triggers_count %u\n", triggers_count);
+    info->trigger_count = *(const USHORT *)(data + fixed->trigger_offset);
+    TRACE("trigger_count %u\n", info->trigger_count);
     triggers_size = size - fixed->trigger_offset - sizeof(USHORT);
     TRACE("triggers_size %u\n", triggers_size);
-    trigger = (const TASK_TRIGGER *)(data + fixed->trigger_offset + sizeof(USHORT));
 
     data += fixed->name_size_offset + unicode_strings_size;
     size -= fixed->name_size_offset + unicode_strings_size;
@@ -222,42 +486,51 @@ static BOOL load_job_data(const char *data, DWORD size, struct job_t *info)
 
     /* Trigger Data */
     TRACE("trigger_offset %04x, triggers end at %04x\n", fixed->trigger_offset,
-          (DWORD)(fixed->trigger_offset + sizeof(USHORT) + triggers_count * sizeof(TASK_TRIGGER)));
+          (DWORD)(fixed->trigger_offset + sizeof(USHORT) + info->trigger_count * sizeof(TASK_TRIGGER)));
 
-    triggers_count = *(const USHORT *)data;
-    TRACE("triggers_count %u\n", triggers_count);
+    info->trigger_count = *(const USHORT *)data;
+    TRACE("trigger_count %u\n", info->trigger_count);
     trigger = (const TASK_TRIGGER *)(data + sizeof(USHORT));
 
-    if (triggers_count * sizeof(TASK_TRIGGER) > triggers_size)
+    if (info->trigger_count * sizeof(TASK_TRIGGER) > triggers_size)
     {
         TRACE("no space for triggers data\n");
         return FALSE;
     }
 
-    for (i = 0; i < triggers_count; i++)
+    info->trigger = heap_alloc(info->trigger_count * sizeof(info->trigger[0]));
+    if (!info->trigger)
+    {
+        TRACE("not enough memory for trigger data\n");
+        return FALSE;
+    }
+
+    for (i = 0; i < info->trigger_count; i++)
     {
         TRACE("%u: cbTriggerSize = %#x\n", i, trigger[i].cbTriggerSize);
         if (trigger[i].cbTriggerSize != sizeof(TASK_TRIGGER))
             TRACE("invalid cbTriggerSize\n");
         TRACE("Reserved1 = %#x\n", trigger[i].Reserved1);
-        TRACE("wBeginYear = %u\n", trigger->wBeginYear);
-        TRACE("wBeginMonth = %u\n", trigger->wBeginMonth);
-        TRACE("wBeginDay = %u\n", trigger->wBeginDay);
-        TRACE("wEndYear = %u\n", trigger->wEndYear);
-        TRACE("wEndMonth = %u\n", trigger->wEndMonth);
-        TRACE("wEndDay = %u\n", trigger->wEndDay);
-        TRACE("wStartHour = %u\n", trigger->wStartHour);
-        TRACE("wStartMinute = %u\n", trigger->wStartMinute);
-        TRACE("MinutesDuration = %u\n", trigger->MinutesDuration);
-        TRACE("MinutesInterval = %u\n", trigger->MinutesInterval);
-        TRACE("rgFlags = %u\n", trigger->rgFlags);
-        TRACE("TriggerType = %u\n", trigger->TriggerType);
-        TRACE("Reserved2 = %u\n", trigger->Reserved2);
-        TRACE("wRandomMinutesInterval = %u\n", trigger->wRandomMinutesInterval);
+        TRACE("wBeginYear = %u\n", trigger[i].wBeginYear);
+        TRACE("wBeginMonth = %u\n", trigger[i].wBeginMonth);
+        TRACE("wBeginDay = %u\n", trigger[i].wBeginDay);
+        TRACE("wEndYear = %u\n", trigger[i].wEndYear);
+        TRACE("wEndMonth = %u\n", trigger[i].wEndMonth);
+        TRACE("wEndDay = %u\n", trigger[i].wEndDay);
+        TRACE("wStartHour = %u\n", trigger[i].wStartHour);
+        TRACE("wStartMinute = %u\n", trigger[i].wStartMinute);
+        TRACE("MinutesDuration = %u\n", trigger[i].MinutesDuration);
+        TRACE("MinutesInterval = %u\n", trigger[i].MinutesInterval);
+        TRACE("rgFlags = %u\n", trigger[i].rgFlags);
+        TRACE("TriggerType = %u\n", trigger[i].TriggerType);
+        TRACE("Reserved2 = %u\n", trigger[i].Reserved2);
+        TRACE("wRandomMinutesInterval = %u\n", trigger[i].wRandomMinutesInterval);
+
+        info->trigger[i] = trigger[i];
     }
 
-    size -= sizeof(USHORT) + triggers_count * sizeof(TASK_TRIGGER);
-    data += sizeof(USHORT) + triggers_count * sizeof(TASK_TRIGGER);
+    size -= sizeof(USHORT) + info->trigger_count * sizeof(TASK_TRIGGER);
+    data += sizeof(USHORT) + info->trigger_count * sizeof(TASK_TRIGGER);
 
     if (size < 2 * sizeof(USHORT) + 64)
     {
@@ -324,6 +597,9 @@ static void free_job(struct job_t *job)
 {
     free_job_info(&job->info);
     heap_free(job->name);
+    heap_free(job->params);
+    heap_free(job->curdir);
+    heap_free(job->trigger);
     heap_free(job);
 }
 
@@ -340,16 +616,52 @@ void add_job(const WCHAR *name)
         return;
     }
 
-    if (job->data.flags & 0x08000000)
-        FIXME("Terminate(%s): not implemented\n", debugstr_w(job->info.Command));
-    else if (job->data.flags & 0x04000000)
-        FIXME("Run(%s): not implemented\n", debugstr_w(job->info.Command));
-
     EnterCriticalSection(&at_job_list_section);
     job->name = heap_strdupW(name);
     job->info.JobId = current_jobid++;
     list_add_tail(&at_job_list, &job->entry);
     LeaveCriticalSection(&at_job_list_section);
+}
+
+static inline BOOL is_file(const WIN32_FIND_DATAW *data)
+{
+    return !(data->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+void load_at_tasks(void)
+{
+    static const WCHAR tasksW[] = { '\\','T','a','s','k','s','\\',0 };
+    static const WCHAR allW[] = { '*',0 };
+    WCHAR windir[MAX_PATH], path[MAX_PATH];
+    WIN32_FIND_DATAW data;
+    HANDLE handle;
+
+    GetWindowsDirectoryW(windir, MAX_PATH);
+    lstrcpyW(path, windir);
+    lstrcatW(path, tasksW);
+    lstrcatW(path, allW);
+
+    handle = FindFirstFileW(path, &data);
+    if (handle == INVALID_HANDLE_VALUE) return;
+
+    do
+    {
+        if (is_file(&data))
+        {
+            lstrcpyW(path, windir);
+            lstrcatW(path, tasksW);
+
+            if (lstrlenW(path) + lstrlenW(data.cFileName) < MAX_PATH)
+            {
+                lstrcatW(path, data.cFileName);
+                add_job(path);
+            }
+            else
+                FIXME("too long file name %s\n", debugstr_w(data.cFileName));
+        }
+    } while (FindNextFileW(handle, &data));
+
+    FindClose(handle);
 }
 
 static BOOL write_signature(HANDLE hfile)
@@ -526,17 +838,229 @@ failed:
     return ret;
 }
 
-static struct job_t *find_job(DWORD jobid, const WCHAR *name)
+static struct job_t *find_job(DWORD jobid, const WCHAR *name, const UUID *id)
 {
     struct job_t *job;
 
     LIST_FOR_EACH_ENTRY(job, &at_job_list, struct job_t, entry)
     {
-        if ((name && !lstrcmpiW(job->name, name)) || job->info.JobId == jobid)
+        if (job->info.JobId == jobid || (name && !lstrcmpiW(job->name, name)) || (id && IsEqualGUID(&job->data.uuid, id)))
             return job;
     }
 
     return NULL;
+}
+
+static void update_job_status(struct job_t *job)
+{
+    HANDLE hfile;
+    DWORD try, size;
+#include "pshpack2.h"
+    struct
+    {
+        UINT exit_code;
+        UINT status;
+        UINT flags;
+        SYSTEMTIME last_runtime;
+        WORD instance_count;
+    } state;
+#include "poppack.h"
+
+    try = 1;
+    for (;;)
+    {
+        hfile = CreateFileW(job->name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0);
+        if (hfile != INVALID_HANDLE_VALUE) break;
+
+        if (try++ >= 3)
+        {
+            ERR("Failed to update %s, error %u\n", debugstr_w(job->name), GetLastError());
+            return;
+        }
+        Sleep(100);
+    }
+
+    if (SetFilePointer(hfile, FIELD_OFFSET(FIXDLEN_DATA, exit_code), NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER)
+    {
+        state.exit_code = job->data.exit_code;
+        state.status = job->data.status;
+        state.flags = job->data.flags;
+        state.last_runtime = job->data.last_runtime;
+        state.instance_count = job->instance_count;
+        WriteFile(hfile, &state, sizeof(state), &size, NULL);
+    }
+
+    CloseHandle(hfile);
+}
+
+void update_process_status(DWORD pid)
+{
+    struct running_job_t *runjob;
+
+    EnterCriticalSection(&at_job_list_section);
+
+    LIST_FOR_EACH_ENTRY(runjob, &running_job_list, struct running_job_t, entry)
+    {
+        if (runjob->pid == pid)
+        {
+            struct job_t *job = find_job(0, NULL, &runjob->uuid);
+            if (job)
+            {
+                DWORD exit_code = STILL_ACTIVE;
+
+                GetExitCodeProcess(runjob->process, &exit_code);
+
+                if (exit_code != STILL_ACTIVE)
+                {
+                    CloseHandle(runjob->process);
+                    list_remove(&runjob->entry);
+                    heap_free(runjob);
+
+                    job->data.exit_code = exit_code;
+                    job->data.status = SCHED_S_TASK_TERMINATED;
+                    job->data.flags &= ~0x0c000000;
+                    job->instance_count = 0;
+                    update_job_status(job);
+                }
+            }
+            break;
+        }
+    }
+
+    LeaveCriticalSection(&at_job_list_section);
+}
+
+void check_task_state(void)
+{
+    struct job_t *job;
+    struct running_job_t *runjob;
+
+    EnterCriticalSection(&at_job_list_section);
+
+    LIST_FOR_EACH_ENTRY(job, &at_job_list, struct job_t, entry)
+    {
+        if (job->data.flags & 0x08000000)
+        {
+            TRACE("terminating process %s\n", debugstr_w(job->info.Command));
+
+            LIST_FOR_EACH_ENTRY(runjob, &running_job_list, struct running_job_t, entry)
+            {
+                if (IsEqualGUID(&job->data.uuid, &runjob->uuid))
+                {
+                    TerminateProcess(runjob->process, 0);
+                    update_process_status(runjob->pid);
+                    break;
+                }
+            }
+        }
+        else if (job->data.flags & 0x04000000)
+        {
+            STARTUPINFOW si;
+            PROCESS_INFORMATION pi;
+
+            TRACE("running process %s\n", debugstr_w(job->info.Command));
+
+            if (job->instance_count)
+                FIXME("process %s is already running\n", debugstr_w(job->info.Command));
+
+            runjob = heap_alloc(sizeof(*runjob));
+            if (runjob)
+            {
+                static WCHAR winsta0[] = { 'W','i','n','S','t','a','0',0 };
+
+                memset(&si, 0, sizeof(si));
+                si.cb = sizeof(si);
+                /* FIXME: if (job->data.flags & TASK_FLAG_INTERACTIVE) */
+                si.lpDesktop = winsta0;
+                si.dwFlags = STARTF_USESHOWWINDOW;
+                si.wShowWindow = SW_SHOWNORMAL;
+                TRACE("executing %s %s at %s\n", debugstr_w(job->info.Command), debugstr_w(job->params), debugstr_w(job->curdir));
+                if (CreateProcessW(job->info.Command, job->params, NULL, NULL, FALSE, 0, NULL, job->curdir, &si, &pi))
+                {
+                    CloseHandle(pi.hThread);
+
+                    GetLocalTime(&job->data.last_runtime);
+                    job->data.exit_code = 0;
+                    job->data.status = SCHED_S_TASK_RUNNING;
+                    job->instance_count = 1;
+
+                    runjob->uuid = job->data.uuid;
+                    runjob->process = pi.hProcess;
+                    runjob->pid = pi.dwProcessId;
+                    list_add_tail(&running_job_list, &runjob->entry);
+                    add_process_to_queue(pi.hProcess);
+                }
+                else
+                {
+                    WARN("failed to execute %s\n", debugstr_w(job->info.Command));
+                    job->data.status = SCHED_S_TASK_HAS_NOT_RUN;
+                    job->instance_count = 0;
+                }
+            }
+
+            job->data.flags &= ~0x0c000000;
+            update_job_status(job);
+        }
+    }
+
+    LeaveCriticalSection(&at_job_list_section);
+}
+
+static void run_job(struct job_t *job)
+{
+    job->data.flags |= 0x04000000;
+    update_job_status(job);
+}
+
+void check_task_time(void)
+{
+    FILETIME current_ft, begin_ft, end_ft;
+    struct job_t *job;
+
+    GetSystemTimeAsFileTime(&current_ft);
+    FileTimeToLocalFileTime(&current_ft, &current_ft);
+
+    /* Give -1/+1 minute margin */
+    begin_ft = current_ft;
+    filetime_add_minutes(&begin_ft, -1);
+    end_ft = current_ft;
+    filetime_add_minutes(&end_ft, 1);
+
+    EnterCriticalSection(&at_job_list_section);
+
+    LIST_FOR_EACH_ENTRY(job, &at_job_list, struct job_t, entry)
+    {
+        if (job_runs_at(job, &begin_ft, &end_ft))
+        {
+            run_job(job);
+        }
+    }
+
+    LeaveCriticalSection(&at_job_list_section);
+}
+
+void check_missed_task_time(void)
+{
+    FILETIME current_ft, last_ft;
+    struct job_t *job;
+
+    GetSystemTimeAsFileTime(&current_ft);
+    FileTimeToLocalFileTime(&current_ft, &current_ft);
+
+    EnterCriticalSection(&at_job_list_section);
+
+    LIST_FOR_EACH_ENTRY(job, &at_job_list, struct job_t, entry)
+    {
+        if (SystemTimeToFileTime(&job->data.last_runtime, &last_ft))
+        {
+            if (job_runs_at(job, &last_ft, &current_ft))
+            {
+                run_job(job);
+            }
+        }
+    }
+
+    LeaveCriticalSection(&at_job_list_section);
 }
 
 void remove_job(const WCHAR *name)
@@ -544,7 +1068,7 @@ void remove_job(const WCHAR *name)
     struct job_t *job;
 
     EnterCriticalSection(&at_job_list_section);
-    job = find_job(0, name);
+    job = find_job(0, name, NULL);
     if (job)
     {
         list_remove(&job->entry);
@@ -577,7 +1101,7 @@ DWORD __cdecl NetrJobAdd(ATSVC_HANDLE server_name, AT_INFO *info, DWORD *jobid)
             for (i = 0; i < 5; i++)
             {
                 EnterCriticalSection(&at_job_list_section);
-                job = find_job(0, task_name);
+                job = find_job(0, task_name, NULL);
                 LeaveCriticalSection(&at_job_list_section);
 
                 if (job)
@@ -621,7 +1145,7 @@ DWORD __cdecl NetrJobDel(ATSVC_HANDLE server_name, DWORD min_jobid, DWORD max_jo
 
     for (jobid = min_jobid; jobid <= max_jobid; jobid++)
     {
-        struct job_t *job = find_job(jobid, NULL);
+        struct job_t *job = find_job(jobid, NULL, NULL);
 
         if (!job)
         {
@@ -716,7 +1240,7 @@ DWORD __cdecl NetrJobGetInfo(ATSVC_HANDLE server_name, DWORD jobid, AT_INFO **in
 
     EnterCriticalSection(&at_job_list_section);
 
-    job = find_job(jobid, NULL);
+    job = find_job(jobid, NULL, NULL);
     if (job)
     {
         AT_INFO *info_ret = heap_alloc(sizeof(*info_ret));

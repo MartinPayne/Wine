@@ -34,16 +34,34 @@ WINE_DEFAULT_DEBUG_CHANNEL(schedsvc);
 
 static const WCHAR scheduleW[] = {'S','c','h','e','d','u','l','e',0};
 static SERVICE_STATUS_HANDLE schedsvc_handle;
-static HANDLE done_event;
+static HANDLE done_event, hjob_queue;
+
+void add_process_to_queue(HANDLE process)
+{
+    if (!AssignProcessToJobObject(hjob_queue, process))
+        ERR("AssignProcessToJobObject failed\n");
+}
 
 static DWORD WINAPI tasks_monitor_thread(void *arg)
 {
     static const WCHAR tasksW[] = { '\\','T','a','s','k','s','\\',0 };
     WCHAR path[MAX_PATH];
-    HANDLE htasks;
+    HANDLE htasks, hport, htimer;
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT info;
     OVERLAPPED ov;
+    LARGE_INTEGER period;
 
     TRACE("Starting...\n");
+
+    load_at_tasks();
+    check_missed_task_time();
+
+    htimer = CreateWaitableTimerW(NULL, FALSE, NULL);
+    if (htimer == NULL)
+    {
+        ERR("CreateWaitableTimer failed\n");
+        return -1;
+    }
 
     GetWindowsDirectoryW(path, MAX_PATH);
     lstrcatW(path, tasksW);
@@ -59,6 +77,28 @@ static DWORD WINAPI tasks_monitor_thread(void *arg)
         return -1;
     }
 
+    hjob_queue = CreateJobObjectW(NULL, NULL);
+    if (!hjob_queue)
+    {
+        ERR("CreateJobObject failed\n");
+        return -1;
+    }
+
+    hport = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+    if (!hport)
+    {
+        ERR("CreateIoCompletionPort failed\n");
+        return -1;
+    }
+
+    info.CompletionKey = hjob_queue;
+    info.CompletionPort = hport;
+    if (!SetInformationJobObject(hjob_queue, JobObjectAssociateCompletionPortInformation, &info, sizeof(info)))
+    {
+        ERR("SetInformationJobObject failed\n");
+        return -1;
+    }
+
     memset(&ov, 0, sizeof(ov));
     ov.hEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
 
@@ -69,7 +109,7 @@ static DWORD WINAPI tasks_monitor_thread(void *arg)
             FILE_NOTIFY_INFORMATION data;
             WCHAR name_buffer[MAX_PATH];
         } info;
-        HANDLE events[2];
+        HANDLE events[4];
         DWORD ret;
 
         /* the buffer must be DWORD aligned */
@@ -86,11 +126,41 @@ static DWORD WINAPI tasks_monitor_thread(void *arg)
             FIXME("got multiple entries\n");
 
         events[0] = done_event;
-        events[1] = ov.hEvent;
+        events[1] = htimer;
+        events[2] = hport;
+        events[3] = ov.hEvent;
 
-        ret = WaitForMultipleObjects(2, events, FALSE, INFINITE);
+        ret = WaitForMultipleObjects(4, events, FALSE, INFINITE);
+        /* Done event */
         if (ret == WAIT_OBJECT_0) break;
 
+        /* Next runtime timer */
+        if (ret == WAIT_OBJECT_0 + 1)
+        {
+            check_task_time();
+            continue;
+        }
+
+        /* Job queue */
+        if (ret == WAIT_OBJECT_0 + 2)
+        {
+            DWORD msg;
+            ULONG_PTR dummy, pid;
+
+            if (GetQueuedCompletionStatus(hport, &msg, &dummy, (OVERLAPPED **)&pid, 0))
+            {
+                if (msg == JOB_OBJECT_MSG_EXIT_PROCESS)
+                {
+                    TRACE("got message: process %#lx has terminated\n", pid);
+                    update_process_status(pid);
+                }
+                else
+                    FIXME("got message %#x from the job\n", msg);
+            }
+            continue;
+        }
+
+        /* Directory change notification */
         info.data.FileName[info.data.FileNameLength/sizeof(WCHAR)] = 0;
 
         switch (info.data.Action)
@@ -126,9 +196,21 @@ static DWORD WINAPI tasks_monitor_thread(void *arg)
             FIXME("%s: action %#x not handled\n", debugstr_w(info.data.FileName), info.data.Action);
             break;
         }
+
+        check_task_state();
+
+        if (get_next_runtime(&period))
+        {
+            if (!SetWaitableTimer(htimer, &period, 0, NULL, NULL, FALSE))
+                ERR("SetWaitableTimer failed\n");
+        }
     }
 
+    CancelWaitableTimer(htimer);
+    CloseHandle(htimer);
     CloseHandle(ov.hEvent);
+    CloseHandle(hport);
+    CloseHandle(hjob_queue);
     CloseHandle(htasks);
 
     TRACE("Finished.\n");

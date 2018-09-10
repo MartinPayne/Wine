@@ -1507,15 +1507,9 @@ static void test_inheritance(void)
     FUNCDESC *pFD;
     WCHAR path[MAX_PATH];
     CHAR pathA[MAX_PATH];
-    static const WCHAR tl_path[] = {'.','\\','m','i','d','l','_','t','m','a','r','s','h','a','l','.','t','l','b',0};
-
-    BOOL use_midl_tlb = FALSE;
 
     GetModuleFileNameA(NULL, pathA, MAX_PATH);
     MultiByteToWideChar(CP_ACP, 0, pathA, -1, path, MAX_PATH);
-
-    if(use_midl_tlb)
-        memcpy(path, tl_path, sizeof(tl_path));
 
     hr = LoadTypeLib(path, &pTL);
     if(FAILED(hr)) return;
@@ -1530,13 +1524,10 @@ static void test_inheritance(void)
     ok(pTA->typekind == TKIND_DISPATCH, "kind %04x\n", pTA->typekind);
     ok(pTA->cbSizeVft == 7 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
     ok(pTA->wTypeFlags == TYPEFLAG_FDISPATCHABLE, "typeflags %x\n", pTA->wTypeFlags);
-if(use_midl_tlb) {
     ok(pTA->cFuncs == 6, "cfuncs %d\n", pTA->cFuncs);
     ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
-}
     ITypeInfo_ReleaseTypeAttr(pTI, pTA);
 
-if(use_midl_tlb) {
     hr = ITypeInfo_GetRefTypeOfImplType(pTI, 0, &href);
     ok(hr == S_OK, "hr %08x\n", hr);
     hr = ITypeInfo_GetRefTypeInfo(pTI, href, &pTI_p);
@@ -1555,7 +1546,6 @@ if(use_midl_tlb) {
     ok(pFD->memid == 0x60020000, "memid %08x\n", pFD->memid);
     ok(pFD->oVft == 5 * sizeof(void *), "oVft %d\n", pFD->oVft);
     ITypeInfo_ReleaseFuncDesc(pTI, pFD);
-}
     ITypeInfo_Release(pTI);
 
 
@@ -1596,17 +1586,13 @@ if(use_midl_tlb) {
 
     hr = ITypeInfo_GetTypeAttr(pTI, &pTA);
     ok(hr == S_OK, "hr %08x\n", hr);
-    if (hr == S_OK)
-    {
-        ok(pTA->typekind == TKIND_DISPATCH, "kind %04x\n", pTA->typekind);
-        ok(pTA->cbSizeVft == 7 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
-        if(use_midl_tlb) {
-            ok(pTA->wTypeFlags == TYPEFLAG_FDUAL, "typeflags %x\n", pTA->wTypeFlags);
-        }
-        ok(pTA->cFuncs == 8, "cfuncs %d\n", pTA->cFuncs);
-        ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
-        ITypeInfo_ReleaseTypeAttr(pTI, pTA);
-    }
+    ok(pTA->typekind == TKIND_DISPATCH, "kind %04x\n", pTA->typekind);
+    ok(pTA->cbSizeVft == 7 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
+    ok(pTA->wTypeFlags == TYPEFLAG_FDUAL, "typeflags %x\n", pTA->wTypeFlags);
+    ok(pTA->cFuncs == 8, "cfuncs %d\n", pTA->cFuncs);
+    ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
+    ITypeInfo_ReleaseTypeAttr(pTI, pTA);
+
     hr = ITypeInfo_GetRefTypeOfImplType(pTI, 0, &href);
     ok(hr == S_OK, "hr %08x\n", hr);
     hr = ITypeInfo_GetRefTypeInfo(pTI, href, &pTI_p);
@@ -1616,12 +1602,10 @@ if(use_midl_tlb) {
     ok(IsEqualGUID(&pTA->guid, &IID_IDispatch), "guid {%08x-....\n", pTA->guid.Data1);
     ITypeInfo_ReleaseTypeAttr(pTI_p, pTA);
     ITypeInfo_Release(pTI_p);
-if(use_midl_tlb) {
     hr = ITypeInfo_GetFuncDesc(pTI, 6, &pFD);
     ok(hr == S_OK, "hr %08x\n", hr);
     ok(pFD->memid == 0x1234, "memid %08x\n", pFD->memid);
     ITypeInfo_ReleaseFuncDesc(pTI, pFD);
-}
     ITypeInfo_Release(pTI);
 
     /* ItestIF7 is dual with inherited ifaces which derive from Dispatch */
@@ -1662,13 +1646,10 @@ if(use_midl_tlb) {
     ok(pTA->typekind == TKIND_DISPATCH, "kind %04x\n", pTA->typekind);
     ok(pTA->cbSizeVft == 7 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
     ok(pTA->wTypeFlags == TYPEFLAG_FDISPATCHABLE, "typeflags %x\n", pTA->wTypeFlags);
-if(use_midl_tlb) {
     ok(pTA->cFuncs == 3, "cfuncs %d\n", pTA->cFuncs);
     ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
-}
     ITypeInfo_ReleaseTypeAttr(pTI, pTA);
 
-if(use_midl_tlb) {
     hr = ITypeInfo_GetRefTypeOfImplType(pTI, -1, &href);
     ok(hr == TYPE_E_ELEMENTNOTFOUND, "hr %08x\n", hr);
     hr = ITypeInfo_GetRefTypeOfImplType(pTI, 0, &href);
@@ -1689,7 +1670,6 @@ if(use_midl_tlb) {
     ok(pFD->memid == 0x60010000, "memid %08x\n", pFD->memid);
     ok(pFD->oVft == 2 * sizeof(void *), "oVft %d\n", pFD->oVft);
     ITypeInfo_ReleaseFuncDesc(pTI, pFD);
-}
     ITypeInfo_Release(pTI);
 
     /* ItestIF11 is a syntax 2 dispinterface which derives from IDispatch */
@@ -1701,13 +1681,10 @@ if(use_midl_tlb) {
     ok(pTA->typekind == TKIND_DISPATCH, "kind %04x\n", pTA->typekind);
     ok(pTA->cbSizeVft == 7 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
     ok(pTA->wTypeFlags == TYPEFLAG_FDISPATCHABLE, "typeflags %x\n", pTA->wTypeFlags);
-if(use_midl_tlb) {
     ok(pTA->cFuncs == 10, "cfuncs %d\n", pTA->cFuncs);
     ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
-}
     ITypeInfo_ReleaseTypeAttr(pTI, pTA);
 
-if(use_midl_tlb) {
     hr = ITypeInfo_GetRefTypeOfImplType(pTI, 0, &href);
     ok(hr == S_OK, "hr %08x\n", hr);
     hr = ITypeInfo_GetRefTypeInfo(pTI, href, &pTI_p);
@@ -1736,7 +1713,6 @@ if(use_midl_tlb) {
     ok(hr == S_OK, "hr %08x\n", hr);
     if (SUCCEEDED(hr)) ITypeInfo_Release(pTI_p);
     ITypeInfo_ReleaseFuncDesc(pTI, pFD);
-}
     ITypeInfo_Release(pTI);
 
 
@@ -1749,13 +1725,10 @@ if(use_midl_tlb) {
     ok(pTA->typekind == TKIND_INTERFACE, "kind %04x\n", pTA->typekind);
     ok(pTA->cbSizeVft == 6 * sizeof(void *), "sizevft %d\n", pTA->cbSizeVft);
     ok(pTA->wTypeFlags == 0, "typeflags %x\n", pTA->wTypeFlags);
-if(use_midl_tlb) {
     ok(pTA->cFuncs == 1, "cfuncs %d\n", pTA->cFuncs);
     ok(pTA->cImplTypes == 1, "cimpltypes %d\n", pTA->cImplTypes);
-}
     ITypeInfo_ReleaseTypeAttr(pTI, pTA);
 
-if(use_midl_tlb) {
     /* Should have one method */
     hr = ITypeInfo_GetFuncDesc(pTI, 1, &pFD);
     ok(hr == TYPE_E_ELEMENTNOTFOUND, "hr %08x\n", hr);
@@ -1764,7 +1737,6 @@ if(use_midl_tlb) {
     ok(pFD->memid == 0x60020000, "memid %08x\n", pFD->memid);
     ok(pFD->oVft == 5 * sizeof(void *), "oVft %d\n", pFD->oVft);
     ITypeInfo_ReleaseFuncDesc(pTI, pFD);
-}
     ITypeInfo_Release(pTI);
 
     ITypeLib_Release(pTL);
@@ -3979,8 +3951,46 @@ static char *print_size(BSTR name, TYPEATTR *attr)
         sprintf(buf, "sizeof(union %s)", dump_string(name));
         break;
 
-    case TKIND_ENUM:
     case TKIND_ALIAS:
+        sprintf(buf, "sizeof(%s)", dump_string(name));
+        break;
+
+    case TKIND_ENUM:
+        sprintf(buf, "4");
+        break;
+
+    default:
+        assert(0);
+        return NULL;
+    }
+
+    return buf;
+}
+
+static char *print_align(BSTR name, TYPEATTR *attr)
+{
+    static char buf[256];
+
+    switch (attr->typekind)
+    {
+    case TKIND_DISPATCH:
+    case TKIND_INTERFACE:
+        sprintf(buf, "TYPE_ALIGNMENT(%s*)", dump_string(name));
+        break;
+
+    case TKIND_RECORD:
+        sprintf(buf, "TYPE_ALIGNMENT(struct %s)", dump_string(name));
+        break;
+
+    case TKIND_UNION:
+        sprintf(buf, "TYPE_ALIGNMENT(union %s)", dump_string(name));
+        break;
+
+    case TKIND_ALIAS:
+        sprintf(buf, "TYPE_ALIGNMENT(%s)", dump_string(name));
+        break;
+
+    case TKIND_ENUM:
         sprintf(buf, "4");
         break;
 
@@ -4100,10 +4110,10 @@ static void test_dump_typelib(const char *name)
 
         printf("  \"%s\",\n", wine_dbgstr_guid(&attr->guid));
 
-        printf("  /*kind*/ %s, /*flags*/ %s, /*align*/ %d, /*size*/ %s,\n"
+        printf("  /*kind*/ %s, /*flags*/ %s, /*align*/ %s, /*size*/ %s,\n"
                "  /*helpctx*/ 0x%04x, /*version*/ 0x%08x, /*#vtbl*/ %d, /*#func*/ %d",
             map_value(attr->typekind, tkind_map), dump_type_flags(attr->wTypeFlags),
-            attr->cbAlignment, print_size(name, attr),
+            print_align(name, attr), print_size(name, attr),
             help_ctx, MAKELONG(attr->wMinorVerNum, attr->wMajorVerNum),
             attr->cbSizeVft/sizeof(void*), attr->cFuncs);
 
@@ -4203,13 +4213,13 @@ static const type_info info[] = {
 {
   "g",
   "{b14b6bb5-904e-4ff9-b247-bd361f7a0001}",
-  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct g),
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(struct g), /*size*/ sizeof(struct g),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "test_iface",
   "{b14b6bb5-904e-4ff9-b247-bd361f7a0002}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(test_iface*),
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(test_iface*), /*size*/ sizeof(test_iface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 4, /*#func*/ 1,
   {
     {
@@ -4231,7 +4241,7 @@ static const type_info info[] = {
 {
   "parent_iface",
   "{b14b6bb5-904e-4ff9-b247-bd361f7aa001}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(parent_iface*),
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(parent_iface*), /*size*/ sizeof(parent_iface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 4, /*#func*/ 1,
   {
     {
@@ -4253,7 +4263,7 @@ static const type_info info[] = {
 {
   "child_iface",
   "{b14b6bb5-904e-4ff9-b247-bd361f7aa002}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(child_iface*),
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(child_iface*), /*size*/ sizeof(child_iface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 5, /*#func*/ 1,
   {
     {
@@ -4273,43 +4283,43 @@ static const type_info info[] = {
 {
   "_n",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753903}",
-  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct _n),
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(struct _n), /*size*/ sizeof(struct _n),
   /*helpctx*/ 0x0003, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "n",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753902}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(n), /*size*/ sizeof(n),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "nn",
   "{00000000-0000-0000-0000-000000000000}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(nn), /*size*/ sizeof(nn),
   /*helpctx*/ 0x0003, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "_m",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753906}",
-  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct _m),
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(struct _m), /*size*/ sizeof(struct _m),
   /*helpctx*/ 0x0003, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "m",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753905}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(m), /*size*/ sizeof(m),
   /*helpctx*/ 0x0000, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "mm",
   "{00000000-0000-0000-0000-000000000000}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(mm), /*size*/ sizeof(mm),
   /*helpctx*/ 0x0003, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "IDualIface",
   "{b14b6bb5-904e-4ff9-b247-bd361f7aaedd}",
-  /*kind*/ TKIND_DISPATCH, /*flags*/ TYPEFLAG_FDISPATCHABLE|TYPEFLAG_FDUAL, /*align*/ 4, /*size*/ sizeof(IDualIface*),
+  /*kind*/ TKIND_DISPATCH, /*flags*/ TYPEFLAG_FDISPATCHABLE|TYPEFLAG_FDUAL, /*align*/ TYPE_ALIGNMENT(IDualIface*), /*size*/ sizeof(IDualIface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 7, /*#func*/ 8,
   {
     {
@@ -4451,7 +4461,7 @@ static const type_info info[] = {
 {
   "ISimpleIface",
   "{ec5dfcd6-eeb0-4cd6-b51e-8030e1dac009}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ 4, /*size*/ sizeof(ISimpleIface*),
+  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ TYPE_ALIGNMENT(ISimpleIface*), /*size*/ sizeof(ISimpleIface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 8, /*#func*/ 1,
   {
     {
@@ -4471,25 +4481,25 @@ static const type_info info[] = {
 {
   "test_struct",
   "{4029f190-ca4a-4611-aeb9-673983cb96dd}",
-  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct test_struct),
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(struct test_struct), /*size*/ sizeof(struct test_struct),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "test_struct2",
   "{4029f190-ca4a-4611-aeb9-673983cb96de}",
-  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct test_struct2),
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(struct test_struct2), /*size*/ sizeof(struct test_struct2),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "t_INT",
   "{016fe2ec-b2c8-45f8-b23b-39e53a75396a}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED, /*align*/ TYPE_ALIGNMENT(t_INT), /*size*/ sizeof(t_INT),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "a",
   "{00000000-0000-0000-0000-000000000000}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(a), /*size*/ sizeof(a),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
@@ -4519,7 +4529,7 @@ static const type_info info[] = {
 {
   "c",
   "{016fe2ec-b2c8-45f8-b23b-39e53a75396b}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ TYPE_ALIGNMENT(c), /*size*/ sizeof(c),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
@@ -4537,7 +4547,7 @@ static const type_info info[] = {
 {
   "d",
   "{016fe2ec-b2c8-45f8-b23b-39e53a75396d}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(d), /*size*/ sizeof(d),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
@@ -4555,43 +4565,43 @@ static const type_info info[] = {
 {
   "e",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753970}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(e), /*size*/ sizeof(e),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "_e",
   "{00000000-0000-0000-0000-000000000000}",
-  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(struct _e),
+  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(struct _e), /*size*/ sizeof(struct _e),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "ee",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753971}",
-  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(struct ee),
+  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(struct ee), /*size*/ sizeof(struct ee),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "f",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753972}",
-  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(f), /*size*/ sizeof(f),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "_f",
   "{00000000-0000-0000-0000-000000000000}",
-  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(union _f),
+  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(union _f), /*size*/ sizeof(union _f),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "ff",
   "{016fe2ec-b2c8-45f8-b23b-39e53a753973}",
-  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(union ff),
+  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ TYPE_ALIGNMENT(union ff), /*size*/ sizeof(union ff),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
 },
 {
   "ITestIface",
   "{ec5dfcd6-eeb0-4cd6-b51e-8030e1dac00a}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ 4, /*size*/ sizeof(ITestIface*),
+  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ TYPE_ALIGNMENT(ITestIface*), /*size*/ sizeof(ITestIface*),
   /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 13, /*#func*/ 6,
   {
     {
@@ -4714,21 +4724,8 @@ static void test_dump_typelib(const char *name)
         ole_check(ITypeInfo_GetTypeAttr(typeinfo, &typeattr));
         expect_int(typeattr->typekind, ti->type);
         expect_hex(typeattr->wTypeFlags, ti->wTypeFlags);
-        /* FIXME: remove once widl is fixed */
-        if (typeattr->typekind == TKIND_ALIAS && typeattr->cbAlignment != ti->cbAlignment)
-        {
-todo_wine /* widl generates broken typelib and typeattr just reflects that */
-        ok(typeattr->cbAlignment == ti->cbAlignment || broken(typeattr->cbAlignment == 1),
-           "expected %d, got %d\n", ti->cbAlignment, typeattr->cbAlignment);
-todo_wine /* widl generates broken typelib and typeattr just reflects that */
-        ok(typeattr->cbSizeInstance == ti->cbSizeInstance || broken(typeattr->cbSizeInstance == 0),
-           "expected %d, got %d\n", ti->cbSizeInstance, typeattr->cbSizeInstance);
-        }
-        else
-        {
         expect_int(typeattr->cbAlignment, ti->cbAlignment);
         expect_int(typeattr->cbSizeInstance, ti->cbSizeInstance);
-        }
         expect_int(help_ctx, ti->help_ctx);
         expect_int(MAKELONG(typeattr->wMinorVerNum, typeattr->wMajorVerNum), ti->version);
         expect_int(typeattr->cbSizeVft, ti->cbSizeVft * sizeof(void*));
@@ -4921,8 +4918,8 @@ static void test_register_typelib(BOOL system_registration)
         { TKIND_INTERFACE, TYPEFLAG_FDISPATCHABLE },
         { TKIND_INTERFACE, TYPEFLAG_FOLEAUTOMATION },
         { TKIND_INTERFACE, TYPEFLAG_FDISPATCHABLE | TYPEFLAG_FOLEAUTOMATION },
-        { TKIND_DISPATCH,  0 /* TYPEFLAG_FDUAL - widl clears this flag for non-IDispatch derived interfaces */ },
-        { TKIND_DISPATCH,  0 /* TYPEFLAG_FDUAL - widl clears this flag for non-IDispatch derived interfaces */ },
+        { TKIND_DISPATCH,  TYPEFLAG_FDUAL },
+        { TKIND_DISPATCH,  TYPEFLAG_FDUAL },
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE | TYPEFLAG_FDUAL },
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE | TYPEFLAG_FDUAL },
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE },
@@ -4997,7 +4994,8 @@ static void test_register_typelib(BOOL system_registration)
             ok(hr == S_OK, "got %08x\n", hr);
 
             ok(dual_attr->typekind == TKIND_INTERFACE, "%d: got kind %d\n", i, dual_attr->typekind);
-            ok(dual_attr->wTypeFlags == (TYPEFLAG_FDISPATCHABLE | TYPEFLAG_FOLEAUTOMATION | TYPEFLAG_FDUAL), "%d: got flags %04x\n", i, dual_attr->wTypeFlags);
+            ok(dual_attr->wTypeFlags == (attrs[i].flags | TYPEFLAG_FOLEAUTOMATION),
+                "%d: got flags %04x\n", i, dual_attr->wTypeFlags);
 
             ITypeInfo_ReleaseTypeAttr(dual_info, dual_attr);
             ITypeInfo_Release(dual_info);

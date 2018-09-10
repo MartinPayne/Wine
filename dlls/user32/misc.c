@@ -837,6 +837,42 @@ LONG WINAPI GetDisplayConfigBufferSizes(UINT32 flags, UINT32 *num_path_info, UIN
     return ERROR_NOT_SUPPORTED;
 }
 
+/**********************************************************************
+ * RegisterPointerDeviceNotifications [USER32.@]
+ */
+BOOL WINAPI RegisterPointerDeviceNotifications(HWND hwnd, BOOL notifyrange)
+{
+    FIXME("(%p %d): stub\n", hwnd, notifyrange);
+    return TRUE;
+}
+
+/**********************************************************************
+ * GetPointerDevices [USER32.@]
+ */
+BOOL WINAPI GetPointerDevices(UINT32 *device_count, POINTER_DEVICE_INFO *devices)
+{
+    FIXME("(%p %p): partial stub\n", device_count, devices);
+
+    if (!device_count)
+        return FALSE;
+
+    if (devices)
+        return FALSE;
+
+    *device_count = 0;
+    return TRUE;
+}
+
+/**********************************************************************
+ * RegisterTouchHitTestingWindow [USER32.@]
+ */
+BOOL WINAPI RegisterTouchHitTestingWindow(HWND hwnd, ULONG value)
+{
+    FIXME("(%p %d): stub\n", hwnd, value);
+    return TRUE;
+}
+
+
 static const WCHAR imeW[] = {'I','M','E',0};
 const struct builtin_class_descr IME_builtin_class =
 {

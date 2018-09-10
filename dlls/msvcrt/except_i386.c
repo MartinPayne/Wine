@@ -154,41 +154,49 @@ static inline void *call_ebp_func( void *func, void *ebp )
 }
 
 /* call a copy constructor */
-static inline void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
-{
-    TRACE( "calling copy ctor %p object %p src %p\n", func, this, src );
-    if (has_vbase)
-        /* in that case copy ctor takes an extra bool indicating whether to copy the base class */
-        __asm__ __volatile__("pushl $1; pushl %2; call *%0"
-                             : : "r" (func), "c" (this), "r" (src) : "eax", "edx", "memory" );
-    else
-        __asm__ __volatile__("pushl %2; call *%0"
-                             : : "r" (func), "c" (this), "r" (src) : "eax", "edx", "memory" );
-}
+extern void call_copy_ctor( void *func, void *this, void *src, int has_vbase );
+
+__ASM_GLOBAL_FUNC( call_copy_ctor,
+                   "pushl %ebp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                   "movl %esp, %ebp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                   "pushl $1\n\t"
+                   "movl 12(%ebp), %ecx\n\t"
+                   "pushl 16(%ebp)\n\t"
+                   "call *8(%ebp)\n\t"
+                   "leave\n"
+                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   "ret" );
 
 /* continue execution to the specified address after exception is caught */
-static inline void DECLSPEC_NORETURN continue_after_catch( cxx_exception_frame* frame, void *addr )
-{
-    __asm__ __volatile__("movl -4(%0),%%esp; leal 12(%0),%%ebp; jmp *%1"
-                         : : "r" (frame), "a" (addr) );
-    for (;;) ; /* unreached */
-}
+extern void DECLSPEC_NORETURN continue_after_catch( cxx_exception_frame* frame, void *addr );
 
-static inline void call_finally_block( void *code_block, void *base_ptr )
-{
-    __asm__ __volatile__ ("movl %1,%%ebp; call *%%eax"
-                          : : "a" (code_block), "g" (base_ptr));
-}
+__ASM_GLOBAL_FUNC( continue_after_catch,
+                   "movl 4(%esp), %edx\n\t"
+                   "movl 8(%esp), %eax\n\t"
+                   "movl -4(%edx), %esp\n\t"
+                   "leal 12(%edx), %ebp\n\t"
+                   "jmp *%eax" );
 
-static inline int call_filter( int (*func)(PEXCEPTION_POINTERS), void *arg, void *ebp )
-{
-    int ret;
-    __asm__ __volatile__ ("pushl %%ebp; pushl %3; movl %2,%%ebp; call *%%eax; popl %%ebp; popl %%ebp"
-                          : "=a" (ret)
-                          : "0" (func), "r" (ebp), "r" (arg)
-                          : "ecx", "edx", "memory" );
-    return ret;
-}
+extern void DECLSPEC_NORETURN call_finally_block( void *code_block, void *base_ptr );
+
+__ASM_GLOBAL_FUNC( call_finally_block,
+                   "movl 8(%esp), %ebp\n\t"
+                   "jmp *4(%esp)" );
+
+extern int call_filter( int (*func)(PEXCEPTION_POINTERS), void *arg, void *ebp );
+
+__ASM_GLOBAL_FUNC( call_filter,
+                   "pushl %ebp\n\t"
+                   "pushl 12(%esp)\n\t"
+                   "movl 20(%esp), %ebp\n\t"
+                   "call *12(%esp)\n\t"
+                   "popl %ebp\n\t"
+                   "popl %ebp\n\t"
+                   "ret" );
 
 static inline int call_unwind_func( int (*func)(void), void *ebp )
 {
@@ -931,7 +939,6 @@ int CDECL _except_handler3(PEXCEPTION_RECORD rec,
           frame->trylevel = pScopeTable[trylevel].previousTryLevel;
           TRACE("__finally block %p\n",pScopeTable[trylevel].lpfnHandler);
           call_finally_block(pScopeTable[trylevel].lpfnHandler, &frame->_ebp);
-          ERR("Returned from __finally block - expect crash!\n");
        }
       }
       trylevel = pScopeTable[trylevel].previousTryLevel;
@@ -1005,7 +1012,6 @@ int CDECL _except_handler4_common( ULONG *cookie, void (*check_cookie)(void),
                     frame->trylevel = scope_table->entries[trylevel].previousTryLevel;
                     TRACE("__finally block %p\n",scope_table->entries[trylevel].lpfnHandler);
                     call_finally_block(scope_table->entries[trylevel].lpfnHandler, &frame->_ebp);
-                    ERR("Returned from __finally block - expect crash!\n");
                 }
             }
             trylevel = scope_table->entries[trylevel].previousTryLevel;

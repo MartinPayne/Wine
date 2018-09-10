@@ -33,6 +33,7 @@
 #include "winnt.h"
 #include "winternl.h"
 #include "winnls.h"
+#include "winuser.h"
 #include "psapi.h"
 #include "wine/test.h"
 
@@ -62,6 +63,11 @@ static BOOL  (WINAPI *pInitializeProcessForWsWatch)(HANDLE);
 static BOOL  (WINAPI *pQueryWorkingSet)(HANDLE, PVOID, DWORD);
 static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 static NTSTATUS (WINAPI *pNtQueryVirtualMemory)(HANDLE, LPCVOID, ULONG, PVOID, SIZE_T, SIZE_T *);
+static BOOL  (WINAPI *pIsWow64Process)(HANDLE, BOOL *);
+static BOOL  (WINAPI *pWow64DisableWow64FsRedirection)(void **);
+static BOOL  (WINAPI *pWow64RevertWow64FsRedirection)(void *);
+
+static BOOL wow64;
 
 static BOOL InitFunctionPtrs(HMODULE hpsapi)
 {
@@ -87,6 +93,9 @@ static BOOL InitFunctionPtrs(HMODULE hpsapi)
       (void *)GetProcAddress(hpsapi, "GetProcessImageFileNameW");
     pNtQuerySystemInformation = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
     pNtQueryVirtualMemory = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryVirtualMemory");
+    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
+    pWow64DisableWow64FsRedirection = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "Wow64DisableWow64FsRedirection");
+    pWow64RevertWow64FsRedirection = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "Wow64RevertWow64FsRedirection");
     return TRUE;
 }
 
@@ -110,6 +119,10 @@ static void test_EnumProcesses(void)
 
 static void test_EnumProcessModules(void)
 {
+    char buffer[200] = "C:\\windows\\system32\\notepad.exe";
+    PROCESS_INFORMATION pi = {0};
+    STARTUPINFOA si = {0};
+    void *cookie;
     HMODULE hMod;
     DWORD ret, cbNeeded = 0xdeadbeef;
 
@@ -151,6 +164,75 @@ static void test_EnumProcessModules(void)
     ok(hMod == GetModuleHandleA(NULL),
        "hMod=%p GetModuleHandleA(NULL)=%p\n", hMod, GetModuleHandleA(NULL));
     ok(cbNeeded % sizeof(hMod) == 0, "not a multiple of sizeof(HMODULE) cbNeeded=%d\n", cbNeeded);
+
+    ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcess failed: %u\n", GetLastError());
+
+    ret = WaitForInputIdle(pi.hProcess, 1000);
+    ok(!ret, "wait timed out\n");
+
+    SetLastError(0xdeadbeef);
+    hMod = NULL;
+    ret = pEnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
+    ok(ret == 1, "got %d, error %u\n", ret, GetLastError());
+    ok(!!hMod, "expected non-NULL module\n");
+    ok(cbNeeded % sizeof(hMod) == 0, "got %u\n", cbNeeded);
+
+    TerminateProcess(pi.hProcess, 0);
+
+    if (sizeof(void *) == 8)
+    {
+        MODULEINFO info;
+        char name[40];
+
+        strcpy(buffer, "C:\\windows\\syswow64\\notepad.exe");
+        ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        ok(ret, "CreateProcess failed: %u\n", GetLastError());
+
+        ret = WaitForInputIdle(pi.hProcess, 1000);
+        ok(!ret, "wait timed out\n");
+
+        SetLastError(0xdeadbeef);
+        hMod = NULL;
+        ret = pEnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
+        ok(ret == 1, "got %d, error %u\n", ret, GetLastError());
+        ok(!!hMod, "expected non-NULL module\n");
+        ok(cbNeeded % sizeof(hMod) == 0, "got %u\n", cbNeeded);
+
+        ret = GetModuleBaseNameA(pi.hProcess, hMod, name, sizeof(name));
+        ok(ret, "got error %u\n", GetLastError());
+        ok(!strcmp(name, "notepad.exe"), "got %s\n", name);
+
+        ret = GetModuleFileNameExA(pi.hProcess, hMod, name, sizeof(name));
+        ok(ret, "got error %u\n", GetLastError());
+todo_wine
+        ok(!strcmp(name, buffer), "got %s\n", name);
+
+        ret = GetModuleInformation(pi.hProcess, hMod, &info, sizeof(info));
+        ok(ret, "got error %u\n", GetLastError());
+        ok(info.lpBaseOfDll == hMod, "expected %p, got %p\n", hMod, info.lpBaseOfDll);
+        ok(info.SizeOfImage, "image size was 0\n");
+        ok(info.EntryPoint >= info.lpBaseOfDll, "got entry point %p\n", info.EntryPoint);
+
+        TerminateProcess(pi.hProcess, 0);
+    }
+    else if (wow64)
+    {
+        pWow64DisableWow64FsRedirection(&cookie);
+        ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        pWow64RevertWow64FsRedirection(cookie);
+        ok(ret, "CreateProcess failed: %u\n", GetLastError());
+
+        ret = WaitForInputIdle(pi.hProcess, 1000);
+        ok(!ret, "wait timed out\n");
+
+        SetLastError(0xdeadbeef);
+        ret = pEnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
+        ok(!ret, "got %d\n", ret);
+        ok(GetLastError() == ERROR_PARTIAL_COPY, "got error %u\n", GetLastError());
+
+        TerminateProcess(pi.hProcess, 0);
+    }
 }
 
 static void test_GetModuleInformation(void)
@@ -454,12 +536,12 @@ todo_wine {
 }
 
     SetLastError(0xdeadbeef);
-    ret = pGetMappedFileNameW(GetCurrentProcess(), base, map_nameW, sizeof(map_nameW)/sizeof(map_nameW[0]));
+    ret = pGetMappedFileNameW(GetCurrentProcess(), base, map_nameW, ARRAY_SIZE(map_nameW));
 todo_wine {
     ok(ret, "GetMappedFileNameW error %d\n", GetLastError());
     ok(ret > strlen(device_name), "map_name should be longer than device_name\n");
 }
-    if (nt_get_mapped_file_name(GetCurrentProcess(), base, nt_map_name, sizeof(nt_map_name)/sizeof(nt_map_name[0])))
+    if (nt_get_mapped_file_name(GetCurrentProcess(), base, nt_map_name, ARRAY_SIZE(nt_map_name)))
     {
         ok(memcmp(map_nameW, nt_map_name, lstrlenW(map_nameW)) == 0, "map name does not start with a device name: %s\n", map_name);
         WideCharToMultiByte(CP_ACP, 0, map_nameW, -1, map_name, MAX_PATH, NULL, NULL);
@@ -576,7 +658,7 @@ static void test_GetProcessImageFileName(void)
 
     /* correct call */
     memset(szImgPathW, 0xff, sizeof(szImgPathW));
-    ret = pGetProcessImageFileNameW(hpQI, szImgPathW, sizeof(szImgPathW)/sizeof(WCHAR));
+    ret = pGetProcessImageFileNameW(hpQI, szImgPathW, ARRAY_SIZE(szImgPathW));
     ok(ret > 0, "GetProcessImageFileNameW should have succeeded.\n");
     ok(szImgPathW[0] == '\\', "GetProcessImageFileNameW should have returned an NT path.\n");
     ok(lstrlenW(szImgPathW) == ret, "Expected length to be %d, got %d\n", ret, lstrlenW(szImgPathW));
@@ -780,6 +862,9 @@ START_TEST(psapi_main)
     if(InitFunctionPtrs(hpsapi))
     {
         DWORD pid = GetCurrentProcessId();
+
+        if (pIsWow64Process)
+            IsWow64Process(GetCurrentProcess(), &wow64);
 
     hpSR = OpenProcess(STANDARD_RIGHTS_REQUIRED, FALSE, pid);
     hpQI = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);

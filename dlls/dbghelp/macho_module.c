@@ -51,6 +51,7 @@
 #include "winternl.h"
 #include "wine/library.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "image_private.h"
 
 #ifdef HAVE_MACH_O_LOADER_H
@@ -1703,6 +1704,7 @@ BOOL    macho_synchronize_module_list(struct process* pcs)
  */
 static BOOL macho_search_loader(struct process* pcs, struct macho_info* macho_info)
 {
+    WCHAR *loader = get_wine_loader_name(pcs);
     BOOL ret = FALSE;
     ULONG_PTR dyld_image_info_address;
     struct dyld_all_image_infos image_infos;
@@ -1757,7 +1759,8 @@ static BOOL macho_search_loader(struct process* pcs, struct macho_info* macho_in
     }
 
     if (!ret)
-        ret = macho_search_and_load_file(pcs, get_wine_loader_name(), 0, macho_info);
+        ret = macho_search_and_load_file(pcs, loader, 0, macho_info);
+    heap_free(loader);
     return ret;
 }
 

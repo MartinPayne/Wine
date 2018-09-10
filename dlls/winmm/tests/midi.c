@@ -869,7 +869,7 @@ static void test_midiStream(UINT udev, HWND hwnd)
 
     expected = 50;
     ret = get_position(hm, TIME_MS);
-    todo_wine ok(ret >= expected && ret < expected + MARGIN, "expected %ums or greater, got %ums\n", expected, ret);
+    ok(ret >= expected && ret < expected + MARGIN, "expected %ums or greater, got %ums\n", expected, ret);
     expected = ret;
 
     Sleep(100);
@@ -882,7 +882,7 @@ static void test_midiStream(UINT udev, HWND hwnd)
 
     Sleep(1);
     ret = get_position(hm, TIME_MS);
-    todo_wine ok(ret > expected && ret < expected + MARGIN, "expected greater than %ums, got %ums\n", expected, ret);
+    ok(ret > expected && ret < expected + MARGIN, "expected greater than %ums, got %ums\n", expected, ret);
     expected = ret;
 
     ret = WaitForSingleObject(records.done, INFINITE);
@@ -914,7 +914,7 @@ static void test_midiStream(UINT udev, HWND hwnd)
        So, the second event happens at dwDeltaTime(250ms) + 100ms after the first event. */
     expected = 250 + 100;
     diff = records.time_stamp[1] - records.time_stamp[0];
-    todo_wine ok(diff >= expected - MARGIN && diff <= expected + MARGIN,
+    ok(diff >= expected - MARGIN && diff <= expected + MARGIN,
        "expected %u ~ %ums, got %ums (dev=%d)\n", expected - MARGIN, expected + MARGIN, diff, udev);
 
     rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
@@ -924,7 +924,7 @@ static void test_midiStream(UINT udev, HWND hwnd)
     ok(!rc, "midiStreamStop(dev=%d) rc=%s\n", udev, mmsys_error(rc));
 
     ret = get_position(hm, TIME_MS);
-    todo_wine ok(ret == 0, "expected 0ms, got %ums\n", ret);
+    ok(ret == 0, "expected 0ms, got %ums\n", ret);
 
     rc = midiStreamClose(hm);
     ok(!rc, "midiStreamClose(dev=%d) rc=%s\n", udev, mmsys_error(rc));

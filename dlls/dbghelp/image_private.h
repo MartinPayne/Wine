@@ -56,24 +56,7 @@ typedef struct section              macho_section;
 
 #define IMAGE_NO_MAP  ((void*)-1)
 
-#ifdef __ELF__
-
-#ifdef _WIN64
-#define         Elf_Ehdr        Elf64_Ehdr
-#define         Elf_Shdr        Elf64_Shdr
-#define         Elf_Phdr        Elf64_Phdr
-#define         Elf_Dyn         Elf64_Dyn
-#define         Elf_Sym         Elf64_Sym
-#define         Elf_auxv_t      Elf64_auxv_t
-#else
-#define         Elf_Ehdr        Elf32_Ehdr
-#define         Elf_Shdr        Elf32_Shdr
-#define         Elf_Phdr        Elf32_Phdr
-#define         Elf_Dyn         Elf32_Dyn
-#define         Elf_Sym         Elf32_Sym
-#define         Elf_auxv_t      Elf32_auxv_t
-#endif
-#else
+#ifndef __ELF__
 #ifndef SHT_NULL
 #define SHT_NULL        0
 #endif
@@ -97,10 +80,10 @@ struct image_file_map
             struct image_file_map*      alternate;      /* another ELF file (linked to this one) */
             char*                       target_copy;
 #ifdef __ELF__
-            Elf_Ehdr                    elfhdr;
+            Elf64_Ehdr                  elfhdr;
             struct
             {
-                Elf_Shdr                        shdr;
+                Elf64_Shdr                      shdr;
                 const char*                     mapped;
             }*                          sect;
 #endif

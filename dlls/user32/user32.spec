@@ -354,6 +354,7 @@
 @ stdcall GetOpenClipboardWindow()
 @ stdcall GetParent(long)
 @ stdcall GetPhysicalCursorPos(ptr)
+@ stdcall GetPointerDevices(ptr ptr)
 @ stdcall GetPriorityClipboardFormat(ptr long)
 @ stdcall GetProcessDefaultLayout(ptr)
 @ stdcall GetProcessDpiAwarenessInternal(long ptr)
@@ -598,12 +599,14 @@
 @ stdcall RegisterLogonProcess(long long)
 # @ stub RegisterMessagePumpHook
 @ stub RegisterNetworkCapabilities
+@ stdcall RegisterPointerDeviceNotifications(long long)
 @ stdcall RegisterPowerSettingNotification(long ptr long)
 @ stdcall RegisterRawInputDevices(ptr long long)
 @ stdcall RegisterServicesProcess(long)
 @ stdcall RegisterShellHookWindow (long)
 @ stdcall RegisterSystemThread(long long)
 @ stdcall RegisterTasklist (long)
+@ stdcall RegisterTouchHitTestingWindow(long long)
 @ stdcall RegisterTouchWindow(long long)
 # @ stub RegisterUserApiHook
 @ stdcall RegisterWindowMessageA(str)

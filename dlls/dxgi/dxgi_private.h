@@ -31,17 +31,19 @@
 #include "objbase.h"
 #include "winnls.h"
 
-#include "d3d10_1.h"
 #include "dxgi1_6.h"
+#include "d3d10_1.h"
+#include "d3d12.h"
 #ifdef DXGI_INIT_GUID
 #include "initguid.h"
 #endif
 #include "wine/wined3d.h"
 #include "wine/winedxgi.h"
 
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
 enum dxgi_frame_latency
 {
-    DXGI_FRAME_LATENCY_DEFAULT =  3,
     DXGI_FRAME_LATENCY_MAX     = 16,
 };
 
@@ -160,7 +162,7 @@ HRESULT dxgi_adapter_create(struct dxgi_factory *factory, UINT ordinal,
 struct dxgi_adapter *unsafe_impl_from_IDXGIAdapter(IDXGIAdapter *iface) DECLSPEC_HIDDEN;
 
 /* IDXGISwapChain */
-struct dxgi_swapchain
+struct d3d11_swapchain
 {
     IDXGISwapChain1 IDXGISwapChain1_iface;
     LONG refcount;
@@ -173,8 +175,14 @@ struct dxgi_swapchain
     IDXGIOutput *target;
 };
 
-HRESULT dxgi_swapchain_init(struct dxgi_swapchain *swapchain, struct dxgi_device *device,
+HRESULT d3d11_swapchain_create(IWineDXGIDevice *device, HWND window, const DXGI_SWAP_CHAIN_DESC1 *swapchain_desc,
+        const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc, IDXGISwapChain1 **swapchain) DECLSPEC_HIDDEN;
+HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_device *device,
         struct wined3d_swapchain_desc *desc, BOOL implicit) DECLSPEC_HIDDEN;
+
+HRESULT d3d12_swapchain_create(IWineDXGIFactory *factory, ID3D12CommandQueue *queue, HWND window,
+        const DXGI_SWAP_CHAIN_DESC1 *swapchain_desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc,
+        IDXGISwapChain1 **swapchain) DECLSPEC_HIDDEN;
 
 /* IDXGISurface */
 struct dxgi_surface

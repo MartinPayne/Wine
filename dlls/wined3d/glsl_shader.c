@@ -2174,9 +2174,9 @@ static const char *shader_glsl_interpolation_qualifiers(enum wined3d_shader_inte
     switch (mode)
     {
         case WINED3DSIM_CONSTANT:
-            return "flat";
+            return "flat ";
         case WINED3DSIM_LINEAR_NOPERSPECTIVE:
-            return "noperspective";
+            return "noperspective ";
         default:
             FIXME("Unhandled interpolation mode %#x.\n", mode);
         case WINED3DSIM_NONE:
@@ -2207,7 +2207,7 @@ static void shader_glsl_declare_shader_inputs(const struct wined3d_gl_info *gl_i
             for (i = 0; i < element_count; ++i)
             {
                 mode = wined3d_extract_interpolation_mode(interpolation_mode, i);
-                shader_addline(buffer, "%s vec4 reg%u;\n", shader_glsl_interpolation_qualifiers(mode), i);
+                shader_addline(buffer, "    %svec4 reg%u;\n", shader_glsl_interpolation_qualifiers(mode), i);
             }
             shader_addline(buffer, "} shader_in;\n");
         }
@@ -2242,7 +2242,7 @@ static void shader_glsl_declare_shader_outputs(const struct wined3d_gl_info *gl_
                     mode = wined3d_extract_interpolation_mode(interpolation_mode, i);
                     interpolation_qualifiers = shader_glsl_interpolation_qualifiers(mode);
                 }
-                shader_addline(buffer, "%s vec4 reg%u;\n", interpolation_qualifiers, i);
+                shader_addline(buffer, "    %svec4 reg%u;\n", interpolation_qualifiers, i);
             }
             shader_addline(buffer, "} shader_out;\n");
         }
@@ -8537,8 +8537,10 @@ static GLuint find_glsl_pshader(const struct wined3d_context *context,
 static inline BOOL vs_args_equal(const struct vs_compile_args *stored, const struct vs_compile_args *new,
         const DWORD use_map)
 {
-    if((stored->swizzle_map & use_map) != new->swizzle_map) return FALSE;
-    if((stored->clip_enabled) != new->clip_enabled) return FALSE;
+    if ((stored->swizzle_map & use_map) != new->swizzle_map)
+        return FALSE;
+    if ((stored->clip_enabled) != new->clip_enabled)
+        return FALSE;
     if (stored->point_size != new->point_size)
         return FALSE;
     if (stored->per_vertex_point_size != new->per_vertex_point_size)
@@ -8549,7 +8551,9 @@ static inline BOOL vs_args_equal(const struct vs_compile_args *stored, const str
         return FALSE;
     if (stored->next_shader_input_count != new->next_shader_input_count)
         return FALSE;
-    return stored->fog_src == new->fog_src;
+    if (stored->fog_src != new->fog_src)
+        return FALSE;
+    return !memcmp(stored->interpolation_mode, new->interpolation_mode, sizeof(new->interpolation_mode));
 }
 
 static GLuint find_glsl_vshader(const struct wined3d_context *context, struct shader_glsl_priv *priv,
@@ -11292,7 +11296,6 @@ static const SHADER_HANDLER shader_glsl_instruction_handler_table[WINED3DSIH_TAB
     /* WINED3DSIH_DSY                              */ shader_glsl_map2gl,
     /* WINED3DSIH_DSY_COARSE                       */ shader_glsl_map2gl,
     /* WINED3DSIH_DSY_FINE                         */ shader_glsl_map2gl,
-    /* WINED3DSIH_EVAL_SAMPLE_INDEX                */ NULL,
     /* WINED3DSIH_ELSE                             */ shader_glsl_else,
     /* WINED3DSIH_EMIT                             */ shader_glsl_emit,
     /* WINED3DSIH_EMIT_STREAM                      */ shader_glsl_emit,
@@ -11301,6 +11304,7 @@ static const SHADER_HANDLER shader_glsl_instruction_handler_table[WINED3DSIH_TAB
     /* WINED3DSIH_ENDREP                           */ shader_glsl_end,
     /* WINED3DSIH_ENDSWITCH                        */ shader_glsl_end,
     /* WINED3DSIH_EQ                               */ shader_glsl_relop,
+    /* WINED3DSIH_EVAL_SAMPLE_INDEX                */ NULL,
     /* WINED3DSIH_EXP                              */ shader_glsl_scalar_op,
     /* WINED3DSIH_EXPP                             */ shader_glsl_expp,
     /* WINED3DSIH_F16TOF32                         */ shader_glsl_float16,

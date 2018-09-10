@@ -428,12 +428,12 @@ static BOOL WINPOS_GetWinOffset( HWND hwndFrom, HWND hwndTo, BOOL *mirrored, POI
             if (wndPtr->dwExStyle & WS_EX_LAYOUTRTL)
             {
                 mirror_from = TRUE;
-                offset.x += wndPtr->rectClient.right - wndPtr->rectClient.left;
+                offset.x += wndPtr->client_rect.right - wndPtr->client_rect.left;
             }
             while (wndPtr->parent)
             {
-                offset.x += wndPtr->rectClient.left;
-                offset.y += wndPtr->rectClient.top;
+                offset.x += wndPtr->client_rect.left;
+                offset.y += wndPtr->client_rect.top;
                 hwnd = wndPtr->parent;
                 WIN_ReleasePtr( wndPtr );
                 if (!(wndPtr = WIN_GetPtr( hwnd ))) break;
@@ -463,12 +463,12 @@ static BOOL WINPOS_GetWinOffset( HWND hwndFrom, HWND hwndTo, BOOL *mirrored, POI
             if (wndPtr->dwExStyle & WS_EX_LAYOUTRTL)
             {
                 mirror_to = TRUE;
-                offset.x -= wndPtr->rectClient.right - wndPtr->rectClient.left;
+                offset.x -= wndPtr->client_rect.right - wndPtr->client_rect.left;
             }
             while (wndPtr->parent)
             {
-                offset.x -= wndPtr->rectClient.left;
-                offset.y -= wndPtr->rectClient.top;
+                offset.x -= wndPtr->client_rect.left;
+                offset.y -= wndPtr->client_rect.top;
                 hwnd = wndPtr->parent;
                 WIN_ReleasePtr( wndPtr );
                 if (!(wndPtr = WIN_GetPtr( hwnd ))) break;
@@ -704,7 +704,7 @@ static void WINPOS_ShowIconTitle( HWND hwnd, BOOL bShow )
     TRACE("%p %i\n", hwnd, (bShow != 0) );
 
     if (!win || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return;
-    if (win->rectWindow.left == -32000 || win->rectWindow.top == -32000)
+    if (win->window_rect.left == -32000 || win->window_rect.top == -32000)
     {
         TRACE( "not showing title for hidden icon %p\n", hwnd );
         bShow = FALSE;
@@ -1318,17 +1318,17 @@ BOOL WINAPI GetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *wndpl )
     /* update the placement according to the current style */
     if (pWnd->dwStyle & WS_MINIMIZE)
     {
-        pWnd->min_pos.x = pWnd->rectWindow.left;
-        pWnd->min_pos.y = pWnd->rectWindow.top;
+        pWnd->min_pos.x = pWnd->window_rect.left;
+        pWnd->min_pos.y = pWnd->window_rect.top;
     }
     else if (pWnd->dwStyle & WS_MAXIMIZE)
     {
-        pWnd->max_pos.x = pWnd->rectWindow.left;
-        pWnd->max_pos.y = pWnd->rectWindow.top;
+        pWnd->max_pos.x = pWnd->window_rect.left;
+        pWnd->max_pos.y = pWnd->window_rect.top;
     }
     else
     {
-        pWnd->normal_rect = pWnd->rectWindow;
+        pWnd->normal_rect = pWnd->window_rect;
     }
 
     wndpl->length  = sizeof(*wndpl);
@@ -2080,6 +2080,7 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
                                      window_rect, client_rect, &visible_rect, &new_surface );
 
     WIN_GetRectangles( hwnd, COORDS_SCREEN, &old_window_rect, NULL );
+    if (IsRectEmpty( &valid_rects[0] )) valid_rects = NULL;
 
     if (!(win = WIN_GetPtr( hwnd )) || win == WND_DESKTOP || win == WND_OTHER_PROCESS)
     {
@@ -2087,7 +2088,7 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
         return FALSE;
     }
     old_visible_rect = win->visible_rect;
-    old_client_rect = win->rectClient;
+    old_client_rect = win->client_rect;
     old_surface = win->surface;
     if (old_surface != new_surface) swp_flags |= SWP_FRAMECHANGED;  /* force refreshing non-client area */
 
@@ -2104,11 +2105,10 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
         req->client.top    = client_rect->top;
         req->client.right  = client_rect->right;
         req->client.bottom = client_rect->bottom;
-        if (!EqualRect( window_rect, &visible_rect ) || !IsRectEmpty( &valid_rects[0] ))
+        if (!EqualRect( window_rect, &visible_rect ) || valid_rects)
         {
             wine_server_add_data( req, &visible_rect, sizeof(visible_rect) );
-            if (!IsRectEmpty( &valid_rects[0] ))
-                wine_server_add_data( req, valid_rects, 2 * sizeof(*valid_rects) );
+            if (valid_rects) wine_server_add_data( req, valid_rects, sizeof(*valid_rects) );
         }
         if (new_surface) req->paint_flags |= SET_WINPOS_PAINT_SURFACE;
         if (win->pixel_format) req->paint_flags |= SET_WINPOS_PIXEL_FORMAT;
@@ -2117,8 +2117,8 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
         {
             win->dwStyle    = reply->new_style;
             win->dwExStyle  = reply->new_ex_style;
-            win->rectWindow = *window_rect;
-            win->rectClient = *client_rect;
+            win->window_rect  = *window_rect;
+            win->client_rect  = *client_rect;
             win->visible_rect = visible_rect;
             win->surface      = new_surface;
             surface_win       = wine_server_ptr_handle( reply->surface_win );
@@ -2127,8 +2127,8 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
             {
                 RECT client;
                 GetClientRect( win->parent, &client );
-                mirror_rect( &client, &win->rectWindow );
-                mirror_rect( &client, &win->rectClient );
+                mirror_rect( &client, &win->window_rect );
+                mirror_rect( &client, &win->client_rect );
                 mirror_rect( &client, &win->visible_rect );
             }
             /* if an RTL window is resized the children have moved */
@@ -2155,7 +2155,7 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
         register_window_surface( old_surface, new_surface );
         if (old_surface)
         {
-            if (!IsRectEmpty( valid_rects ))
+            if (valid_rects)
             {
                 move_window_bits( hwnd, old_surface, new_surface, &visible_rect,
                                   &old_visible_rect, window_rect, valid_rects );
@@ -2165,7 +2165,7 @@ BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
         }
         else if (surface_win && surface_win != hwnd)
         {
-            if (!IsRectEmpty( valid_rects ))
+            if (valid_rects)
             {
                 RECT rects[2];
                 int x_offset = old_visible_rect.left - visible_rect.left;

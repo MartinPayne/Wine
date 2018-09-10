@@ -1565,3 +1565,388 @@ todo_wine
 
     return ERROR_SUCCESS;
 }
+
+UINT WINAPI rci_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, "CLSID\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}",
+        0, KEY_READ | KEY_WOW64_32KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "FileType\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "AppID\\{CFCC3B38-E683-497D-9AB4-CB40AAFE307F}", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+}
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rci_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, "CLSID\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}",
+        0, KEY_READ | KEY_WOW64_32KEY, &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "FileType\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "AppID\\{CFCC3B38-E683-497D-9AB4-CB40AAFE307F}", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+}
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rei_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, ".extension", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Prog.Id.1\\shell\\Open\\command", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+}
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rei_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, ".extension", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Prog.Id.1\\shell\\Open\\command", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+}
+
+    return ERROR_SUCCESS;
+}
+
+static const char font_key[] = "Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts";
+
+UINT WINAPI font_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, font_key, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    res = RegQueryValueExA(key, "msi test font", NULL, NULL, NULL, NULL);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI font_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, font_key, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    check_reg_str(hinst, key, "msi test font", NULL);
+}
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rmi_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "MIME\\Database\\Content Type\\mime/type", &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, !res, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rmi_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "MIME\\Database\\Content Type\\mime/type", &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+static const char rp_key[] = "Software\\Microsoft\\Windows\\CurrentVersion\\"
+    "Uninstall\\{7DF88A48-996F-4EC8-A022-BF956F9B2CBB}";
+
+UINT WINAPI rp_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, rp_key, 0, KEY_READ | KEY_WOW64_32KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    check_reg_str(hinst, key, "DisplayName", "MSITEST");
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rp_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, rp_key, 0, KEY_READ | KEY_WOW64_32KEY, &key);
+todo_wine
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rpi_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, "CLSID\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}",
+        0, KEY_READ | KEY_WOW64_32KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class.1", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class.2", &key);
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+}
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rpi_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, "CLSID\\{110913E7-86D1-4BF3-9922-BA103FCDDDFA}",
+        0, KEY_READ | KEY_WOW64_32KEY, &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class.1", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "Winetest.Class.2", &key);
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+}
+
+    return ERROR_SUCCESS;
+}
+
+static const CHAR ru_key[] = "Software\\Microsoft\\Windows\\CurrentVersion\\Installer"
+    "\\UserData\\S-1-5-18\\Products\\84A88FD7F6998CE40A22FB59F6B9C2BB\\InstallProperties";
+
+UINT WINAPI ru_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, ru_key, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    check_reg_str(hinst, key, "ProductID", "none");
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI ru_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, ru_key, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+todo_wine
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+static const GUID LIBID_register_test =
+    {0xeac5166a, 0x9734, 0x4d91, {0x87,0x8f, 0x1d,0xd0,0x23,0x04,0xc6,0x6c}};
+
+UINT WINAPI tl_present(MSIHANDLE hinst)
+{
+    ITypeLib *tlb;
+    HRESULT hr;
+
+    hr = LoadRegTypeLib(&LIBID_register_test, 7, 1, 0, &tlb);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, hr == S_OK, "got %#x\n", hr);
+    if (tlb)
+        ITypeLib_Release(tlb);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI tl_absent(MSIHANDLE hinst)
+{
+    ITypeLib *tlb;
+    HRESULT hr;
+
+    hr = LoadRegTypeLib(&LIBID_register_test, 7, 1, 0, &tlb);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, hr == TYPE_E_LIBNOTREGISTERED, "got %#x\n", hr);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sr_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "selfreg_test", &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, !res, "got %u\n", res);
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sr_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CLASSES_ROOT, "selfreg_test", &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI env_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, "Environment", &key);
+    ok(hinst, !res, "got %u\n", res);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    check_reg_str(hinst, key, "MSITESTVAR3", "1");
+    check_reg_str(hinst, key, "MSITESTVAR4", "1");
+}
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI env_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, "Environment", &key);
+    ok(hinst, !res, "got %u\n", res);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    check_reg_str(hinst, key, "MSITESTVAR3", NULL);
+    check_reg_str(hinst, key, "MSITESTVAR4", NULL);
+}
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI ini_present(MSIHANDLE hinst)
+{
+    char path[MAX_PATH], buf[10];
+    DWORD len;
+
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, path)))
+        SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILES, NULL, 0, path);
+    strcat(path, "\\msitest\\test.ini");
+
+    len = GetPrivateProfileStringA("section1", "key1", NULL, buf, sizeof(buf), path);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, len == 6, "got %u\n", len);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI ini_absent(MSIHANDLE hinst)
+{
+    char path[MAX_PATH], buf[10];
+    DWORD len;
+
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, path)))
+        SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILES, NULL, 0, path);
+    strcat(path, "\\msitest\\test.ini");
+
+    len = GetPrivateProfileStringA("section1", "key1", NULL, buf, sizeof(buf), path);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, !len, "got %u\n", len);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI wrv_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, "msitest", &key);
+    ok(hinst, !res, "got %u\n", res);
+    todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    check_reg_str(hinst, key, "sz", "string");
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI wrv_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, "msitest", &key);
+    ok(hinst, !res, "got %u\n", res);
+    todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    check_reg_str(hinst, key, "sz", NULL);
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
