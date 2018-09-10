@@ -84,6 +84,8 @@ function test_window_props() {
     test_exposed("addEventListener", v >= 9);
     test_exposed("removeEventListener", v >= 9);
     test_exposed("dispatchEvent", v >= 9);
+    test_exposed("getSelection", v >= 9);
+    test_exposed("onfocusout", v >= 9);
 
     next_test();
 }
@@ -140,10 +142,13 @@ function test_javascript() {
     test_exposed("toISOString", Date.prototype, v >= 9);
     test_exposed("isArray", Array, v >= 9);
     test_exposed("indexOf", Array.prototype, v >= 9);
+    test_exposed("trim", String.prototype, v >= 9);
+
     /* FIXME: IE8 implements weird semi-functional property descriptors. */
     if(v != 8) {
         test_exposed("getOwnPropertyDescriptor", Object, v >= 8);
         test_exposed("defineProperty", Object, v >= 8);
+        test_exposed("defineProperties", Object, v >= 8);
     }
 
     test_parses("if(false) { o.default; }", v >= 9);

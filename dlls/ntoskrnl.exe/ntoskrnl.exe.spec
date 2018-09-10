@@ -1096,7 +1096,7 @@
 @ stub RtlIpv6AddressToStringW
 @ stub RtlIpv6StringToAddressA
 @ stub RtlIpv6StringToAddressExA
-@ stub RtlIpv6StringToAddressExW
+@ stdcall RtlIpv6StringToAddressExW(wstr ptr ptr ptr)
 @ stub RtlIpv6StringToAddressW
 @ stub RtlIsGenericTableEmpty
 @ stub RtlIsGenericTableEmptyAvl
@@ -1259,7 +1259,7 @@
 @ stub SeSetAccessStateGenericMapping
 @ stub SeSetSecurityDescriptorInfo
 @ stub SeSetSecurityDescriptorInfoEx
-@ stub SeSinglePrivilegeCheck
+@ stdcall SeSinglePrivilegeCheck(int64 long)
 @ stub SeSystemDefaultDacl
 @ stub SeTokenImpersonationLevel
 @ stub SeTokenIsAdmin

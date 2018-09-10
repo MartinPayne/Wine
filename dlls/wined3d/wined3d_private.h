@@ -275,7 +275,6 @@ static inline enum complex_fixup get_complex_fixup(struct color_fixup_desc fixup
 #define MAX_UNORDERED_ACCESS_VIEWS  8
 #define MAX_TGSM_REGISTERS          8192
 #define MAX_VERTEX_BLENDS           4
-#define MAX_MULTISAMPLE_TYPES       8
 
 struct min_lookup
 {
@@ -497,6 +496,7 @@ enum wined3d_shader_register_type
     WINED3DSPR_GSINSTID,
     WINED3DSPR_DEPTHOUTGE,
     WINED3DSPR_DEPTHOUTLE,
+    WINED3DSPR_RASTERIZER,
 };
 
 enum wined3d_data_type
@@ -1039,7 +1039,8 @@ struct wined3d_shader_reg_maps
     DWORD vocp           : 1;
     DWORD input_rel_addressing : 1;
     DWORD viewport_array : 1;
-    DWORD padding        : 15;
+    DWORD sample_mask    : 1;
+    DWORD padding        : 14;
 
     DWORD rt_mask; /* Used render targets, 32 max. */
 
@@ -1638,10 +1639,10 @@ enum wined3d_pipeline
 #define STATE_MATERIAL (STATE_CLIPPLANE(MAX_CLIP_DISTANCES))
 #define STATE_IS_MATERIAL(a) ((a) == STATE_MATERIAL)
 
-#define STATE_FRONTFACE (STATE_MATERIAL + 1)
-#define STATE_IS_FRONTFACE(a) ((a) == STATE_FRONTFACE)
+#define STATE_RASTERIZER (STATE_MATERIAL + 1)
+#define STATE_IS_RASTERIZER(a) ((a) == STATE_RASTERIZER)
 
-#define STATE_POINTSPRITECOORDORIGIN  (STATE_FRONTFACE + 1)
+#define STATE_POINTSPRITECOORDORIGIN (STATE_RASTERIZER + 1)
 #define STATE_IS_POINTSPRITECOORDORIGIN(a) ((a) == STATE_POINTSPRITECOORDORIGIN)
 
 #define STATE_BASEVERTEXINDEX  (STATE_POINTSPRITECOORDORIGIN + 1)
@@ -2142,7 +2143,7 @@ void wined3d_fbo_blitter_create(struct wined3d_blitter **next,
         const struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;
 void wined3d_ffp_blitter_create(struct wined3d_blitter **next,
         const struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;
-void wined3d_glsl_blitter_create(struct wined3d_blitter **next,
+struct wined3d_blitter *wined3d_glsl_blitter_create(struct wined3d_blitter **next,
         const struct wined3d_device *device) DECLSPEC_HIDDEN;
 void wined3d_raw_blitter_create(struct wined3d_blitter **next,
         const struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;
@@ -2438,6 +2439,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX1080     = 0x1b80,
     CARD_NVIDIA_GEFORCE_GTX1080TI   = 0x1b06,
     CARD_NVIDIA_TITANX_PASCAL       = 0x1b00,
+    CARD_NVIDIA_TITANV              = 0x1d81,
 
     CARD_VMWARE_SVGA3D              = 0x0405,
 
@@ -4113,13 +4115,14 @@ static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
             /* oPos */
             return FALSE;
 
+        case WINED3DSPR_CONSTBOOL:  /* b# */
         case WINED3DSPR_DEPTHOUT:   /* oDepth */
         case WINED3DSPR_DEPTHOUTGE:
         case WINED3DSPR_DEPTHOUTLE:
-        case WINED3DSPR_CONSTBOOL:  /* b# */
         case WINED3DSPR_LOOP:       /* aL */
         case WINED3DSPR_PREDICATE:  /* p0 */
         case WINED3DSPR_PRIMID:     /* primID */
+        case WINED3DSPR_SAMPLEMASK: /* oMask */
             return TRUE;
 
         case WINED3DSPR_MISCTYPE:

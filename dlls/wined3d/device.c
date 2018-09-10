@@ -1042,8 +1042,8 @@ static void wined3d_device_create_primary_opengl_context_cs(void *object)
         return;
     }
     wined3d_ffp_blitter_create(&device->blitter, &device->adapter->gl_info);
-    wined3d_arbfp_blitter_create(&device->blitter, device);
-    wined3d_glsl_blitter_create(&device->blitter, device);
+    if (!wined3d_glsl_blitter_create(&device->blitter, device))
+        wined3d_arbfp_blitter_create(&device->blitter, device);
     wined3d_fbo_blitter_create(&device->blitter, &device->adapter->gl_info);
     wined3d_raw_blitter_create(&device->blitter, &device->adapter->gl_info);
 
@@ -4154,14 +4154,17 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
 HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *device,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx, unsigned int dst_x,
         unsigned int dst_y, unsigned int dst_z, struct wined3d_resource *src_resource,
-        unsigned int src_sub_resource_idx, const struct wined3d_box *src_box)
+        unsigned int src_sub_resource_idx, const struct wined3d_box *src_box, unsigned int flags)
 {
     struct wined3d_box dst_box, b;
 
     TRACE("device %p, dst_resource %p, dst_sub_resource_idx %u, dst_x %u, dst_y %u, dst_z %u, "
-            "src_resource %p, src_sub_resource_idx %u, src_box %s.\n",
+            "src_resource %p, src_sub_resource_idx %u, src_box %s, flags %#x.\n",
             device, dst_resource, dst_sub_resource_idx, dst_x, dst_y, dst_z,
-            src_resource, src_sub_resource_idx, debug_box(src_box));
+            src_resource, src_sub_resource_idx, debug_box(src_box), flags);
+
+    if (flags)
+        FIXME("Ignoring flags %#x.\n", flags);
 
     if (src_resource == dst_resource && src_sub_resource_idx == dst_sub_resource_idx)
     {
@@ -4296,13 +4299,17 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
 
 void CDECL wined3d_device_update_sub_resource(struct wined3d_device *device, struct wined3d_resource *resource,
         unsigned int sub_resource_idx, const struct wined3d_box *box, const void *data, unsigned int row_pitch,
-        unsigned int depth_pitch)
+        unsigned int depth_pitch, unsigned int flags)
 {
     unsigned int width, height, depth;
     struct wined3d_box b;
 
-    TRACE("device %p, resource %p, sub_resource_idx %u, box %s, data %p, row_pitch %u, depth_pitch %u.\n",
-            device, resource, sub_resource_idx, debug_box(box), data, row_pitch, depth_pitch);
+    TRACE("device %p, resource %p, sub_resource_idx %u, box %s, data %p, row_pitch %u, depth_pitch %u, "
+            "flags %#x.\n",
+            device, resource, sub_resource_idx, debug_box(box), data, row_pitch, depth_pitch, flags);
+
+    if (flags)
+        FIXME("Ignoring flags %#x.\n", flags);
 
     if (resource->type == WINED3D_RTYPE_BUFFER)
     {

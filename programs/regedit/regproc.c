@@ -22,15 +22,15 @@
  */
 
 #include <errno.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include <commctrl.h>
 #include <wine/unicode.h>
 #include <wine/debug.h>
 #include <wine/heap.h>
-#include "regproc.h"
+#include "main.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 

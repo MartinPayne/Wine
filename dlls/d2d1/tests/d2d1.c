@@ -19,16 +19,12 @@
 #define COBJMACROS
 #include <limits.h>
 #include <math.h>
-#include "d2d1.h"
+#include "d2d1_1.h"
 #include "wincrypt.h"
 #include "wine/test.h"
 #include "initguid.h"
 #include "dwrite.h"
 #include "wincodec.h"
-
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
-#endif
 
 struct resource_readback
 {
@@ -1754,7 +1750,7 @@ static void test_linear_brush(void)
         {200, 150, 0xffc03e00}, {240, 150, 0xffffffff}, {280, 150, 0xffffffff}, {320, 150, 0xffffffff},
         {240, 180, 0xffffffff}, {280, 180, 0xffff4040}, {320, 180, 0xffff4040}, {380, 180, 0xffffffff},
         {200, 210, 0xffffffff}, {240, 210, 0xffa99640}, {280, 210, 0xffb28d40}, {320, 210, 0xffbb8440},
-        {360, 210, 0xffc47b40}, {400, 210, 0xffffffff}, {200, 240, 0xffffffff}, {280, 240, 0xff41fd40},
+        {360, 210, 0xffc47b40}, {400, 210, 0xffffffff}, {200, 240, 0xffffffff}, {280, 240, 0xff41fe40},
         {320, 240, 0xff49f540}, {360, 240, 0xff52ec40}, {440, 240, 0xffffffff}, {240, 270, 0xffffffff},
         {280, 270, 0xff408eb0}, {320, 270, 0xff4097a7}, {360, 270, 0xff40a19e}, {440, 270, 0xffffffff},
         {280, 300, 0xffffffff}, {320, 300, 0xff4040ff}, {360, 300, 0xff4040ff}, {400, 300, 0xff406ad4},
@@ -6426,6 +6422,47 @@ static void test_bezier_intersect(void)
     DestroyWindow(window);
 }
 
+static void test_create_device(void)
+{
+    ID3D10Device1 *d3d_device;
+    IDXGIDevice *dxgi_device;
+    ID2D1Factory1 *factory;
+    ID2D1Factory *factory2;
+    ID2D1Device *device;
+    ULONG refcount;
+    HRESULT hr;
+
+    if (!(d3d_device = create_device()))
+    {
+        skip("Failed to create device, skipping tests.\n");
+        return;
+    }
+
+    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &IID_ID2D1Factory1, NULL, (void **)&factory)))
+    {
+        win_skip("ID2D1Factory1 is not supported.\n");
+        ID3D10Device1_Release(d3d_device);
+        return;
+    }
+
+    hr = ID3D10Device1_QueryInterface(d3d_device, &IID_IDXGIDevice, (void **)&dxgi_device);
+    ok(SUCCEEDED(hr), "Failed to get IDXGIDevice interface, hr %#x.\n", hr);
+
+    hr = ID2D1Factory1_CreateDevice(factory, dxgi_device, &device);
+    ok(SUCCEEDED(hr), "Failed to get ID2D1Device, hr %#x.\n", hr);
+
+    ID2D1Device_GetFactory(device, &factory2);
+    ok(factory2 == (ID2D1Factory *)factory, "Got unexpected factory %p, expected %p.\n", factory2, factory);
+    ID2D1Factory_Release(factory2);
+    ID2D1Device_Release(device);
+
+    IDXGIDevice_Release(dxgi_device);
+    ID3D10Device1_Release(d3d_device);
+
+    refcount = ID2D1Factory1_Release(factory);
+    ok(!refcount, "Factory has %u references left.\n", refcount);
+}
+
 START_TEST(d2d1)
 {
     test_clip();
@@ -6454,4 +6491,5 @@ START_TEST(d2d1)
     test_gdi_interop();
     test_layer();
     test_bezier_intersect();
+    test_create_device();
 }

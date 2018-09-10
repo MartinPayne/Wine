@@ -26,13 +26,11 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <wine/debug.h>
 #include <shlwapi.h>
 
 #include "wine/heap.h"
 #include "main.h"
-#include "regproc.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 
@@ -521,7 +519,7 @@ HTREEITEM InsertNode(HWND hwndTV, HTREEITEM hItem, LPWSTR name)
             item.mask = TVIF_HANDLE | TVIF_TEXT;
             item.hItem = hNewItem;
             item.pszText = buf;
-            item.cchTextMax = COUNT_OF(buf);
+            item.cchTextMax = ARRAY_SIZE(buf);
             if (!TreeView_GetItemW(hwndTV, &item)) continue;
             if (lstrcmpW(name, item.pszText) == 0) break;
         }

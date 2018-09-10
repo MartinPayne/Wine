@@ -121,6 +121,26 @@ static const struct message_info msg_return_press_custom10[] =
     { 0 }
 };
 
+static const struct message_info msg_send_click_ok[] =
+{
+    { TDM_CLICK_BUTTON, IDOK, 0 },
+    { 0 }
+};
+
+static const struct message_info msg_send_f1[] =
+{
+    { WM_KEYF1, 0, 0, 0},
+    { 0 }
+};
+
+static const struct message_info msg_got_tdn_help[] =
+{
+    { TDN_CREATED, 0, 0, S_OK, msg_send_f1 },
+    { TDN_HELP, 0, 0, S_OK, msg_send_click_ok },
+    { TDN_BUTTON_CLICKED, IDOK, 0, S_OK, NULL },
+    { 0 }
+};
+
 static void init_test_message(UINT message, WPARAM wParam, LPARAM lParam, struct message *msg)
 {
     msg->message = WM_TD_CALLBACK;
@@ -291,6 +311,69 @@ static void test_buttons(void)
     run_test(&info, ID_START_BUTTON + 3, msg_return_press_custom4, "default button: valid default - 2");
 }
 
+static void test_help(void)
+{
+    TASKDIALOGCONFIG info = {0};
+
+    info.cbSize = sizeof(TASKDIALOGCONFIG);
+    info.pfCallback = taskdialog_callback_proc;
+    info.lpCallbackData = test_ref_data;
+    info.dwCommonButtons = TDCBF_OK_BUTTON;
+
+    run_test(&info, IDOK, msg_got_tdn_help, "send f1");
+}
+
+struct timer_notification_data
+{
+    DWORD last_elapsed_ms;
+    DWORD num_fired;
+};
+
+static HRESULT CALLBACK taskdialog_callback_proc_timer(HWND hwnd, UINT notification,
+        WPARAM wParam, LPARAM lParam, LONG_PTR ref_data)
+{
+    struct timer_notification_data *data = (struct timer_notification_data *)ref_data;
+
+    if (notification == TDN_TIMER)
+    {
+        DWORD elapsed_ms;
+        int delta;
+
+        elapsed_ms = (DWORD)wParam;
+
+        if (data->num_fired == 3)
+            ok(data->last_elapsed_ms > elapsed_ms, "Expected reference time update.\n");
+        else
+        {
+            delta = elapsed_ms - data->last_elapsed_ms;
+            ok(delta > 0, "Expected positive time tick difference.\n");
+        }
+        data->last_elapsed_ms = elapsed_ms;
+
+        if (data->num_fired == 3)
+            PostMessageW(hwnd, TDM_CLICK_BUTTON, IDOK, 0);
+
+        ++data->num_fired;
+        return data->num_fired == 3 ? S_FALSE : S_OK;
+    }
+
+    return S_OK;
+}
+
+static void test_timer(void)
+{
+    struct timer_notification_data data = { 0 };
+    TASKDIALOGCONFIG info = { 0 };
+
+    info.cbSize = sizeof(TASKDIALOGCONFIG);
+    info.pfCallback = taskdialog_callback_proc_timer;
+    info.lpCallbackData = (LONG_PTR)&data;
+    info.dwFlags = TDF_CALLBACK_TIMER;
+    info.dwCommonButtons = TDCBF_OK_BUTTON;
+
+    pTaskDialogIndirect(&info, NULL, NULL, NULL);
+}
+
 START_TEST(taskdialog)
 {
     ULONG_PTR ctx_cookie;
@@ -327,6 +410,8 @@ START_TEST(taskdialog)
     test_invalid_parameters();
     test_callback();
     test_buttons();
+    test_help();
+    test_timer();
 
     unload_v6_module(ctx_cookie, hCtx);
 }

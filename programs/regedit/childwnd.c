@@ -21,10 +21,8 @@
 #define WIN32_LEAN_AND_MEAN     /* Exclude rarely-used stuff from Windows headers */
 #include <windows.h>
 #include <commctrl.h>
-#include <stdio.h>
 
 #include "main.h"
-#include "regproc.h"
 
 #include "wine/debug.h"
 #include "wine/heap.h"
@@ -139,7 +137,7 @@ static LPWSTR GetPathRoot(HWND hwndTV, HTREEITEM hItem, BOOL bFull) {
     if (hRootKey)
         parts[1] = GetRootKeyName(hRootKey);
     if (bFull) {
-        DWORD dwSize = sizeof(text)/sizeof(WCHAR);
+        DWORD dwSize = ARRAY_SIZE(text);
         GetComputerNameW(text, &dwSize);
         parts[0] = text;
     }

@@ -3443,6 +3443,8 @@ struct create_window_request
     user_handle_t  owner;
     atom_t         atom;
     mod_handle_t   instance;
+    int            dpi;
+    int            awareness;
     /* VARARG(class,unicode_str); */
 };
 struct create_window_reply
@@ -3453,6 +3455,8 @@ struct create_window_reply
     user_handle_t  owner;
     int            extra;
     client_ptr_t   class_ptr;
+    int            dpi;
+    int            awareness;
 };
 
 
@@ -3513,6 +3517,8 @@ struct get_window_info_reply
     thread_id_t    tid;
     atom_t         atom;
     int            is_unicode;
+    int            dpi;
+    int            awareness;
 };
 
 
@@ -3565,6 +3571,8 @@ struct set_parent_reply
     struct reply_header __header;
     user_handle_t  old_parent;
     user_handle_t  full_parent;
+    int            dpi;
+    int            awareness;
 };
 
 
@@ -3674,7 +3682,6 @@ struct get_window_rectangles_reply
 {
     struct reply_header __header;
     rectangle_t    window;
-    rectangle_t    visible;
     rectangle_t    client;
 };
 enum coords_relative
@@ -3695,7 +3702,9 @@ struct get_window_text_request
 struct get_window_text_reply
 {
     struct reply_header __header;
+    data_size_t    length;
     /* VARARG(text,unicode_str); */
+    char __pad_12[4];
 };
 
 
@@ -6501,6 +6510,6 @@ union generic_reply
     struct terminate_job_reply terminate_job_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 548
+#define SERVER_PROTOCOL_VERSION 553
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

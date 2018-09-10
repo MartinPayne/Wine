@@ -32,6 +32,7 @@ typedef enum {
     PROP_JSVAL,
     PROP_BUILTIN,
     PROP_PROTREF,
+    PROP_ACCESSOR,
     PROP_DELETED,
     PROP_IDX
 } prop_type_t;
@@ -47,6 +48,10 @@ struct _dispex_prop_t {
         const builtin_prop_t *p;
         DWORD ref;
         unsigned idx;
+        struct {
+            jsdisp_t *getter;
+            jsdisp_t *setter;
+        } accessor;
     } u;
 
     int bucket_head;
@@ -291,15 +296,12 @@ static HRESULT find_prop_name_prot(jsdisp_t *This, unsigned hash, const WCHAR *n
     return S_OK;
 }
 
-static HRESULT ensure_prop_name(jsdisp_t *This, const WCHAR *name, BOOL search_prot, DWORD create_flags, dispex_prop_t **ret)
+static HRESULT ensure_prop_name(jsdisp_t *This, const WCHAR *name, DWORD create_flags, dispex_prop_t **ret)
 {
     dispex_prop_t *prop;
     HRESULT hres;
 
-    if(search_prot)
-        hres = find_prop_name_prot(This, string_hash(name), name, &prop);
-    else
-        hres = find_prop_name(This, string_hash(name), name, &prop);
+    hres = find_prop_name_prot(This, string_hash(name), name, &prop);
     if(SUCCEEDED(hres) && (!prop || prop->type == PROP_DELETED)) {
         TRACE("creating prop %s flags %x\n", debugstr_w(name), create_flags);
 
@@ -413,6 +415,9 @@ static HRESULT invoke_prop_func(jsdisp_t *This, IDispatch *jsthis, dispex_prop_t
 
         return disp_call_value(This->ctx, get_object(prop->u.val), jsthis, flags, argc, argv, r);
     }
+    case PROP_ACCESSOR:
+        FIXME("accessor\n");
+        return E_NOTIMPL;
     case PROP_IDX:
         FIXME("Invoking PROP_IDX not yet supported\n");
         return E_NOTIMPL;
@@ -426,7 +431,13 @@ static HRESULT invoke_prop_func(jsdisp_t *This, IDispatch *jsthis, dispex_prop_t
 
 static HRESULT prop_get(jsdisp_t *This, dispex_prop_t *prop,  jsval_t *r)
 {
+    jsdisp_t *prop_obj = This;
     HRESULT hres;
+
+    while(prop->type == PROP_PROTREF) {
+        prop_obj = prop_obj->prototype;
+        prop = prop_obj->props + prop->u.ref;
+    }
 
     switch(prop->type) {
     case PROP_BUILTIN:
@@ -448,14 +459,20 @@ static HRESULT prop_get(jsdisp_t *This, dispex_prop_t *prop,  jsval_t *r)
             *r = jsval_obj(obj);
         }
         break;
-    case PROP_PROTREF:
-        hres = prop_get(This->prototype, This->prototype->props + prop->u.ref, r);
-        break;
     case PROP_JSVAL:
         hres = jsval_copy(prop->u.val, r);
         break;
+    case PROP_ACCESSOR:
+        if(prop->u.accessor.getter) {
+            hres = jsdisp_call_value(prop->u.accessor.getter, to_disp(This),
+                                     DISPATCH_METHOD, 0, NULL, r);
+        }else {
+            *r = jsval_undefined();
+            hres = S_OK;
+        }
+        break;
     case PROP_IDX:
-        hres = This->builtin_info->idx_get(This, prop->u.idx, r);
+        hres = prop_obj->builtin_info->idx_get(prop_obj, prop->u.idx, r);
         break;
     default:
         ERR("type %d\n", prop->type);
@@ -475,28 +492,49 @@ static HRESULT prop_put(jsdisp_t *This, dispex_prop_t *prop, jsval_t val)
 {
     HRESULT hres;
 
-    if(!(prop->flags & PROPF_WRITABLE) && prop->type != PROP_PROTREF)
-        return S_OK;
+    if(prop->type == PROP_PROTREF) {
+        dispex_prop_t *prop_iter = prop;
+        jsdisp_t *prototype_iter = This;
+
+        do {
+            prototype_iter = prototype_iter->prototype;
+            prop_iter = prototype_iter->props + prop_iter->u.ref;
+        } while(prop_iter->type == PROP_PROTREF);
+
+        if(prop_iter->type == PROP_ACCESSOR)
+            prop = prop_iter;
+    }
 
     switch(prop->type) {
     case PROP_BUILTIN:
-        if(prop->u.p->setter)
-            return prop->u.p->setter(This->ctx, This, val);
-
-        if(prop->u.p->setter) {
-            FIXME("getter with no setter\n");
-            return E_FAIL;
+        if(!prop->u.p->setter) {
+            TRACE("getter with no setter\n");
+            return S_OK;
         }
-        /* fall through */
+        return prop->u.p->setter(This->ctx, This, val);
     case PROP_PROTREF:
+    case PROP_DELETED:
         prop->type = PROP_JSVAL;
         prop->flags = PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE;
         prop->u.val = jsval_undefined();
         break;
     case PROP_JSVAL:
+        if(!(prop->flags & PROPF_WRITABLE))
+            return S_OK;
+
         jsval_release(prop->u.val);
         break;
+    case PROP_ACCESSOR:
+        if(!prop->u.accessor.setter) {
+            TRACE("no setter\n");
+            return S_OK;
+        }
+        return jsdisp_call_value(prop->u.accessor.setter, to_disp(This), DISPATCH_METHOD, 1, &val, NULL);
     case PROP_IDX:
+        if(!This->builtin_info->idx_put) {
+            TRACE("no put_idx\n");
+            return S_OK;
+        }
         return This->builtin_info->idx_put(This, prop->u.idx, val);
     default:
         ERR("type %d\n", prop->type);
@@ -760,6 +798,8 @@ static HRESULT delete_prop(dispex_prop_t *prop, BOOL *ret)
         jsval_release(prop->u.val);
         prop->type = PROP_DELETED;
     }
+    if(prop->type == PROP_ACCESSOR)
+        FIXME("not supported on accessor property\n");
     return S_OK;
 }
 
@@ -961,8 +1001,19 @@ void jsdisp_free(jsdisp_t *obj)
     TRACE("(%p)\n", obj);
 
     for(prop = obj->props; prop < obj->props+obj->prop_cnt; prop++) {
-        if(prop->type == PROP_JSVAL)
+        switch(prop->type) {
+        case PROP_JSVAL:
             jsval_release(prop->u.val);
+            break;
+        case PROP_ACCESSOR:
+            if(prop->u.accessor.getter)
+                jsdisp_release(prop->u.accessor.getter);
+            if(prop->u.accessor.setter)
+                jsdisp_release(prop->u.accessor.setter);
+            break;
+        default:
+            break;
+        };
         heap_free(prop->name);
     }
     heap_free(obj->props);
@@ -1040,7 +1091,7 @@ HRESULT jsdisp_get_id(jsdisp_t *jsdisp, const WCHAR *name, DWORD flags, DISPID *
     HRESULT hres;
 
     if(flags & fdexNameEnsure)
-        hres = ensure_prop_name(jsdisp, name, TRUE, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE,
+        hres = ensure_prop_name(jsdisp, name, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE,
                                 &prop);
     else
         hres = find_prop_name_prot(jsdisp, string_hash(name), name, &prop);
@@ -1304,7 +1355,7 @@ HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, jsval_t va
     dispex_prop_t *prop;
     HRESULT hres;
 
-    hres = ensure_prop_name(obj, name, FALSE, flags, &prop);
+    hres = ensure_prop_name(obj, name, flags, &prop);
     if(FAILED(hres))
         return hres;
 
@@ -1314,23 +1365,6 @@ HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, jsval_t va
 HRESULT jsdisp_propput_name(jsdisp_t *obj, const WCHAR *name, jsval_t val)
 {
     return jsdisp_propput(obj, name, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, val);
-}
-
-HRESULT jsdisp_propput_const(jsdisp_t *obj, const WCHAR *name, jsval_t val)
-{
-    dispex_prop_t *prop;
-    HRESULT hres;
-
-    hres = ensure_prop_name(obj, name, FALSE, 0, &prop);
-    if(FAILED(hres))
-        return hres;
-
-    return jsval_copy(val, &prop->u.val);
-}
-
-HRESULT jsdisp_propput_dontenum(jsdisp_t *obj, const WCHAR *name, jsval_t val)
-{
-    return jsdisp_propput(obj, name, PROPF_CONFIGURABLE | PROPF_WRITABLE, val);
 }
 
 HRESULT jsdisp_propput_idx(jsdisp_t *obj, DWORD idx, jsval_t val)
@@ -1615,6 +1649,15 @@ HRESULT jsdisp_get_own_property(jsdisp_t *obj, const WCHAR *name, BOOL flags_onl
                 return hres;
         }
         break;
+    case PROP_ACCESSOR:
+        desc->explicit_getter = desc->explicit_setter = TRUE;
+        if(!flags_only) {
+            desc->getter = prop->u.accessor.getter
+                ? jsdisp_addref(prop->u.accessor.getter) : NULL;
+            desc->setter = prop->u.accessor.setter
+                ? jsdisp_addref(prop->u.accessor.setter) : NULL;
+        }
+        break;
     default:
         return DISP_E_UNKNOWNNAME;
     }
@@ -1639,8 +1682,11 @@ HRESULT jsdisp_define_property(jsdisp_t *obj, const WCHAR *name, property_desc_t
     if(prop->type == PROP_DELETED || prop->type == PROP_PROTREF) {
         prop->flags = desc->flags;
         if(desc->explicit_getter || desc->explicit_setter) {
-            FIXME("accessor property\n");
-            return E_NOTIMPL;
+            prop->type = PROP_ACCESSOR;
+            prop->u.accessor.getter = desc->getter ? jsdisp_addref(desc->getter) : NULL;
+            prop->u.accessor.setter = desc->setter ? jsdisp_addref(desc->setter) : NULL;
+            TRACE("%s = accessor { get: %p set: %p }\n", debugstr_w(name),
+                  prop->u.accessor.getter, prop->u.accessor.setter);
         }else {
             prop->type = PROP_JSVAL;
             if(desc->explicit_value) {
@@ -1666,36 +1712,79 @@ HRESULT jsdisp_define_property(jsdisp_t *obj, const WCHAR *name, property_desc_t
     }
 
     if(desc->explicit_value || (desc->mask & PROPF_WRITABLE)) {
-        if(!(prop->flags & PROPF_CONFIGURABLE) && !(prop->flags & PROPF_WRITABLE)) {
-            if((desc->mask & PROPF_WRITABLE) && (desc->flags & PROPF_WRITABLE))
-                return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
-            if(desc->explicit_value) {
-                if(prop->type == PROP_JSVAL) {
-                    BOOL eq;
-                    hres = jsval_strict_equal(desc->value, prop->u.val, &eq);
-                    if(FAILED(hres))
-                        return hres;
-                    if(!eq)
-                        return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
-                }else {
-                    FIXME("redefinition of property type %d\n", prop->type);
-                }
-            }
-        }
-        if(desc->explicit_value) {
-            if(prop->type == PROP_JSVAL)
-                jsval_release(prop->u.val);
-            else
-                prop->type = PROP_JSVAL;
+        if(prop->type == PROP_ACCESSOR) {
+            if(!(prop->flags & PROPF_CONFIGURABLE))
+                return throw_type_error(obj->ctx, JS_E_NONCONFIGURABLE_REDEFINED, name);
+            if(prop->u.accessor.getter)
+                jsdisp_release(prop->u.accessor.getter);
+            if(prop->u.accessor.setter)
+                jsdisp_release(prop->u.accessor.setter);
+
+            prop->type = PROP_JSVAL;
             hres = jsval_copy(desc->value, &prop->u.val);
             if(FAILED(hres)) {
                 prop->u.val = jsval_undefined();
                 return hres;
             }
+        }else {
+            if(!(prop->flags & PROPF_CONFIGURABLE) && !(prop->flags & PROPF_WRITABLE)) {
+                if((desc->mask & PROPF_WRITABLE) && (desc->flags & PROPF_WRITABLE))
+                    return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
+                if(desc->explicit_value) {
+                    if(prop->type == PROP_JSVAL) {
+                        BOOL eq;
+                        hres = jsval_strict_equal(desc->value, prop->u.val, &eq);
+                        if(FAILED(hres))
+                            return hres;
+                        if(!eq)
+                            return throw_type_error(obj->ctx, JS_E_NONWRITABLE_MODIFIED, name);
+                    }else {
+                        FIXME("redefinition of property type %d\n", prop->type);
+                    }
+                }
+            }
+            if(desc->explicit_value) {
+                if(prop->type == PROP_JSVAL)
+                    jsval_release(prop->u.val);
+                else
+                    prop->type = PROP_JSVAL;
+                hres = jsval_copy(desc->value, &prop->u.val);
+                if(FAILED(hres)) {
+                    prop->u.val = jsval_undefined();
+                    return hres;
+                }
+            }
         }
     }else if(desc->explicit_getter || desc->explicit_setter) {
-        FIXME("accessor property\n");
-        return E_NOTIMPL;
+        if(prop->type != PROP_ACCESSOR) {
+            if(!(prop->flags & PROPF_CONFIGURABLE))
+                return throw_type_error(obj->ctx, JS_E_NONCONFIGURABLE_REDEFINED, name);
+            if(prop->type == PROP_JSVAL)
+                jsval_release(prop->u.val);
+            prop->type = PROP_ACCESSOR;
+            prop->u.accessor.getter = prop->u.accessor.setter = NULL;
+        }else if(!(prop->flags & PROPF_CONFIGURABLE)) {
+            if((desc->explicit_getter && desc->getter != prop->u.accessor.getter)
+               || (desc->explicit_setter && desc->setter != prop->u.accessor.setter))
+                return throw_type_error(obj->ctx, JS_E_NONCONFIGURABLE_REDEFINED, name);
+        }
+
+        if(desc->explicit_getter) {
+            if(prop->u.accessor.getter) {
+                jsdisp_release(prop->u.accessor.getter);
+                prop->u.accessor.getter = NULL;
+            }
+            if(desc->getter)
+                prop->u.accessor.getter = jsdisp_addref(desc->getter);
+        }
+        if(desc->explicit_setter) {
+            if(prop->u.accessor.setter) {
+                jsdisp_release(prop->u.accessor.setter);
+                prop->u.accessor.setter = NULL;
+            }
+            if(desc->setter)
+                prop->u.accessor.setter = jsdisp_addref(desc->setter);
+        }
     }
 
     prop->flags = (prop->flags & ~desc->mask) | (desc->flags & desc->mask);

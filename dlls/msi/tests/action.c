@@ -32,8 +32,10 @@
 #include <wtypes.h>
 #include <shellapi.h>
 #include <winsvc.h>
+#include <odbcinst.h>
 
 #include "wine/test.h"
+#include "utils.h"
 
 static UINT (WINAPI *pMsiQueryComponentStateA)
     (LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPCSTR, INSTALLSTATE *);
@@ -46,9 +48,7 @@ static INSTALLSTATE (WINAPI *pMsiGetComponentPathExA)
 static UINT (WINAPI *pMsiQueryFeatureStateExA)
     (LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPCSTR, INSTALLSTATE *);
 
-static BOOL (WINAPI *pCheckTokenMembership)(HANDLE,PSID,PBOOL);
 static BOOL (WINAPI *pConvertSidToStringSidA)(PSID, LPSTR *);
-static BOOL (WINAPI *pOpenProcessToken)(HANDLE, DWORD, PHANDLE);
 static LONG (WINAPI *pRegDeleteKeyExA)(HKEY, LPCSTR, REGSAM, DWORD);
 static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
@@ -60,11 +60,6 @@ static BOOL is_wow64;
 static const BOOL is_64bit = sizeof(void *) > sizeof(int);
 
 static const char *msifile = "msitest.msi";
-static CHAR CURR_DIR[MAX_PATH];
-static CHAR PROG_FILES_DIR[MAX_PATH];
-static CHAR COMMON_FILES_DIR[MAX_PATH];
-static CHAR APP_DATA_DIR[MAX_PATH];
-static CHAR WINDOWS_DIR[MAX_PATH];
 
 /* msi database data */
 
@@ -265,15 +260,26 @@ static const char sss_install_exec_seq_dat[] =
     "InstallValidate\t\t1400\n"
     "InstallInitialize\t\t1500\n"
     "StopServices\t\t4000\n"
+    "stop_immediate\tNOT REMOVE\t4001\n"
+    "stop_deferred\tNOT REMOVE\t4002\n"
     "DeleteServices\t\t5000\n"
     "MoveFiles\t\t5100\n"
     "InstallFiles\t\t5200\n"
     "DuplicateFiles\t\t5300\n"
     "StartServices\t\t5400\n"
+    "start_deferred\tNOT REMOVE\t5401\n"
     "RegisterProduct\t\t5500\n"
     "PublishFeatures\t\t5600\n"
     "PublishProduct\t\t5700\n"
     "InstallFinalize\t\t6000\n";
+
+static const char sss_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "stop_immediate\t1\tcustom.dll\tsss_started\n"
+    "stop_deferred\t1025\tcustom.dll\tsss_stopped\n"
+    "start_deferred\t1025\tcustom.dll\tsss_started\n";
 
 static const char sds_install_exec_seq_dat[] =
     "Action\tCondition\tSequence\n"
@@ -288,6 +294,8 @@ static const char sds_install_exec_seq_dat[] =
     "InstallInitialize\t\t1500\n"
     "StopServices\t\t5000\n"
     "DeleteServices\t\t5050\n"
+    "sds_immediate\tNOT REMOVE\t5051\n"
+    "sds_deferred\tNOT REMOVE\t5052\n"
     "MoveFiles\t\t5100\n"
     "InstallFiles\t\t5200\n"
     "DuplicateFiles\t\t5300\n"
@@ -297,6 +305,41 @@ static const char sds_install_exec_seq_dat[] =
     "PublishFeatures\t\t5600\n"
     "PublishProduct\t\t5700\n"
     "InstallFinalize\t\t6000\n";
+
+static const char sds_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "sds_immediate\t1\tcustom.dll\tsds_present\n"
+    "sds_deferred\t1025\tcustom.dll\tsds_absent\n";
+
+static const char sis_install_exec_seq_dat[] =
+    "Action\tCondition\tSequence\n"
+    "s72\tS255\tI2\n"
+    "InstallExecuteSequence\tAction\n"
+    "CostInitialize\t\t800\n"
+    "FileCost\t\t900\n"
+    "CostFinalize\t\t1000\n"
+    "InstallValidate\t\t1400\n"
+    "InstallInitialize\t\t1500\n"
+    "StopServices\t\t5000\n"
+    "DeleteServices\t\t5050\n"
+    "InstallFiles\t\t5200\n"
+    "InstallServices\t\t5400\n"
+    "sis_immediate\tNOT REMOVE\t5401\n"
+    "sis_deferred\tNOT REMOVE\t5402\n"
+    "StartServices\t\t5450\n"
+    "RegisterProduct\t\t5500\n"
+    "PublishFeatures\t\t5600\n"
+    "PublishProduct\t\t5700\n"
+    "InstallFinalize\t\t6000\n";
+
+static const char sis_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "sis_immediate\t1\tcustom.dll\tsis_absent\n"
+    "sis_deferred\t1025\tcustom.dll\tsis_present\n";
 
 static const char rof_component_dat[] =
     "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
@@ -353,14 +396,35 @@ static const char pp_install_exec_seq_dat[] =
     "InstallValidate\t\t1400\n"
     "InstallInitialize\t\t1500\n"
     "ProcessComponents\tPROCESS_COMPONENTS=1 Or FULL=1\t1600\n"
+    "ppc_immediate\tPROCESS_COMPONENTS AND ALLUSERS\t1601\n"
+    "ppc_deferred\tPROCESS_COMPONENTS AND ALLUSERS\t1602\n"
     "UnpublishFeatures\tUNPUBLISH_FEATURES=1 Or FULL=1\t1800\n"
+    "uf_immediate\tUNPUBLISH_FEATURES AND ALLUSERS\t1801\n"
+    "uf_deferred\tUNPUBLISH_FEATURES AND ALLUSERS\t1802\n"
     "RemoveFiles\t\t3500\n"
     "InstallFiles\t\t4000\n"
     "RegisterUser\tREGISTER_USER=1 Or FULL=1\t6000\n"
     "RegisterProduct\tREGISTER_PRODUCT=1 Or FULL=1\t6100\n"
     "PublishFeatures\tPUBLISH_FEATURES=1 Or FULL=1\t6300\n"
+    "pf_immediate\tPUBLISH_FEATURES AND ALLUSERS\t6301\n"
+    "pf_deferred\tPUBLISH_FEATURES AND ALLUSERS\t6302\n"
     "PublishProduct\tPUBLISH_PRODUCT=1 Or FULL=1\t6400\n"
+    "pp_immediate\tPUBLISH_PRODUCT AND ALLUSERS\t6401\n"
+    "pp_deferred\tPUBLISH_PRODUCT AND ALLUSERS\t6402\n"
     "InstallFinalize\t\t6600";
+
+static const char pp_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "pf_immediate\t1\tcustom.dll\tpf_absent\n"
+    "pf_deferred\t1025\tcustom.dll\tpf_present\n"
+    "uf_immediate\t1\tcustom.dll\tpf_present\n"
+    "uf_deferred\t1025\tcustom.dll\tpf_absent\n"
+    "pp_immediate\t1\tcustom.dll\tpp_absent\n"
+    "pp_deferred\t1025\tcustom.dll\tpp_present\n"
+    "ppc_immediate\t1\tcustom.dll\tppc_absent\n"
+    "ppc_deferred\t1025\tcustom.dll\tppc_present\n";
 
 static const char pp_component_dat[] =
     "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
@@ -483,6 +547,29 @@ static const char mov_move_file_dat[] =
     "wildcardnodest\taugustus\tbudd*\t\tSourceDir\tMSITESTDIR\t1\n"
     "singlenodest\taugustus\tb?r\t\tSourceDir\tMSITESTDIR\t1\n";
 
+static const char mov_install_exec_seq_dat[] =
+    "Action\tCondition\tSequence\n"
+    "s72\tS255\tI2\n"
+    "InstallExecuteSequence\tAction\n"
+    "CostInitialize\t\t100\n"
+    "FileCost\t\t200\n"
+    "ResolveSource\t\t300\n"
+    "CostFinalize\t\t400\n"
+    "InstallValidate\t\t500\n"
+    "InstallInitialize\t\t600\n"
+    "MoveFiles\t\t700\n"
+    "mov_immediate\t\t701\n"
+    "mov_deferred\t\t702\n"
+    "InstallFiles\t\t800\n"
+    "InstallFinalize\t\t900\n";
+
+static const char mov_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "mov_immediate\t1\tcustom.dll\tmov_absent\n"
+    "mov_deferred\t1025\tcustom.dll\tmov_present\n";
+
 static const char df_directory_dat[] =
     "Directory\tDirectory_Parent\tDefaultDir\n"
     "s72\tS72\tl255\n"
@@ -601,9 +688,17 @@ static const char cf_install_exec_seq_dat[] =
     "CostInitialize\t\t800\n"
     "FileCost\t\t900\n"
     "RemoveFiles\t\t3500\n"
+    "rfi_immediate\tREMOVE\t3501\n"
+    "rfi_deferred\tREMOVE\t3502\n"
     "CreateFolders\t\t3700\n"
+    "cf_immediate\tNOT REMOVE\t3701\n"
+    "cf_deferred\tNOT REMOVE\t3702\n"
     "RemoveFolders\t\t3800\n"
+    "rf_immediate\tREMOVE\t3801\n"
+    "rf_deferred\tREMOVE\t3802\n"
     "InstallFiles\t\t4000\n"
+    "ifi_immediate\tNOT REMOVE\t4001\n"
+    "ifi_deferred\tNOT REMOVE\t4002\n"
     "RegisterUser\t\t6000\n"
     "RegisterProduct\t\t6100\n"
     "PublishFeatures\t\t6300\n"
@@ -614,6 +709,19 @@ static const char cf_install_exec_seq_dat[] =
     "UnpublishFeatures\t\t1800\n"
     "InstallValidate\t\t1400\n"
     "LaunchConditions\t\t100\n";
+
+static const char cf_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "ifi_immediate\t1\tcustom.dll\tfile_absent\n"
+    "ifi_deferred\t1025\tcustom.dll\tfile_present\n"
+    "rfi_immediate\t1\tcustom.dll\tfile_present\n"
+    "rfi_deferred\t1025\tcustom.dll\tfile_absent\n"
+    "cf_immediate\t1\tcustom.dll\tcf_absent\n"
+    "cf_deferred\t1025\tcustom.dll\tcf_present\n"
+    "rf_immediate\t1\tcustom.dll\tcf_present\n"
+    "rf_deferred\t1025\tcustom.dll\tcf_absent\n";
 
 static const char sr_selfreg_dat[] =
     "File_\tCost\n"
@@ -762,18 +870,22 @@ static const char odbc_feature_comp_dat[] =
     "Feature_\tComponent_\n"
     "s38\ts72\n"
     "FeatureComponents\tFeature_\tComponent_\n"
+    "odbc\todbc64\n"
     "odbc\todbc\n";
 
 static const char odbc_component_dat[] =
     "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
     "s72\tS38\ts72\ti2\tS255\tS72\n"
     "Component\tComponent\n"
+    "odbc64\t{B6F3E4AF-35D1-4B72-9044-989F03E20A43}\tMSITESTDIR\t256\tMsix64\tODBCdriver.dll\n"
     "odbc\t{B6F3E4AE-35D1-4B72-9044-989F03E20A43}\tMSITESTDIR\t0\t\tODBCdriver.dll\n";
 
 static const char odbc_driver_dat[] =
     "Driver\tComponent_\tDescription\tFile_\tFile_Setup\n"
     "s72\ts72\ts255\ts72\tS72\n"
     "ODBCDriver\tDriver\n"
+    "64-bit driver\todbc64\tODBC test driver\tODBCdriver.dll\t\n"
+    "64-bit driver2\todbc64\tODBC test driver2\tODBCdriver2.dll\tODBCsetup.dll\n"
     "ODBC test driver\todbc\tODBC test driver\tODBCdriver.dll\t\n"
     "ODBC test driver2\todbc\tODBC test driver2\tODBCdriver2.dll\tODBCsetup.dll\n";
 
@@ -802,13 +914,26 @@ static const char odbc_install_exec_seq_dat[] =
     "InstallInitialize\t\t1500\n"
     "ProcessComponents\t\t1600\n"
     "InstallODBC\t\t3000\n"
+    "io_immediate\tNOT REMOVE\t3001\n"
+    "io_deferred\tNOT REMOVE\t3002\n"
     "RemoveODBC\t\t3100\n"
+    "ro_immediate\tREMOVE\t3101\n"
+    "ro_deferred\tREMOVE\t3102\n"
     "RemoveFiles\t\t3900\n"
     "InstallFiles\t\t4000\n"
     "RegisterProduct\t\t5000\n"
     "PublishFeatures\t\t5100\n"
     "PublishProduct\t\t5200\n"
     "InstallFinalize\t\t6000\n";
+
+static const char odbc_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "io_immediate\t1\tcustom.dll\todbc_absent\n"
+    "io_deferred\t1025\tcustom.dll\todbc_present\n"
+    "ro_immediate\t1\tcustom.dll\todbc_present\n"
+    "ro_deferred\t1025\tcustom.dll\todbc_absent\n";
 
 static const char odbc_media_dat[] =
     "DiskId\tLastSequence\tDiskPrompt\tCabinet\tVolumeLabel\tSource\n"
@@ -910,11 +1035,24 @@ static const char crs_install_exec_seq_dat[] =
     "RemoveFiles\t\t1700\n"
     "InstallFiles\t\t2000\n"
     "RemoveShortcuts\t\t3000\n"
+    "rs_immediate\tREMOVE\t3001\n"
+    "rs_deferred\tREMOVE\t3002\n"
     "CreateShortcuts\t\t3100\n"
+    "cs_immediate\tNOT REMOVE\t3101\n"
+    "cs_deferred\tNOT REMOVE\t3102\n"
     "RegisterProduct\t\t5000\n"
     "PublishFeatures\t\t5100\n"
     "PublishProduct\t\t5200\n"
     "InstallFinalize\t\t6000\n";
+
+static const char crs_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "cs_immediate\t1\tcustom.dll\tcrs_absent\n"
+    "cs_deferred\t1025\tcustom.dll\tcrs_present\n"
+    "rs_immediate\t1\tcustom.dll\tcrs_present\n"
+    "rs_deferred\t1025\tcustom.dll\tcrs_absent\n";
 
 static const char pub_file_dat[] =
     "File\tComponent_\tFileName\tFileSize\tVersion\tLanguage\tAttributes\tSequence\n"
@@ -960,11 +1098,24 @@ static const char pub_install_exec_seq_dat[] =
     "RemoveFiles\t\t1700\n"
     "InstallFiles\t\t2000\n"
     "PublishComponents\t\t3000\n"
+    "pub_immediate\tNOT REMOVE\t3001\n"
+    "pub_deferred\tNOT REMOVE\t3002\n"
     "UnpublishComponents\t\t3100\n"
+    "unp_immediate\tREMOVE\t3101\n"
+    "unp_deferred\tREMOVE\t3102\n"
     "RegisterProduct\t\t5000\n"
     "PublishFeatures\t\t5100\n"
     "PublishProduct\t\t5200\n"
     "InstallFinalize\t\t6000\n";
+
+static const char pub_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "pub_immediate\t1\tcustom.dll\tpub_absent\n"
+    "pub_deferred\t1025\tcustom.dll\tpub_present\n"
+    "unp_immediate\t1\tcustom.dll\tpub_present\n"
+    "unp_deferred\t1025\tcustom.dll\tpub_absent\n";
 
 static const char rd_file_dat[] =
     "File\tComponent_\tFileName\tFileSize\tVersion\tLanguage\tAttributes\tSequence\n"
@@ -1013,12 +1164,25 @@ static const char rd_install_exec_seq_dat[] =
     "InstallInitialize\t\t1500\n"
     "ProcessComponents\t\t1600\n"
     "RemoveDuplicateFiles\t\t1900\n"
+    "rd_immediate\tREMOVE\t1901\n"
+    "rd_deferred\tREMOVE\t1902\n"
     "InstallFiles\t\t2000\n"
     "DuplicateFiles\t\t2100\n"
+    "df_immediate\tNOT REMOVE\t2101\n"
+    "df_deferred\tNOT REMOVE\t2102\n"
     "RegisterProduct\t\t5000\n"
     "PublishFeatures\t\t5100\n"
     "PublishProduct\t\t5200\n"
     "InstallFinalize\t\t6000\n";
+
+static const char rd_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "df_immediate\t1\tcustom.dll\trd_absent\n"
+    "df_deferred\t1025\tcustom.dll\trd_present\n"
+    "rd_immediate\t1\tcustom.dll\trd_present\n"
+    "rd_deferred\t1025\tcustom.dll\trd_absent\n";
 
 static const char rrv_file_dat[] =
     "File\tComponent_\tFileName\tFileSize\tVersion\tLanguage\tAttributes\tSequence\n"
@@ -1603,11 +1767,25 @@ static const char pa_install_exec_seq_dat[] =
     "InstallInitialize\t\t1500\n"
     "ProcessComponents\t\t1600\n"
     "MsiPublishAssemblies\t\t3000\n"
+    "pa_immediate\tNOT REMOVE AND NOT ALLUSERS\t3001\n"
+    "pa_deferred\tNOT REMOVE AND NOT ALLUSERS\t3002\n"
     "MsiUnpublishAssemblies\t\t4000\n"
+    "ua_immediate\tREMOVE AND NOT ALLUSERS\t4001\n"
+    "ua_deferred\tREMOVE AND NOT ALLUSERS\t4002\n"
     "RegisterProduct\t\t5000\n"
     "PublishFeatures\t\t5100\n"
     "PublishProduct\t\t5200\n"
+    "UnpublishFeatures\t\t5300\n"
     "InstallFinalize\t\t6000\n";
+
+static const char pa_custom_action_dat[] =
+    "Action\tType\tSource\tTarget\n"
+    "s72\ti2\tS64\tS0\n"
+    "CustomAction\tAction\n"
+    "pa_immediate\t1\tcustom.dll\tpa_absent\n"
+    "pa_deferred\t1025\tcustom.dll\tpa_present\n"
+    "ua_immediate\t1\tcustom.dll\tpa_present\n"
+    "ua_deferred\t1025\tcustom.dll\tpa_absent\n";
 
 static const char rep_file_dat[] =
     "File\tComponent_\tFileName\tFileSize\tVersion\tLanguage\tAttributes\tSequence\n"
@@ -1679,15 +1857,6 @@ static const char rep_install_exec_seq_dat[] =
     "PublishProduct\t\t5200\n"
     "InstallFinalize\t\t6000\n";
 
-typedef struct _msi_table
-{
-    const char *filename;
-    const char *data;
-    unsigned int size;
-} msi_table;
-
-#define ADD_TABLE(x) {#x".idt", x##_dat, sizeof(x##_dat)}
-
 static const msi_table env_tables[] =
 {
     ADD_TABLE(component),
@@ -1709,6 +1878,7 @@ static const msi_table pp_tables[] =
     ADD_TABLE(rof_feature_comp),
     ADD_TABLE(rof_file),
     ADD_TABLE(pp_install_exec_seq),
+    ADD_TABLE(pp_custom_action),
     ADD_TABLE(rof_media),
     ADD_TABLE(property),
 };
@@ -1721,6 +1891,7 @@ static const msi_table ppc_tables[] =
     ADD_TABLE(ppc_feature_comp),
     ADD_TABLE(ppc_file),
     ADD_TABLE(pp_install_exec_seq),
+    ADD_TABLE(pp_custom_action),
     ADD_TABLE(ppc_media),
     ADD_TABLE(property),
 };
@@ -1745,7 +1916,8 @@ static const msi_table mov_tables[] =
     ADD_TABLE(rof_feature),
     ADD_TABLE(ci2_feature_comp),
     ADD_TABLE(ci2_file),
-    ADD_TABLE(install_exec_seq),
+    ADD_TABLE(mov_install_exec_seq),
+    ADD_TABLE(mov_custom_action),
     ADD_TABLE(rof_media),
     ADD_TABLE(property),
     ADD_TABLE(mov_move_file),
@@ -1786,6 +1958,7 @@ static const msi_table cf_tables[] =
     ADD_TABLE(cf_file),
     ADD_TABLE(cf_create_folders),
     ADD_TABLE(cf_install_exec_seq),
+    ADD_TABLE(cf_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -1799,6 +1972,7 @@ static const msi_table sss_tables[] =
     ADD_TABLE(file),
     ADD_TABLE(sss_install_exec_seq),
     ADD_TABLE(sss_service_control),
+    ADD_TABLE(sss_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -1811,6 +1985,7 @@ static const msi_table sds_tables[] =
     ADD_TABLE(feature_comp),
     ADD_TABLE(file),
     ADD_TABLE(sds_install_exec_seq),
+    ADD_TABLE(sds_custom_action),
     ADD_TABLE(service_control),
     ADD_TABLE(service_install),
     ADD_TABLE(media),
@@ -1824,7 +1999,8 @@ static const msi_table sis_tables[] =
     ADD_TABLE(feature),
     ADD_TABLE(feature_comp),
     ADD_TABLE(file),
-    ADD_TABLE(sds_install_exec_seq),
+    ADD_TABLE(sis_install_exec_seq),
+    ADD_TABLE(sis_custom_action),
     ADD_TABLE(service_install2),
     ADD_TABLE(media),
     ADD_TABLE(property)
@@ -1880,6 +2056,7 @@ static const msi_table odbc_tables[] =
     ADD_TABLE(odbc_translator),
     ADD_TABLE(odbc_datasource),
     ADD_TABLE(odbc_install_exec_seq),
+    ADD_TABLE(odbc_custom_action),
     ADD_TABLE(odbc_media),
     ADD_TABLE(property)
 };
@@ -1906,6 +2083,7 @@ static const msi_table crs_tables[] =
     ADD_TABLE(crs_file),
     ADD_TABLE(crs_shortcut),
     ADD_TABLE(crs_install_exec_seq),
+    ADD_TABLE(crs_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -1919,6 +2097,7 @@ static const msi_table pub_tables[] =
     ADD_TABLE(pub_file),
     ADD_TABLE(pub_publish_component),
     ADD_TABLE(pub_install_exec_seq),
+    ADD_TABLE(pub_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -1932,6 +2111,7 @@ static const msi_table rd_tables[] =
     ADD_TABLE(rd_file),
     ADD_TABLE(rd_duplicate_file),
     ADD_TABLE(rd_install_exec_seq),
+    ADD_TABLE(rd_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -2062,6 +2242,7 @@ static const msi_table pa_tables[] =
     ADD_TABLE(pa_msi_assembly),
     ADD_TABLE(pa_msi_assembly_name),
     ADD_TABLE(pa_install_exec_seq),
+    ADD_TABLE(pa_custom_action),
     ADD_TABLE(media),
     ADD_TABLE(property)
 };
@@ -2152,110 +2333,6 @@ cleanup:
 
 /* make the max size large so there is only one cab file */
 #define MEDIA_SIZE          0x7FFFFFFF
-#define FOLDER_THRESHOLD    900000
-
-/* the FCI callbacks */
-
-static void * CDECL mem_alloc(ULONG cb)
-{
-    return HeapAlloc(GetProcessHeap(), 0, cb);
-}
-
-static void CDECL mem_free(void *memory)
-{
-    HeapFree(GetProcessHeap(), 0, memory);
-}
-
-static BOOL CDECL get_next_cabinet(PCCAB pccab, ULONG  cbPrevCab, void *pv)
-{
-    sprintf(pccab->szCab, pv, pccab->iCab);
-    return TRUE;
-}
-
-static LONG CDECL progress(UINT typeStatus, ULONG cb1, ULONG cb2, void *pv)
-{
-    return 0;
-}
-
-static int CDECL file_placed(PCCAB pccab, char *pszFile, LONG cbFile,
-                             BOOL fContinuation, void *pv)
-{
-    return 0;
-}
-
-static INT_PTR CDECL fci_open(char *pszFile, int oflag, int pmode, int *err, void *pv)
-{
-    HANDLE handle;
-    DWORD dwAccess = 0;
-    DWORD dwShareMode = 0;
-    DWORD dwCreateDisposition = OPEN_EXISTING;
-
-    dwAccess = GENERIC_READ | GENERIC_WRITE;
-    dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-
-    if (GetFileAttributesA(pszFile) != INVALID_FILE_ATTRIBUTES)
-        dwCreateDisposition = OPEN_EXISTING;
-    else
-        dwCreateDisposition = CREATE_NEW;
-
-    handle = CreateFileA(pszFile, dwAccess, dwShareMode, NULL,
-                         dwCreateDisposition, 0, NULL);
-
-    ok(handle != INVALID_HANDLE_VALUE, "Failed to CreateFile %s\n", pszFile);
-
-    return (INT_PTR)handle;
-}
-
-static UINT CDECL fci_read(INT_PTR hf, void *memory, UINT cb, int *err, void *pv)
-{
-    HANDLE handle = (HANDLE)hf;
-    DWORD dwRead;
-    BOOL res;
-
-    res = ReadFile(handle, memory, cb, &dwRead, NULL);
-    ok(res, "Failed to ReadFile\n");
-
-    return dwRead;
-}
-
-static UINT CDECL fci_write(INT_PTR hf, void *memory, UINT cb, int *err, void *pv)
-{
-    HANDLE handle = (HANDLE)hf;
-    DWORD dwWritten;
-    BOOL res;
-
-    res = WriteFile(handle, memory, cb, &dwWritten, NULL);
-    ok(res, "Failed to WriteFile\n");
-
-    return dwWritten;
-}
-
-static int CDECL fci_close(INT_PTR hf, int *err, void *pv)
-{
-    HANDLE handle = (HANDLE)hf;
-    ok(CloseHandle(handle), "Failed to CloseHandle\n");
-
-    return 0;
-}
-
-static LONG CDECL fci_seek(INT_PTR hf, LONG dist, int seektype, int *err, void *pv)
-{
-    HANDLE handle = (HANDLE)hf;
-    DWORD ret;
-
-    ret = SetFilePointer(handle, dist, NULL, seektype);
-    ok(ret != INVALID_SET_FILE_POINTER, "Failed to SetFilePointer\n");
-
-    return ret;
-}
-
-static int CDECL fci_delete(char *pszFile, int *err, void *pv)
-{
-    BOOL ret = DeleteFileA(pszFile);
-    ok(ret, "Failed to DeleteFile %s\n", pszFile);
-
-    return 0;
-}
 
 static void init_functionpointers(void)
 {
@@ -2274,9 +2351,7 @@ static void init_functionpointers(void)
     GET_PROC(hmsi, MsiGetComponentPathExA);
     GET_PROC(hmsi, MsiQueryFeatureStateExA);
 
-    GET_PROC(hadvapi32, CheckTokenMembership);
     GET_PROC(hadvapi32, ConvertSidToStringSidA);
-    GET_PROC(hadvapi32, OpenProcessToken);
     GET_PROC(hadvapi32, RegDeleteKeyExA)
     GET_PROC(hkernel32, IsWow64Process)
 
@@ -2285,44 +2360,6 @@ static void init_functionpointers(void)
     GET_PROC(hsrclient, SRSetRestorePointA);
 
 #undef GET_PROC
-}
-
-static BOOL is_process_limited(void)
-{
-    SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
-    PSID Group = NULL;
-    BOOL IsInGroup;
-    HANDLE token;
-
-    if (!pCheckTokenMembership || !pOpenProcessToken) return FALSE;
-
-    if (!AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
-                                  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &Group) ||
-        !pCheckTokenMembership(NULL, Group, &IsInGroup))
-    {
-        trace("Could not check if the current user is an administrator\n");
-        FreeSid(Group);
-        return FALSE;
-    }
-    FreeSid(Group);
-
-    if (!IsInGroup)
-    {
-        /* Only administrators have enough privileges for these tests */
-        return TRUE;
-    }
-
-    if (pOpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
-    {
-        BOOL ret;
-        TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
-        DWORD size;
-
-        ret = GetTokenInformation(token, TokenElevationType, &type, sizeof(type), &size);
-        CloseHandle(token);
-        return (ret && type == TokenElevationTypeLimited);
-    }
-    return FALSE;
 }
 
 static char *get_user_sid(void)
@@ -2349,185 +2386,6 @@ static char *get_user_sid(void)
     return usersid;
 }
 
-static BOOL CDECL get_temp_file(char *pszTempName, int cbTempName, void *pv)
-{
-    LPSTR tempname;
-
-    tempname = HeapAlloc(GetProcessHeap(), 0, MAX_PATH);
-    GetTempFileNameA(".", "xx", 0, tempname);
-
-    if (tempname && (strlen(tempname) < (unsigned)cbTempName))
-    {
-        lstrcpyA(pszTempName, tempname);
-        HeapFree(GetProcessHeap(), 0, tempname);
-        return TRUE;
-    }
-
-    HeapFree(GetProcessHeap(), 0, tempname);
-
-    return FALSE;
-}
-
-static INT_PTR CDECL get_open_info(char *pszName, USHORT *pdate, USHORT *ptime,
-                                   USHORT *pattribs, int *err, void *pv)
-{
-    BY_HANDLE_FILE_INFORMATION finfo;
-    FILETIME filetime;
-    HANDLE handle;
-    DWORD attrs;
-    BOOL res;
-
-    handle = CreateFileA(pszName, GENERIC_READ, FILE_SHARE_READ, NULL,
-                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-
-    ok(handle != INVALID_HANDLE_VALUE, "Failed to CreateFile %s\n", pszName);
-
-    res = GetFileInformationByHandle(handle, &finfo);
-    ok(res, "Expected GetFileInformationByHandle to succeed\n");
-
-    FileTimeToLocalFileTime(&finfo.ftLastWriteTime, &filetime);
-    FileTimeToDosDateTime(&filetime, pdate, ptime);
-
-    attrs = GetFileAttributesA(pszName);
-    ok(attrs != INVALID_FILE_ATTRIBUTES, "Failed to GetFileAttributes\n");
-
-    return (INT_PTR)handle;
-}
-
-static BOOL add_file(HFCI hfci, const char *file, TCOMP compress)
-{
-    char path[MAX_PATH];
-    char filename[MAX_PATH];
-
-    lstrcpyA(path, CURR_DIR);
-    lstrcatA(path, "\\");
-    lstrcatA(path, file);
-
-    lstrcpyA(filename, file);
-
-    return FCIAddFile(hfci, path, filename, FALSE, get_next_cabinet,
-                      progress, get_open_info, compress);
-}
-
-static void set_cab_parameters(PCCAB pCabParams, const CHAR *name, DWORD max_size)
-{
-    ZeroMemory(pCabParams, sizeof(CCAB));
-
-    pCabParams->cb = max_size;
-    pCabParams->cbFolderThresh = FOLDER_THRESHOLD;
-    pCabParams->setID = 0xbeef;
-    pCabParams->iCab = 1;
-    lstrcpyA(pCabParams->szCabPath, CURR_DIR);
-    lstrcatA(pCabParams->szCabPath, "\\");
-    lstrcpyA(pCabParams->szCab, name);
-}
-
-static void create_cab_file(const CHAR *name, DWORD max_size, const CHAR *files)
-{
-    CCAB cabParams;
-    LPCSTR ptr;
-    HFCI hfci;
-    ERF erf;
-    BOOL res;
-
-    set_cab_parameters(&cabParams, name, max_size);
-
-    hfci = FCICreate(&erf, file_placed, mem_alloc, mem_free, fci_open,
-                      fci_read, fci_write, fci_close, fci_seek, fci_delete,
-                      get_temp_file, &cabParams, NULL);
-
-    ok(hfci != NULL, "Failed to create an FCI context\n");
-
-    ptr = files;
-    while (*ptr)
-    {
-        res = add_file(hfci, ptr, tcompTYPE_MSZIP);
-        ok(res, "Failed to add file: %s\n", ptr);
-        ptr += lstrlenA(ptr) + 1;
-    }
-
-    res = FCIFlushCabinet(hfci, FALSE, get_next_cabinet, progress);
-    ok(res, "Failed to flush the cabinet\n");
-
-    res = FCIDestroy(hfci);
-    ok(res, "Failed to destroy the cabinet\n");
-}
-
-static BOOL get_user_dirs(void)
-{
-    HKEY hkey;
-    DWORD type, size;
-
-    if (RegOpenKeyA(HKEY_CURRENT_USER,
-                    "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders", &hkey))
-        return FALSE;
-
-    size = MAX_PATH;
-    if (RegQueryValueExA(hkey, "AppData", 0, &type, (LPBYTE)APP_DATA_DIR, &size))
-    {
-        RegCloseKey(hkey);
-        return FALSE;
-    }
-
-    RegCloseKey(hkey);
-    return TRUE;
-}
-
-static BOOL get_system_dirs(void)
-{
-    HKEY hkey;
-    DWORD type, size;
-
-    if (RegOpenKeyA(HKEY_LOCAL_MACHINE,
-                    "Software\\Microsoft\\Windows\\CurrentVersion", &hkey))
-        return FALSE;
-
-    size = MAX_PATH;
-    if (RegQueryValueExA(hkey, "ProgramFilesDir (x86)", 0, &type, (LPBYTE)PROG_FILES_DIR, &size) &&
-        RegQueryValueExA(hkey, "ProgramFilesDir", 0, &type, (LPBYTE)PROG_FILES_DIR, &size))
-    {
-        RegCloseKey(hkey);
-        return FALSE;
-    }
-
-    size = MAX_PATH;
-    if (RegQueryValueExA(hkey, "CommonFilesDir (x86)", 0, &type, (LPBYTE)COMMON_FILES_DIR, &size) &&
-        RegQueryValueExA(hkey, "CommonFilesDir", 0, &type, (LPBYTE)COMMON_FILES_DIR, &size))
-    {
-        RegCloseKey(hkey);
-        return FALSE;
-    }
-
-    RegCloseKey(hkey);
-
-    if (!GetWindowsDirectoryA(WINDOWS_DIR, MAX_PATH))
-        return FALSE;
-
-    return TRUE;
-}
-
-static void create_file_data(LPCSTR name, LPCSTR data, DWORD size)
-{
-    HANDLE file;
-    DWORD written;
-
-    file = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-    if (file == INVALID_HANDLE_VALUE)
-        return;
-
-    WriteFile(file, data, strlen(data), &written, NULL);
-
-    if (size)
-    {
-        SetFilePointer(file, size, NULL, FILE_BEGIN);
-        SetEndOfFile(file);
-    }
-
-    CloseHandle(file);
-}
-
-#define create_file(name, size) create_file_data(name, name, size)
-
 static void create_test_files(void)
 {
     CreateDirectoryA("msitest", NULL);
@@ -2549,20 +2407,6 @@ static void create_test_files(void)
     DeleteFileA("five.txt");
 }
 
-static BOOL delete_pf(const CHAR *rel_path, BOOL is_file)
-{
-    CHAR path[MAX_PATH];
-
-    lstrcpyA(path, PROG_FILES_DIR);
-    lstrcatA(path, "\\");
-    lstrcatA(path, rel_path);
-
-    if (is_file)
-        return DeleteFileA(path);
-    else
-        return RemoveDirectoryA(path);
-}
-
 static void delete_test_files(void)
 {
     DeleteFileA("msitest.msi");
@@ -2576,89 +2420,6 @@ static void delete_test_files(void)
     RemoveDirectoryA("msitest\\second");
     RemoveDirectoryA("msitest\\first");
     RemoveDirectoryA("msitest");
-}
-
-static void write_file(const CHAR *filename, const char *data, int data_size)
-{
-    DWORD size;
-    HANDLE hf = CreateFileA(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    WriteFile(hf, data, data_size, &size, NULL);
-    CloseHandle(hf);
-}
-
-static void write_msi_summary_info(MSIHANDLE db, INT version, INT wordcount, const char *template)
-{
-    MSIHANDLE summary;
-    UINT r;
-
-    r = MsiGetSummaryInformationA(db, NULL, 5, &summary);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    r = MsiSummaryInfoSetPropertyA(summary, PID_TEMPLATE, VT_LPSTR, 0, NULL, template);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    r = MsiSummaryInfoSetPropertyA(summary, PID_REVNUMBER, VT_LPSTR, 0, NULL,
-                                   "{004757CA-5092-49C2-AD20-28E1CE0DF5F2}");
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    r = MsiSummaryInfoSetPropertyA(summary, PID_PAGECOUNT, VT_I4, version, NULL, NULL);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    r = MsiSummaryInfoSetPropertyA(summary, PID_WORDCOUNT, VT_I4, wordcount, NULL, NULL);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    r = MsiSummaryInfoSetPropertyA(summary, PID_TITLE, VT_LPSTR, 0, NULL, "MSITEST");
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    /* write the summary changes back to the stream */
-    r = MsiSummaryInfoPersist(summary);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    MsiCloseHandle(summary);
-}
-
-#define create_database(name, tables, num_tables) \
-    create_database_wordcount(name, tables, num_tables, 100, 0, ";1033");
-
-#define create_database_template(name, tables, num_tables, version, template) \
-    create_database_wordcount(name, tables, num_tables, version, 0, template);
-
-static void create_database_wordcount(const CHAR *name, const msi_table *tables,
-                                      int num_tables, INT version, INT wordcount,
-                                      const char *template)
-{
-    MSIHANDLE db;
-    UINT r;
-    WCHAR *nameW;
-    int j, len;
-
-    len = MultiByteToWideChar( CP_ACP, 0, name, -1, NULL, 0 );
-    if (!(nameW = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) ))) return;
-    MultiByteToWideChar( CP_ACP, 0, name, -1, nameW, len );
-
-    r = MsiOpenDatabaseW(nameW, MSIDBOPEN_CREATE, &db);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    /* import the tables into the database */
-    for (j = 0; j < num_tables; j++)
-    {
-        const msi_table *table = &tables[j];
-
-        write_file(table->filename, table->data, (table->size - 1) * sizeof(char));
-
-        r = MsiDatabaseImportA(db, CURR_DIR, table->filename);
-        ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-        DeleteFileA(table->filename);
-    }
-
-    write_msi_summary_info(db, version, wordcount, template);
-
-    r = MsiDatabaseCommit(db);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-
-    MsiCloseHandle(db);
-    HeapFree( GetProcessHeap(), 0, nameW );
 }
 
 static BOOL notify_system_change(DWORD event_type, STATEMGRSTATUS *status)
@@ -2687,22 +2448,6 @@ static LONG delete_key( HKEY key, LPCSTR subkey, REGSAM access )
     if (pRegDeleteKeyExA)
         return pRegDeleteKeyExA( key, subkey, access, 0 );
     return RegDeleteKeyA( key, subkey );
-}
-
-static BOOL file_exists(LPCSTR file)
-{
-    return GetFileAttributesA(file) != INVALID_FILE_ATTRIBUTES;
-}
-
-static BOOL pf_exists(LPCSTR file)
-{
-    CHAR path[MAX_PATH];
-
-    lstrcpyA(path, PROG_FILES_DIR);
-    lstrcatA(path, "\\");
-    lstrcatA(path, file);
-
-    return file_exists(path);
 }
 
 static void delete_pfmsitest_files(void)
@@ -2772,45 +2517,6 @@ static void check_reg_dword(HKEY prodkey, LPCSTR name, DWORD expected, DWORD lin
     ok_(__FILE__, line)(val == expected, "Expected %d, got %d\n", expected, val);
 }
 
-static void check_reg_dword4(HKEY prodkey, LPCSTR name, DWORD expected1, DWORD expected2, DWORD expected3,
-                             DWORD expected4, DWORD line)
-{
-    DWORD val, size, type;
-    LONG res;
-
-    size = sizeof(DWORD);
-    res = RegQueryValueExA(prodkey, name, NULL, &type, (LPBYTE)&val, &size);
-
-    if (res != ERROR_SUCCESS || type != REG_DWORD)
-    {
-        ok_(__FILE__, line)(FALSE, "Key doesn't exist or wrong type\n");
-        return;
-    }
-
-    ok_(__FILE__, line)(val == expected1 || val == expected2 || val == expected3 || val == expected4,
-        "Expected %d, %d, %d or %d, got %d\n", expected1, expected2, expected3, expected4, val);
-}
-
-static void check_reg_dword5(HKEY prodkey, LPCSTR name, DWORD expected1, DWORD expected2, DWORD expected3,
-                             DWORD expected4, DWORD expected5, DWORD line)
-{
-    DWORD val, size, type;
-    LONG res;
-
-    size = sizeof(DWORD);
-    res = RegQueryValueExA(prodkey, name, NULL, &type, (LPBYTE)&val, &size);
-
-    if (res != ERROR_SUCCESS || type != REG_DWORD)
-    {
-        ok_(__FILE__, line)(FALSE, "Key doesn't exist or wrong type\n");
-        return;
-    }
-
-    ok_(__FILE__, line)(val == expected1 || val == expected2 || val == expected3 || val == expected4 ||
-        val == expected5,
-        "Expected %d, %d, %d, %d or %d, got %d\n", expected1, expected2, expected3, expected4, expected5, val);
-}
-
 #define CHECK_REG_STR(prodkey, name, expected) \
     check_reg_str(prodkey, name, expected, TRUE, __LINE__);
 
@@ -2838,24 +2544,6 @@ static void check_reg_dword5(HKEY prodkey, LPCSTR name, DWORD expected1, DWORD e
         RegDeleteValueA(prodkey, name); \
     } while(0)
 
-#define CHECK_REG_DWORD2(prodkey, name, expected1, expected2) \
-    check_reg_dword2(prodkey, name, expected1, expected2, __LINE__);
-
-#define CHECK_DEL_REG_DWORD2(prodkey, name, expected1, expected2) \
-    do { \
-        check_reg_dword2(prodkey, name, expected1, expected2, __LINE__); \
-        RegDeleteValueA(prodkey, name); \
-    } while(0)
-
-#define CHECK_REG_DWORD4(prodkey, name, expected1, expected2, expected3, expected4) \
-    check_reg_dword4(prodkey, name, expected1, expected2, expected3, expected4, __LINE__);
-
-#define CHECK_DEL_REG_DWORD5(prodkey, name, expected1, expected2, expected3, expected4 ,expected5) \
-    do { \
-        check_reg_dword5(prodkey, name, expected1, expected2, expected3, expected4, expected5, __LINE__); \
-        RegDeleteValueA(prodkey, name); \
-    } while(0)
-
 static void get_date_str(LPSTR date)
 {
     SYSTEMTIME systime;
@@ -2863,6 +2551,22 @@ static void get_date_str(LPSTR date)
     static const char date_fmt[] = "%d%02d%02d";
     GetLocalTime(&systime);
     sprintf(date, date_fmt, systime.wYear, systime.wMonth, systime.wDay);
+}
+
+/* EstimatedSize is the size in KiB of .msi + installed files, rounded up to page size. */
+static DWORD get_estimated_size(void)
+{
+    SYSTEM_INFO si;
+    HANDLE file;
+    DWORD size;
+
+    GetSystemInfo(&si);
+
+    file = CreateFileA(msifile, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+    size = ((GetFileSize(file, NULL) + si.dwPageSize - 1) / si.dwPageSize + 1);
+    size = size * si.dwPageSize / 1024;
+    CloseHandle(file);
+    return size;
 }
 
 static void test_register_product(void)
@@ -2956,9 +2660,7 @@ static void test_register_product(void)
     CHECK_DEL_REG_DWORD(hkey, "VersionMinor", 1);
     CHECK_DEL_REG_DWORD(hkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_DEL_REG_DWORD5(hkey, "EstimatedSize", 12, -12, 4, 10, 24);
-    }
+    CHECK_DEL_REG_DWORD(hkey, "EstimatedSize", get_estimated_size());
 
     delete_key(hkey, "", access);
     RegCloseKey(hkey);
@@ -2998,9 +2700,7 @@ static void test_register_product(void)
     CHECK_DEL_REG_DWORD(props, "VersionMinor", 1);
     CHECK_DEL_REG_DWORD(props, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_DEL_REG_DWORD5(props, "EstimatedSize", 12, -12, 4, 10, 24);
-    }
+    CHECK_DEL_REG_DWORD(props, "EstimatedSize", get_estimated_size());
 
     delete_key(props, "", access);
     RegCloseKey(props);
@@ -3067,9 +2767,7 @@ static void test_register_product(void)
     CHECK_DEL_REG_DWORD(hkey, "VersionMinor", 1);
     CHECK_DEL_REG_DWORD(hkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_DEL_REG_DWORD5(hkey, "EstimatedSize", 12, -12, 4, 10, 24);
-    }
+    CHECK_DEL_REG_DWORD(hkey, "EstimatedSize", get_estimated_size());
 
     delete_key(hkey, "", access);
     RegCloseKey(hkey);
@@ -3109,9 +2807,7 @@ static void test_register_product(void)
     CHECK_DEL_REG_DWORD(props, "VersionMinor", 1);
     CHECK_DEL_REG_DWORD(props, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_DEL_REG_DWORD5(props, "EstimatedSize", 12, -12, 4, 10, 24);
-    }
+    CHECK_DEL_REG_DWORD(props, "EstimatedSize", get_estimated_size());
 
     delete_key(props, "", access);
     RegCloseKey(props);
@@ -3976,9 +3672,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -12, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4082,9 +3776,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -12, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4165,9 +3857,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -12, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4225,9 +3915,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -12, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4285,9 +3973,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -20, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4368,9 +4054,7 @@ static void test_publish(void)
     CHECK_REG_DWORD(prodkey, "VersionMinor", 1);
     CHECK_REG_DWORD(prodkey, "WindowsInstaller", 1);
     todo_wine
-    {
-        CHECK_REG_DWORD4(prodkey, "EstimatedSize", 12, -12, 10, 24);
-    }
+    CHECK_REG_DWORD(prodkey, "EstimatedSize", get_estimated_size());
 
     RegCloseKey(prodkey);
 
@@ -4614,22 +4298,6 @@ error:
     DeleteFileA("msitest\\maximus");
     RemoveDirectoryA("msitest");
 }
-
-static void create_pf_data(LPCSTR file, LPCSTR data, BOOL is_file)
-{
-    CHAR path[MAX_PATH];
-
-    lstrcpyA(path, PROG_FILES_DIR);
-    lstrcatA(path, "\\");
-    lstrcatA(path, file);
-
-    if (is_file)
-        create_file_data(path, data, 500);
-    else
-        CreateDirectoryA(path, NULL);
-}
-
-#define create_pf(file, is_file) create_pf_data(file, file, is_file)
 
 static void test_remove_files(void)
 {
@@ -5774,6 +5442,9 @@ error:
 
 static void test_install_remove_odbc(void)
 {
+    int gotdriver = 0, gotdriver2 = 0;
+    char buffer[1000], *p;
+    WORD len;
     UINT r;
 
     if (is_process_limited())
@@ -5806,6 +5477,19 @@ static void test_install_remove_odbc(void)
     ok(pf_exists("msitest\\ODBCtranslator2.dll"), "file not created\n");
     ok(pf_exists("msitest\\ODBCsetup.dll"), "file not created\n");
 
+    r = SQLGetInstalledDrivers(buffer, sizeof(buffer), &len);
+    ok(len < sizeof(buffer), "buffer too small\n");
+    ok(r, "SQLGetInstalledDrivers failed\n");
+    for (p = buffer; *p; p += strlen(p) + 1)
+    {
+        if (!strcmp(p, "ODBC test driver"))
+            gotdriver = 1;
+        if (!strcmp(p, "ODBC test driver2"))
+            gotdriver2 = 1;
+    }
+    ok(gotdriver, "driver not installed\n");
+    ok(gotdriver2, "driver 2 not installed\n");
+
     r = MsiInstallProductA(msifile, "REMOVE=ALL");
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
 
@@ -5815,6 +5499,20 @@ static void test_install_remove_odbc(void)
     ok(!delete_pf("msitest\\ODBCtranslator2.dll", TRUE), "file not removed\n");
     ok(!delete_pf("msitest\\ODBCsetup.dll", TRUE), "file not removed\n");
     ok(!delete_pf("msitest", FALSE), "directory not removed\n");
+
+    gotdriver = gotdriver2 = 0;
+    r = SQLGetInstalledDrivers(buffer, sizeof(buffer), &len);
+    ok(len < sizeof(buffer), "buffer too small\n");
+    ok(r, "SQLGetInstalledDrivers failed\n");
+    for (p = buffer; *p; p += strlen(p) + 1)
+    {
+        if (!strcmp(p, "ODBC test driver"))
+            gotdriver = 1;
+        if (!strcmp(p, "ODBC test driver2"))
+            gotdriver2 = 1;
+    }
+    ok(!gotdriver, "driver not installed\n");
+    ok(!gotdriver2, "driver 2 not installed\n");
 
 error:
     DeleteFileA("msitest\\ODBCdriver.dll");

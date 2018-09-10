@@ -1986,6 +1986,7 @@ struct wined3d_blend_state_desc
 struct wined3d_rasterizer_state_desc
 {
     BOOL front_ccw;
+    BOOL depth_clip;
 };
 
 struct wined3d_sampler_desc
@@ -2214,7 +2215,7 @@ void __cdecl wined3d_device_copy_resource(struct wined3d_device *device,
 HRESULT __cdecl wined3d_device_copy_sub_resource_region(struct wined3d_device *device,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx, unsigned int dst_x,
         unsigned int dst_y, unsigned int dst_z, struct wined3d_resource *src_resource,
-        unsigned int src_sub_resource_idx, const struct wined3d_box *src_box);
+        unsigned int src_sub_resource_idx, const struct wined3d_box *src_box, unsigned int flags);
 void __cdecl wined3d_device_copy_uav_counter(struct wined3d_device *device,
         struct wined3d_buffer *dst_buffer, unsigned int offset, struct wined3d_unordered_access_view *uav);
 HRESULT __cdecl wined3d_device_create(struct wined3d *wined3d, UINT adapter_idx,
@@ -2465,7 +2466,7 @@ HRESULT __cdecl wined3d_device_uninit_3d(struct wined3d_device *device);
 HRESULT __cdecl wined3d_device_uninit_gdi(struct wined3d_device *device);
 void __cdecl wined3d_device_update_sub_resource(struct wined3d_device *device, struct wined3d_resource *resource,
         unsigned int sub_resource_idx, const struct wined3d_box *box, const void *data, unsigned int row_pitch,
-        unsigned int depth_pitch);
+        unsigned int depth_pitch, unsigned int flags);
 HRESULT __cdecl wined3d_device_update_texture(struct wined3d_device *device,
         struct wined3d_texture *src_texture, struct wined3d_texture *dst_texture);
 HRESULT __cdecl wined3d_device_validate_device(const struct wined3d_device *device, DWORD *num_passes);

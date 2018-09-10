@@ -23,10 +23,8 @@
 #include <winternl.h>
 #include <commctrl.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 #include "main.h"
-#include "regproc.h"
 #include "wine/heap.h"
 #include "wine/unicode.h"
 
@@ -242,7 +240,7 @@ static BOOL CreateListColumns(HWND hWndListView)
         lvC.iSubItem = index;
         lvC.cx = default_column_widths[index];
         lvC.fmt = column_alignment[index];
-        LoadStringW(hInst, IDS_LIST_COLUMN_FIRST + index, szText, sizeof(szText)/sizeof(WCHAR));
+        LoadStringW(hInst, IDS_LIST_COLUMN_FIRST + index, szText, ARRAY_SIZE(szText));
         if (ListView_InsertColumnW(hWndListView, index, &lvC) == -1) return FALSE;
     }
     return TRUE;
@@ -361,7 +359,7 @@ HWND CreateListView(HWND hwndParent, UINT id)
     WCHAR ListView[] = {'L','i','s','t',' ','V','i','e','w',0};
 
     /* prepare strings */
-    LoadStringW(hInst, IDS_REGISTRY_VALUE_NOT_SET, g_szValueNotSet, COUNT_OF(g_szValueNotSet));
+    LoadStringW(hInst, IDS_REGISTRY_VALUE_NOT_SET, g_szValueNotSet, ARRAY_SIZE(g_szValueNotSet));
 
     /* Get the dimensions of the parent window's client area, and create the list view control.  */
     GetClientRect(hwndParent, &rcClient);

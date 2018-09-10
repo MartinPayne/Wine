@@ -23,10 +23,6 @@
 #include "d3d11.h"
 #include "wine/test.h"
 
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
-#endif
-
 enum frame_latency
 {
     DEFAULT_FRAME_LATENCY =  3,
@@ -1385,6 +1381,29 @@ static void test_create_swapchain(void)
     expected_width = expected_client_rect->right;
     expected_height = expected_client_rect->bottom;
 
+    creation_desc.BufferDesc.Width = 0;
+    creation_desc.BufferDesc.Height = 0;
+    hr = IDXGIFactory_CreateSwapChain(factory, obj, &creation_desc, &swapchain);
+    ok(SUCCEEDED(hr), "CreateSwapChain failed, hr %#x.\n", hr);
+    hr = IDXGISwapChain_GetDesc(swapchain, &result_desc);
+    ok(SUCCEEDED(hr), "GetDesc failed, hr %#x.\n", hr);
+    ok(result_desc.BufferDesc.Width == expected_width, "Got width %u, expected %u.\n",
+            result_desc.BufferDesc.Width, expected_width);
+    ok(result_desc.BufferDesc.Height == expected_height, "Got height %u, expected %u.\n",
+            result_desc.BufferDesc.Height, expected_height);
+    check_swapchain_fullscreen_state(swapchain, &expected_state);
+    IDXGISwapChain_Release(swapchain);
+
+    DestroyWindow(creation_desc.OutputWindow);
+    creation_desc.OutputWindow = CreateWindowA("static", "dxgi_test",
+            WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+            1, 1, 0, 0, 0, 0, 0, 0);
+    SetRect(&expected_state.fullscreen_state.window_rect, 1, 1, 1, 1);
+    SetRectEmpty(expected_client_rect);
+    expected_width = expected_height = 8;
+
+    creation_desc.BufferDesc.Width = 0;
+    creation_desc.BufferDesc.Height = 0;
     hr = IDXGIFactory_CreateSwapChain(factory, obj, &creation_desc, &swapchain);
     ok(SUCCEEDED(hr), "CreateSwapChain failed, hr %#x.\n", hr);
     hr = IDXGISwapChain_GetDesc(swapchain, &result_desc);
@@ -3426,26 +3445,29 @@ static void test_maximum_frame_latency(void)
 
     if (SUCCEEDED(IDXGIDevice_QueryInterface(device, &IID_IDXGIDevice1, (void **)&device1)))
     {
+        hr = IDXGIDevice1_GetMaximumFrameLatency(device1, NULL);
+        ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+
         hr = IDXGIDevice1_GetMaximumFrameLatency(device1, &max_latency);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
         ok(max_latency == DEFAULT_FRAME_LATENCY, "Got unexpected maximum frame latency %u.\n", max_latency);
 
         hr = IDXGIDevice1_SetMaximumFrameLatency(device1, MAX_FRAME_LATENCY);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
         hr = IDXGIDevice1_GetMaximumFrameLatency(device1, &max_latency);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-        todo_wine ok(max_latency == MAX_FRAME_LATENCY, "Got unexpected maximum frame latency %u.\n", max_latency);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(max_latency == MAX_FRAME_LATENCY, "Got unexpected maximum frame latency %u.\n", max_latency);
 
         hr = IDXGIDevice1_SetMaximumFrameLatency(device1, MAX_FRAME_LATENCY + 1);
         ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
         hr = IDXGIDevice1_GetMaximumFrameLatency(device1, &max_latency);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-        todo_wine ok(max_latency == MAX_FRAME_LATENCY, "Got unexpected maximum frame latency %u.\n", max_latency);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(max_latency == MAX_FRAME_LATENCY, "Got unexpected maximum frame latency %u.\n", max_latency);
 
         hr = IDXGIDevice1_SetMaximumFrameLatency(device1, 0);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
         hr = IDXGIDevice1_GetMaximumFrameLatency(device1, &max_latency);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
         /* 0 does not reset to the default frame latency on all Windows versions. */
         ok(max_latency == DEFAULT_FRAME_LATENCY || broken(!max_latency),
                 "Got unexpected maximum frame latency %u.\n", max_latency);

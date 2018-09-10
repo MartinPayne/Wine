@@ -23,10 +23,15 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <winsvc.h>
+#include <odbcinst.h>
 #define COBJMACROS
+#include <shlobj.h>
 #include <msxml.h>
 #include <msi.h>
 #include <msiquery.h>
+
+static int todo_level, todo_do_loop;
 
 static void ok_(MSIHANDLE hinst, int todo, const char *file, int line, int condition, const char *msg, ...)
 {
@@ -47,8 +52,30 @@ static void ok_(MSIHANDLE hinst, int todo, const char *file, int line, int condi
     MsiProcessMessage(hinst, INSTALLMESSAGE_USER, record);
     MsiCloseHandle(record);
 }
-#define ok(hinst, condition, ...)           ok_(hinst, 0, __FILE__, __LINE__, condition, __VA_ARGS__)
-#define todo_wine_ok(hinst, condition, ...) ok_(hinst, 1, __FILE__, __LINE__, condition, __VA_ARGS__)
+
+static void winetest_start_todo( int is_todo )
+{
+    todo_level = (todo_level << 1) | (is_todo != 0);
+    todo_do_loop=1;
+}
+
+static int winetest_loop_todo(void)
+{
+    int do_loop=todo_do_loop;
+    todo_do_loop=0;
+    return do_loop;
+}
+
+static void winetest_end_todo(void)
+{
+    todo_level >>= 1;
+}
+
+#define ok(hinst, condition, ...)   ok_(hinst, todo_level, __FILE__, __LINE__, condition, __VA_ARGS__)
+#define todo_wine_if(is_todo) for (winetest_start_todo(is_todo); \
+                                   winetest_loop_todo(); \
+                                   winetest_end_todo())
+#define todo_wine   todo_wine_if(1)
 
 static const char *dbgstr_w(WCHAR *str)
 {
@@ -168,21 +195,21 @@ static void test_props(MSIHANDLE hinst)
     r = MsiGetPropertyA(hinst, "boo", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "q"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiGetPropertyA(hinst, "boo", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 3;
     strcpy(buffer,"x");
     r = MsiGetPropertyA(hinst, "boo", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "xy"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 4;
     strcpy(buffer,"x");
@@ -190,6 +217,12 @@ static void test_props(MSIHANDLE hinst)
     ok(hinst, !r, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "xyz"), "got \"%s\"\n", buffer);
     ok(hinst, sz == 3, "got size %u\n", sz);
+
+    r = MsiGetPropertyW(hinst, booW, NULL, NULL);
+    ok(hinst, !r, "got %u\n", r);
+
+    r = MsiGetPropertyW(hinst, booW, bufferW, NULL );
+    ok(hinst, r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     sz = 0;
     r = MsiGetPropertyW(hinst, booW, NULL, &sz);
@@ -479,28 +512,28 @@ static void test_targetpath(MSIHANDLE hinst)
     sz = 0;
     r = MsiGetTargetPathA(hinst, "TARGETDIR", NULL, &sz);
     ok(hinst, !r, "got %u\n", r);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 0;
     strcpy(buffer,"q");
     r = MsiGetTargetPathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "q"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiGetTargetPathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 3;
     strcpy(buffer,"x");
     r = MsiGetTargetPathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "C:"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 6, "got size %u\n", sz);
+    ok(hinst, sz == 6, "got size %u\n", sz);
 
     sz = 4;
     strcpy(buffer,"x");
@@ -545,18 +578,18 @@ static void test_targetpath(MSIHANDLE hinst)
     r = MsiSetTargetPathA(hinst, NULL, "C:\\subdir");
     ok(hinst, r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
-    r = MsiSetTargetPathA(hinst, "TARGETDIR", NULL);
+    r = MsiSetTargetPathA(hinst, "MSITESTDIR", NULL);
     ok(hinst, r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
-    r = MsiSetTargetPathA(hinst, "TARGETDIR", "C:\\subdir");
+    r = MsiSetTargetPathA(hinst, "MSITESTDIR", "C:\\subdir");
     ok(hinst, !r, "got %u\n", r);
 
     sz = sizeof(buffer);
-    r = MsiGetTargetPathA(hinst, "TARGETDIR", buffer, &sz);
+    r = MsiGetTargetPathA(hinst, "MSITESTDIR", buffer, &sz);
     ok(hinst, !r, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "C:\\subdir\\"), "got \"%s\"\n", buffer);
 
-    r = MsiSetTargetPathA(hinst, "TARGETDIR", "C:\\");
+    r = MsiSetTargetPathA(hinst, "MSITESTDIR", "C:\\");
 
     /* test GetSourcePath() */
 
@@ -578,28 +611,28 @@ static void test_targetpath(MSIHANDLE hinst)
     sz = 0;
     r = MsiGetSourcePathA(hinst, "TARGETDIR", NULL, &sz);
     ok(hinst, !r, "got %u\n", r);
-    todo_wine_ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
+    ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
 
     sz = 0;
     strcpy(buffer,"q");
     r = MsiGetSourcePathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "q"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
+    ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiGetSourcePathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
+    ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
 
     sz = srcsz;
     strcpy(buffer,"x");
     r = MsiGetSourcePathA(hinst, "TARGETDIR", buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, strlen(buffer) == srcsz - 1, "wrong buffer length %d\n", strlen(buffer));
-    todo_wine_ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
+    ok(hinst, sz == srcsz * 2, "got size %u\n", sz);
 
     sz = srcsz + 1;
     strcpy(buffer,"x");
@@ -785,34 +818,45 @@ static void test_format_record(MSIHANDLE hinst)
     sz = 0;
     r = MsiFormatRecordA(hinst, rec, NULL, &sz);
     ok(hinst, !r, "got %u\n", r);
-    todo_wine_ok(hinst, sz == 14, "got size %u\n", sz);
+    ok(hinst, sz == 14, "got size %u\n", sz);
 
     sz = 0;
     strcpy(buffer,"q");
     r = MsiFormatRecordA(hinst, rec, buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "q"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 14, "got size %u\n", sz);
+    ok(hinst, sz == 14, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiFormatRecordA(hinst, rec, buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 14, "got size %u\n", sz);
+    ok(hinst, sz == 14, "got size %u\n", sz);
 
     sz = 7;
     strcpy(buffer,"x");
     r = MsiFormatRecordA(hinst, rec, buffer, &sz);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "foo 12"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 14, "got size %u\n", sz);
+    ok(hinst, sz == 14, "got size %u\n", sz);
 
     sz = 8;
     strcpy(buffer,"x");
     r = MsiFormatRecordA(hinst, rec, buffer, &sz);
     ok(hinst, !r, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "foo 123"), "got \"%s\"\n", buffer);
+    ok(hinst, sz == 7, "got size %u\n", sz);
+
+    r = MsiFormatRecordW(hinst, rec, NULL, NULL);
+    ok(hinst, !r, "got %u\n", r);
+
+    r = MsiFormatRecordW(hinst, rec, bufferW, NULL);
+    ok(hinst, r == ERROR_INVALID_PARAMETER, "got %u\n", r);
+
+    sz = 0;
+    r = MsiFormatRecordW(hinst, rec, NULL, &sz);
+    ok(hinst, !r, "got %u\n", r);
     ok(hinst, sz == 7, "got size %u\n", sz);
 
     sz = 0;
@@ -869,7 +913,8 @@ static void test_costs(MSIHANDLE hinst)
     cost = 0xdead;
     r = MsiGetFeatureCostA(hinst, NULL, MSICOSTTREE_CHILDREN, INSTALLSTATE_LOCAL, &cost);
     ok(hinst, r == ERROR_INVALID_PARAMETER, "got %u\n", r);
-    todo_wine_ok(hinst, !cost, "got %d\n", cost);
+    todo_wine
+    ok(hinst, !cost, "got %d\n", cost);
 
     r = MsiGetFeatureCostA(hinst, "One", MSICOSTTREE_CHILDREN, INSTALLSTATE_LOCAL, NULL);
     ok(hinst, r == RPC_X_NULL_REF_POINTER, "got %u\n", r);
@@ -877,7 +922,8 @@ static void test_costs(MSIHANDLE hinst)
     cost = 0xdead;
     r = MsiGetFeatureCostA(hinst, "One", MSICOSTTREE_CHILDREN, INSTALLSTATE_LOCAL, &cost);
     ok(hinst, !r, "got %u\n", r);
-    todo_wine_ok(hinst, cost == 8, "got %d\n", cost);
+    todo_wine
+    ok(hinst, cost == 8, "got %d\n", cost);
 
     sz = cost = temp = 0xdead;
     r = MsiEnumComponentCostsA(hinst, "One", 0, INSTALLSTATE_LOCAL, NULL, &sz, &cost, &temp);
@@ -929,7 +975,8 @@ static void test_costs(MSIHANDLE hinst)
     r = MsiEnumComponentCostsA(hinst, "One", 0, INSTALLSTATE_LOCAL, buffer, &sz, &cost, &temp);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
     ok(hinst, !strcmp(buffer, "q"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 4, "got size %u\n", sz);
+    todo_wine
+    ok(hinst, sz == 4, "got size %u\n", sz);
     ok(hinst, cost == 8, "got cost %d\n", cost);
     ok(hinst, !temp, "got temp %d\n", temp);
 
@@ -937,15 +984,19 @@ static void test_costs(MSIHANDLE hinst)
     strcpy(buffer,"x");
     r = MsiEnumComponentCostsA(hinst, "One", 0, INSTALLSTATE_LOCAL, buffer, &sz, &cost, &temp);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
-    todo_wine_ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 4, "got size %u\n", sz);
+    todo_wine {
+    ok(hinst, !buffer[0], "got \"%s\"\n", buffer);
+    ok(hinst, sz == 4, "got size %u\n", sz);
+    }
 
     sz = 2;
     strcpy(buffer,"x");
     r = MsiEnumComponentCostsA(hinst, "One", 0, INSTALLSTATE_LOCAL, buffer, &sz, &cost, &temp);
     ok(hinst, r == ERROR_MORE_DATA, "got %u\n", r);
-    todo_wine_ok(hinst, !strcmp(buffer, "C"), "got \"%s\"\n", buffer);
-    todo_wine_ok(hinst, sz == 4, "got size %u\n", sz);
+    todo_wine {
+    ok(hinst, !strcmp(buffer, "C"), "got \"%s\"\n", buffer);
+    ok(hinst, sz == 4, "got size %u\n", sz);
+    }
 
     sz = 3;
     strcpy(buffer,"x");
@@ -1004,7 +1055,8 @@ UINT WINAPI main_test(MSIHANDLE hinst)
 
     /* Test MsiGetDatabaseState() */
     res = MsiGetDatabaseState(hinst);
-    todo_wine_ok(hinst, res == MSIDBSTATE_ERROR, "expected MSIDBSTATE_ERROR, got %u\n", res);
+    todo_wine
+    ok(hinst, res == MSIDBSTATE_ERROR, "expected MSIDBSTATE_ERROR, got %u\n", res);
 
     test_props(hinst);
     test_db(hinst);
@@ -1084,7 +1136,8 @@ UINT WINAPI da_deferred(MSIHANDLE hinst)
     len = sizeof(prop);
     r = MsiGetPropertyA(hinst, "TESTPATH", prop, &len);
     ok(hinst, r == ERROR_SUCCESS, "got %u\n", r);
-    todo_wine_ok(hinst, !prop[0], "got %s\n", prop);
+    todo_wine
+    ok(hinst, !prop[0], "got %s\n", prop);
 
     /* Test modes */
     ok(hinst, MsiGetMode(hinst, MSIRUNMODE_SCHEDULED), "should be scheduled\n");
@@ -1093,6 +1146,422 @@ UINT WINAPI da_deferred(MSIHANDLE hinst)
 
     lang = MsiGetLanguage(hinst);
     ok(hinst, lang != ERROR_INVALID_HANDLE, "MsiGetLanguage failed\n");
+
+    return ERROR_SUCCESS;
+}
+
+static BOOL pf_exists(const char *file)
+{
+    char path[MAX_PATH];
+
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, path)))
+        SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILES, NULL, 0, path);
+    strcat(path, "\\");
+    strcat(path, file);
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+UINT WINAPI cf_present(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, pf_exists("msitest\\first"), "folder absent\n");
+    ok(hinst, pf_exists("msitest\\second"), "folder absent\n");
+    ok(hinst, pf_exists("msitest\\third"), "folder absent\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI cf_absent(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, !pf_exists("msitest\\first"), "folder present\n");
+    ok(hinst, !pf_exists("msitest\\second"), "folder present\n");
+    ok(hinst, !pf_exists("msitest\\third"), "folder present\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI file_present(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, pf_exists("msitest\\first\\one.txt"), "file absent\n");
+    ok(hinst, pf_exists("msitest\\second\\two.txt"), "file absent\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI file_absent(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, !pf_exists("msitest\\first\\one.txt"), "file present\n");
+    ok(hinst, !pf_exists("msitest\\second\\two.txt"), "file present\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI crs_present(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, pf_exists("msitest\\shortcut.lnk"), "shortcut absent\n");
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI crs_absent(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, !pf_exists("msitest\\shortcut.lnk"), "shortcut present\n");
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sds_present(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "TestService3", GENERIC_ALL);
+todo_wine
+    ok(hinst, !!service, "service absent: %u\n", GetLastError());
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sds_absent(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "TestService3", GENERIC_ALL);
+    ok(hinst, !service, "service present\n");
+    if (service) CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sis_present(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "TestService", GENERIC_ALL);
+    ok(hinst, !!service, "service absent: %u\n", GetLastError());
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sis_absent(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "TestService", GENERIC_ALL);
+todo_wine
+    ok(hinst, !service, "service present\n");
+    if (service) CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sss_started(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    SERVICE_STATUS status;
+    BOOL ret;
+
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "Spooler", SC_MANAGER_ALL_ACCESS);
+    ret = QueryServiceStatus(service, &status);
+    ok(hinst, ret, "QueryServiceStatus failed: %u\n", GetLastError());
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, status.dwCurrentState == SERVICE_RUNNING, "got %u\n", status.dwCurrentState);
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI sss_stopped(MSIHANDLE hinst)
+{
+    SC_HANDLE manager, service;
+    SERVICE_STATUS status;
+    BOOL ret;
+
+    manager = OpenSCManagerA(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    service = OpenServiceA(manager, "Spooler", SC_MANAGER_ALL_ACCESS);
+    ret = QueryServiceStatus(service, &status);
+    ok(hinst, ret, "QueryServiceStatus failed: %u\n", GetLastError());
+    ok(hinst, status.dwCurrentState == SERVICE_STOPPED, "got %u\n", status.dwCurrentState);
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rd_present(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, pf_exists("msitest\\original2.txt"), "file absent\n");
+    ok(hinst, pf_exists("msitest\\duplicate.txt"), "file absent\n");
+}
+    ok(hinst, !pf_exists("msitest\\original3.txt"), "file present\n");
+    ok(hinst, !pf_exists("msitest\\duplicate2.txt"), "file present\n");
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI rd_absent(MSIHANDLE hinst)
+{
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, !pf_exists("msitest\\original2.txt"), "file present\n");
+    ok(hinst, !pf_exists("msitest\\duplicate.txt"), "file present\n");
+}
+    ok(hinst, !pf_exists("msitest\\original3.txt"), "file present\n");
+    ok(hinst, !pf_exists("msitest\\duplicate2.txt"), "file present\n");
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI odbc_present(MSIHANDLE hinst)
+{
+    int gotdriver = 0, gotdriver2 = 0;
+    char buffer[1000], *p;
+    WORD len;
+    BOOL r;
+
+    r = SQLGetInstalledDrivers(buffer, sizeof(buffer), &len);
+    ok(hinst, len < sizeof(buffer), "buffer too small\n");
+    ok(hinst, r, "SQLGetInstalledDrivers failed\n");
+    for (p = buffer; *p; p += strlen(p) + 1)
+    {
+        if (!strcmp(p, "ODBC test driver"))
+            gotdriver = 1;
+        if (!strcmp(p, "ODBC test driver2"))
+            gotdriver2 = 1;
+    }
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, gotdriver, "driver absent\n");
+    ok(hinst, gotdriver2, "driver 2 absent\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI odbc_absent(MSIHANDLE hinst)
+{
+    int gotdriver = 0, gotdriver2 = 0;
+    char buffer[1000], *p;
+    WORD len;
+    BOOL r;
+
+    r = SQLGetInstalledDrivers(buffer, sizeof(buffer), &len);
+    ok(hinst, len < sizeof(buffer), "buffer too small\n");
+    ok(hinst, r, "SQLGetInstalledDrivers failed\n");
+    for (p = buffer; *p; p += strlen(p) + 1)
+    {
+        if (!strcmp(p, "ODBC test driver"))
+            gotdriver = 1;
+        if (!strcmp(p, "ODBC test driver2"))
+            gotdriver2 = 1;
+    }
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    ok(hinst, !gotdriver, "driver present\n");
+    ok(hinst, !gotdriver2, "driver 2 present\n");
+}
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI mov_present(MSIHANDLE hinst)
+{
+    ok(hinst, pf_exists("msitest\\canada"), "file absent\n");
+    ok(hinst, pf_exists("msitest\\dominica"), "file absent\n");
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI mov_absent(MSIHANDLE hinst)
+{
+todo_wine {
+    ok(hinst, !pf_exists("msitest\\canada"), "file present\n");
+    ok(hinst, !pf_exists("msitest\\dominica"), "file present\n");
+}
+    return ERROR_SUCCESS;
+}
+
+static void check_reg_str(MSIHANDLE hinst, HKEY key, const char *name, const char *expect)
+{
+    char value[300];
+    DWORD sz;
+    LONG res;
+
+    sz = sizeof(value);
+    res = RegQueryValueExA(key, name, NULL, NULL, (BYTE *)value, &sz);
+    if (expect)
+    {
+        ok(hinst, !res, "failed to get value \"%s\": %d\n", name, res);
+        ok(hinst, !strcmp(value, expect), "\"%s\": expected \"%s\", got \"%s\"\n",
+            name, expect, value);
+    }
+    else
+        ok(hinst, res == ERROR_FILE_NOT_FOUND, "\"%s\": expected missing, got %u\n",
+            name, res);
+}
+
+static const char path_dotnet[] = "Software\\Microsoft\\Installer\\Assemblies\\Global";
+static const char name_dotnet[] = "Wine.Dotnet.Assembly,processorArchitecture=\"MSIL\","
+    "publicKeyToken=\"abcdef0123456789\",version=\"1.0.0.0\",culture=\"neutral\"";
+
+UINT WINAPI pa_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, path_dotnet, &key);
+    ok(hinst, !res, "got %d\n", res);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    check_reg_str(hinst, key, name_dotnet, "rcHQPHq?CA@Uv-XqMI1e>Z'q,T*76M@=YEg6My?~]");
+}
+    RegCloseKey(key);
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI pa_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, path_dotnet, &key);
+    ok(hinst, !res || res == ERROR_FILE_NOT_FOUND, "got %d\n", res);
+    if (!res)
+    {
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+        check_reg_str(hinst, key, name_dotnet, NULL);
+}
+        RegCloseKey(key);
+    }
+    return ERROR_SUCCESS;
+}
+
+static const char ppc_key[] = "Software\\Microsoft\\Windows\\CurrentVersion\\"
+    "Installer\\UserData\\S-1-5-18\\Components\\CBABC2FDCCB35E749A8944D8C1C098B5";
+
+UINT WINAPI ppc_present(MSIHANDLE hinst)
+{
+    char expect[MAX_PATH];
+    HKEY key;
+    UINT r;
+
+    r = RegOpenKeyExA(HKEY_LOCAL_MACHINE, ppc_key, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    ok(hinst, !r, "got %u\n", r);
+
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, expect)))
+        SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILES, NULL, 0, expect);
+    strcat(expect, "\\msitest\\maximus");
+    check_reg_str(hinst, key, "84A88FD7F6998CE40A22FB59F6B9C2BB", expect);
+
+    RegCloseKey(key);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI ppc_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    UINT r;
+
+    r = RegOpenKeyExA(HKEY_LOCAL_MACHINE, ppc_key, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+todo_wine
+    ok(hinst, r == ERROR_FILE_NOT_FOUND, "got %u\n", r);
+    return ERROR_SUCCESS;
+}
+
+static const char pub_key[] = "Software\\Microsoft\\Installer\\Components\\0CBCFA296AC907244845745CEEB2F8AA";
+
+UINT WINAPI pub_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyA(HKEY_CURRENT_USER, pub_key, &key);
+    ok(hinst, !res, "got %u\n", res);
+    res = RegQueryValueExA(key, "english.txt", NULL, NULL, NULL, NULL);
+    ok(hinst, !res, "got %u\n", res);
+}
+    RegCloseKey(key);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI pub_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyA(HKEY_CURRENT_USER, pub_key, &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+    return ERROR_SUCCESS;
+}
+
+static const char pf_classkey[] = "Installer\\Features\\84A88FD7F6998CE40A22FB59F6B9C2BB";
+static const char pf_userkey[] = "Software\\Microsoft\\Windows\\CurrentVersion\\"
+    "Installer\\UserData\\S-1-5-18\\Products\\84A88FD7F6998CE40A22FB59F6B9C2BB\\Features";
+
+UINT WINAPI pf_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED)) {
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, pf_classkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    check_reg_str(hinst, key, "feature", "");
+    check_reg_str(hinst, key, "montecristo", "");
+    RegCloseKey(key);
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, pf_userkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    check_reg_str(hinst, key, "feature", "VGtfp^p+,?82@JU1j_KE");
+    check_reg_str(hinst, key, "montecristo", "VGtfp^p+,?82@JU1j_KE");
+    RegCloseKey(key);
+}
+
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI pf_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, pf_classkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    res = RegOpenKeyExA(HKEY_LOCAL_MACHINE, pf_userkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+todo_wine_if(!MsiGetMode(hinst, MSIRUNMODE_SCHEDULED))
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
+
+    return ERROR_SUCCESS;
+}
+
+static const char pp_prodkey[] = "Installer\\Products\\84A88FD7F6998CE40A22FB59F6B9C2BB";
+
+UINT WINAPI pp_present(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, pp_prodkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+    ok(hinst, !res, "got %u\n", res);
+    check_reg_str(hinst, key, "ProductName", "MSITEST");
+    check_reg_str(hinst, key, "PackageCode", "AC75740029052C94DA02821EECD05F2F");
+    check_reg_str(hinst, key, "Clients", ":");
+
+    RegCloseKey(key);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI pp_absent(MSIHANDLE hinst)
+{
+    HKEY key;
+    LONG res;
+
+    res = RegOpenKeyExA(HKEY_CLASSES_ROOT, pp_prodkey, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+todo_wine
+    ok(hinst, res == ERROR_FILE_NOT_FOUND, "got %u\n", res);
 
     return ERROR_SUCCESS;
 }

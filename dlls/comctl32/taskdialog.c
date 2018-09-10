@@ -48,9 +48,12 @@ static const UINT DIALOG_MIN_WIDTH = 240;
 static const UINT DIALOG_SPACING = 5;
 static const UINT DIALOG_BUTTON_WIDTH = 50;
 static const UINT DIALOG_BUTTON_HEIGHT = 14;
+static const UINT DIALOG_TIMER_MS = 200;
 
 static const UINT ID_MAIN_INSTRUCTION = 0xf000;
 static const UINT ID_CONTENT          = 0xf001;
+
+static const UINT ID_TIMER = 1;
 
 struct taskdialog_control
 {
@@ -84,8 +87,9 @@ struct taskdialog_template_desc
 struct taskdialog_info
 {
     HWND hwnd;
-    PFTASKDIALOGCALLBACK callback;
-    LONG_PTR callback_data;
+    const TASKDIALOGCONFIG *taskconfig;
+    DWORD last_timer_tick;
+    HFONT main_instruction_font;
 };
 
 static void pixels_to_dialogunits(const struct taskdialog_template_desc *desc, LONG *width, LONG *height)
@@ -108,6 +112,24 @@ static void template_write_data(char **ptr, const void *src, unsigned int size)
 {
     memcpy(*ptr, src, size);
     *ptr += size;
+}
+
+static void taskdialog_set_main_instruction_font(struct taskdialog_info *dialog_info)
+{
+    NONCLIENTMETRICSW ncm;
+    HWND hwnd;
+
+    hwnd = GetDlgItem(dialog_info->hwnd, ID_MAIN_INSTRUCTION);
+    if(!hwnd) return;
+
+    ncm.cbSize = sizeof(ncm);
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0);
+    /* 1.25 times the height */
+    ncm.lfMessageFont.lfHeight = ncm.lfMessageFont.lfHeight * 5 / 4;
+    ncm.lfMessageFont.lfWeight = FW_BOLD;
+    dialog_info->main_instruction_font = CreateFontIndirectW(&ncm.lfMessageFont);
+
+    SendMessageW(hwnd, WM_SETFONT, (WPARAM)dialog_info->main_instruction_font, TRUE);
 }
 
 /* used to calculate size for the controls */
@@ -488,6 +510,9 @@ static DLGTEMPLATE *create_taskdialog_template(const TASKDIALOGCONFIG *taskconfi
     }
 
     template->style = DS_MODALFRAME | DS_SETFONT | WS_CAPTION | WS_VISIBLE | WS_SYSMENU;
+    if (taskconfig->dwFlags & TDF_CAN_BE_MINIMIZED) template->style |= WS_MINIMIZEBOX;
+    if (!(taskconfig->dwFlags & TDF_NO_SET_FOREGROUND)) template->style |= DS_SETFOREGROUND;
+    if (taskconfig->dwFlags & TDF_RTL_LAYOUT) template->dwExtendedStyle = WS_EX_LAYOUTRTL | WS_EX_RIGHT | WS_EX_RTLREADING;
     template->cdit = desc.control_count;
     template->x = (ref_rect.left + ref_rect.right + desc.dialog_width) / 2;
     template->y = (ref_rect.top + ref_rect.bottom + desc.dialog_height) / 2;
@@ -519,14 +544,31 @@ static DLGTEMPLATE *create_taskdialog_template(const TASKDIALOGCONFIG *taskconfi
 
 static HRESULT taskdialog_notify(struct taskdialog_info *dialog_info, UINT notification, WPARAM wparam, LPARAM lparam)
 {
-    return dialog_info->callback ? dialog_info->callback(dialog_info->hwnd, notification, wparam, lparam,
-            dialog_info->callback_data) : S_OK;
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+    return taskconfig->pfCallback
+               ? taskconfig->pfCallback(dialog_info->hwnd, notification, wparam, lparam, taskconfig->lpCallbackData)
+               : S_OK;
 }
 
 static void taskdialog_on_button_click(struct taskdialog_info *dialog_info, WORD command_id)
 {
     if (taskdialog_notify(dialog_info, TDN_BUTTON_CLICKED, command_id, 0) == S_OK)
         EndDialog(dialog_info->hwnd, command_id);
+}
+
+static void taskdialog_init(struct taskdialog_info *dialog_info, HWND hwnd)
+{
+    const TASKDIALOGCONFIG *taskconfig = dialog_info->taskconfig;
+
+    dialog_info->hwnd = hwnd;
+
+    if (taskconfig->dwFlags & TDF_CALLBACK_TIMER)
+    {
+        SetTimer(hwnd, ID_TIMER, DIALOG_TIMER_MS, NULL);
+        dialog_info->last_timer_tick = GetTickCount();
+    }
+
+    taskdialog_set_main_instruction_font(dialog_info);
 }
 
 static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -546,27 +588,43 @@ static INT_PTR CALLBACK taskdialog_proc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             break;
         case WM_INITDIALOG:
             dialog_info = (struct taskdialog_info *)lParam;
-            dialog_info->hwnd = hwnd;
-            SetPropW(hwnd, taskdialog_info_propnameW, dialog_info);
 
+            taskdialog_init(dialog_info, hwnd);
+
+            SetPropW(hwnd, taskdialog_info_propnameW, dialog_info);
             taskdialog_notify(dialog_info, TDN_DIALOG_CONSTRUCTED, 0, 0);
-            break;
-        case WM_SHOWWINDOW:
             taskdialog_notify(dialog_info, TDN_CREATED, 0, 0);
             break;
         case WM_COMMAND:
             if (HIWORD(wParam) == BN_CLICKED)
             {
                 taskdialog_on_button_click(dialog_info, LOWORD(wParam));
-                return TRUE;
+                break;
+            }
+            return FALSE;
+        case WM_HELP:
+            taskdialog_notify(dialog_info, TDN_HELP, 0, 0);
+            break;
+        case WM_TIMER:
+            if (ID_TIMER == wParam)
+            {
+                DWORD elapsed = GetTickCount() - dialog_info->last_timer_tick;
+                if (taskdialog_notify(dialog_info, TDN_TIMER, elapsed, 0) == S_FALSE)
+                    dialog_info->last_timer_tick = GetTickCount();
             }
             break;
         case WM_DESTROY:
             taskdialog_notify(dialog_info, TDN_DESTROYED, 0, 0);
             RemovePropW(hwnd, taskdialog_info_propnameW);
+            if (dialog_info->taskconfig->dwFlags & TDF_CALLBACK_TIMER)
+                KillTimer(hwnd, ID_TIMER);
+            if (dialog_info->main_instruction_font)
+                DeleteObject(dialog_info->main_instruction_font);
             break;
+        default:
+            return FALSE;
     }
-    return FALSE;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -584,8 +642,7 @@ HRESULT WINAPI TaskDialogIndirect(const TASKDIALOGCONFIG *taskconfig, int *butto
     if (!taskconfig || taskconfig->cbSize != sizeof(TASKDIALOGCONFIG))
         return E_INVALIDARG;
 
-    dialog_info.callback = taskconfig->pfCallback;
-    dialog_info.callback_data = taskconfig->lpCallbackData;
+    dialog_info.taskconfig = taskconfig;
 
     template = create_taskdialog_template(taskconfig);
     ret = (short)DialogBoxIndirectParamW(taskconfig->hInstance, template, taskconfig->hwndParent,

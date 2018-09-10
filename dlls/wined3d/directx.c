@@ -122,6 +122,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_cull_distance",                ARB_CULL_DISTANCE             },
     {"GL_ARB_debug_output",                 ARB_DEBUG_OUTPUT              },
     {"GL_ARB_depth_buffer_float",           ARB_DEPTH_BUFFER_FLOAT        },
+    {"GL_ARB_depth_clamp",                  ARB_DEPTH_CLAMP               },
     {"GL_ARB_depth_texture",                ARB_DEPTH_TEXTURE             },
     {"GL_ARB_derivative_control",           ARB_DERIVATIVE_CONTROL        },
     {"GL_ARB_draw_buffers",                 ARB_DRAW_BUFFERS              },
@@ -155,6 +156,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_point_parameters",             ARB_POINT_PARAMETERS          },
     {"GL_ARB_point_sprite",                 ARB_POINT_SPRITE              },
     {"GL_ARB_provoking_vertex",             ARB_PROVOKING_VERTEX          },
+    {"GL_ARB_sample_shading",               ARB_SAMPLE_SHADING            },
     {"GL_ARB_sampler_objects",              ARB_SAMPLER_OBJECTS           },
     {"GL_ARB_seamless_cube_map",            ARB_SEAMLESS_CUBE_MAP         },
     {"GL_ARB_shader_atomic_counters",       ARB_SHADER_ATOMIC_COUNTERS    },
@@ -162,6 +164,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_shader_image_load_store",      ARB_SHADER_IMAGE_LOAD_STORE   },
     {"GL_ARB_shader_image_size",            ARB_SHADER_IMAGE_SIZE         },
     {"GL_ARB_shader_storage_buffer_object", ARB_SHADER_STORAGE_BUFFER_OBJECT},
+    {"GL_ARB_shader_texture_image_samples", ARB_SHADER_TEXTURE_IMAGE_SAMPLES},
     {"GL_ARB_shader_texture_lod",           ARB_SHADER_TEXTURE_LOD        },
     {"GL_ARB_shading_language_100",         ARB_SHADING_LANGUAGE_100      },
     {"GL_ARB_shading_language_420pack",     ARB_SHADING_LANGUAGE_420PACK  },
@@ -674,7 +677,7 @@ static BOOL match_allows_spec_alpha(const struct wined3d_gl_info *gl_info, struc
     GLenum error;
     DWORD data[16];
 
-    if (!gl_info->supported[EXT_SECONDARY_COLOR])
+    if (!gl_info->supported[EXT_SECONDARY_COLOR] || !gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
         return FALSE;
 
     while (gl_info->gl_ops.gl.p_glGetError());
@@ -853,6 +856,8 @@ static BOOL match_broken_arb_fog(const struct wined3d_gl_info *gl_info, struct w
     if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
         return FALSE;
     if (!gl_info->supported[ARB_FRAGMENT_PROGRAM])
+        return FALSE;
+    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
         return FALSE;
 
     gl_info->gl_ops.gl.p_glGenTextures(1, &tex);
@@ -1400,6 +1405,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080,    "NVIDIA GeForce GTX 1080",          DRIVER_NVIDIA_GEFORCE8,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080TI,  "NVIDIA GeForce GTX 1080 Ti",       DRIVER_NVIDIA_GEFORCE8,  11264},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TITANX_PASCAL,      "NVIDIA TITAN X (Pascal)",          DRIVER_NVIDIA_GEFORCE8,  12288},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TITANV,             "NVIDIA TITAN V",                   DRIVER_NVIDIA_GEFORCE8,  12288},
 
     /* AMD cards */
     {HW_VENDOR_AMD,        CARD_AMD_RAGE_128PRO,           "ATI Rage Fury",                    DRIVER_AMD_RAGE_128PRO,  16  },
@@ -1888,6 +1894,7 @@ static const struct wined3d_renderer_table
 cards_nvidia_binary[] =
 {
     /* Direct 3D 11 */
+    {"TITAN V",                     CARD_NVIDIA_TITANV},            /* GeForce 1000 - highend */
     {"TITAN X (Pascal)",            CARD_NVIDIA_TITANX_PASCAL},     /* GeForce 1000 - highend */
     {"GTX 1080 Ti",                 CARD_NVIDIA_GEFORCE_GTX1080TI}, /* GeForce 1000 - highend */
     {"GTX 1080",                    CARD_NVIDIA_GEFORCE_GTX1080},   /* GeForce 1000 - highend */
@@ -2808,6 +2815,8 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     USE_GL_FUNC(glPointParameterfvARB)
     /* GL_ARB_provoking_vertex */
     USE_GL_FUNC(glProvokingVertex)
+    /* GL_ARB_sample_shading */
+    USE_GL_FUNC(glMinSampleShadingARB)
     /* GL_ARB_sampler_objects */
     USE_GL_FUNC(glGenSamplers)
     USE_GL_FUNC(glDeleteSamplers)
@@ -3399,6 +3408,7 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     MAP_GL_FUNCTION(glIsEnabledi, glIsEnabledIndexedEXT);
     MAP_GL_FUNCTION(glLinkProgram, glLinkProgramARB);
     MAP_GL_FUNCTION(glMapBuffer, glMapBufferARB);
+    MAP_GL_FUNCTION(glMinSampleShading, glMinSampleShadingARB);
     MAP_GL_FUNCTION_CAST(glShaderSource, glShaderSourceARB);
     MAP_GL_FUNCTION(glTexBuffer, glTexBufferARB);
     MAP_GL_FUNCTION_CAST(glTexImage3D, glTexImage3DEXT);
@@ -3870,6 +3880,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         {EXT_TEXTURE_SNORM,                MAKEDWORD_VERSION(3, 1)},
         /* We don't need or want GL_ARB_texture_rectangle (core in 3.1). */
 
+        {ARB_DEPTH_CLAMP,                  MAKEDWORD_VERSION(3, 2)},
         {ARB_DRAW_ELEMENTS_BASE_VERTEX,    MAKEDWORD_VERSION(3, 2)},
         /* ARB_geometry_shader4 exposes a somewhat different API compared to 3.2
          * core geometry shaders so it's not really correct to expose the
@@ -3893,6 +3904,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
 
         {ARB_DRAW_INDIRECT,                MAKEDWORD_VERSION(4, 0)},
         {ARB_GPU_SHADER5,                  MAKEDWORD_VERSION(4, 0)},
+        {ARB_SAMPLE_SHADING,               MAKEDWORD_VERSION(4, 0)},
         {ARB_TESSELLATION_SHADER,          MAKEDWORD_VERSION(4, 0)},
         {ARB_TEXTURE_CUBE_MAP_ARRAY,       MAKEDWORD_VERSION(4, 0)},
         {ARB_TEXTURE_GATHER,               MAKEDWORD_VERSION(4, 0)},
@@ -3934,6 +3946,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         {ARB_CLIP_CONTROL,                 MAKEDWORD_VERSION(4, 5)},
         {ARB_CULL_DISTANCE,                MAKEDWORD_VERSION(4, 5)},
         {ARB_DERIVATIVE_CONTROL,           MAKEDWORD_VERSION(4, 5)},
+        {ARB_SHADER_TEXTURE_IMAGE_SAMPLES, MAKEDWORD_VERSION(4, 5)},
 
         {ARB_PIPELINE_STATISTICS_QUERY,    MAKEDWORD_VERSION(4, 6)},
         {ARB_TEXTURE_FILTER_ANISOTROPIC,   MAKEDWORD_VERSION(4, 6)},
@@ -4047,7 +4060,11 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
         gl_info->supported[WINED3D_GL_BLEND_EQUATION] = TRUE;
 
     if (gl_version >= MAKEDWORD_VERSION(2, 0))
+    {
         gl_info->supported[WINED3D_GL_VERSION_2_0] = TRUE;
+        /* We want to use the core APIs for two-sided stencil in GL 2.0. */
+        gl_info->supported[EXT_STENCIL_TWO_SIDE] = FALSE;
+    }
     if (gl_version >= MAKEDWORD_VERSION(3, 2))
         gl_info->supported[WINED3D_GL_VERSION_3_2] = TRUE;
 
@@ -6564,16 +6581,16 @@ static DWORD get_max_gl_version(const struct wined3d_gl_info *gl_info, DWORD fla
 {
     const char *gl_vendor, *gl_renderer;
 
-    if (wined3d_settings.explicit_gl_version || (flags & WINED3D_PIXEL_CENTER_INTEGER))
+    if (wined3d_settings.explicit_gl_version)
         return wined3d_settings.max_gl_version;
 
     gl_vendor = (const char *)gl_info->gl_ops.gl.p_glGetString(GL_VENDOR);
     gl_renderer = (const char *)gl_info->gl_ops.gl.p_glGetString(GL_RENDERER);
     if (!gl_vendor || !gl_renderer
             || wined3d_guess_card_vendor(gl_vendor, gl_renderer) == HW_VENDOR_NVIDIA)
-        return wined3d_settings.max_gl_version;
+        return MAKEDWORD_VERSION(1, 0);
 
-    return MAKEDWORD_VERSION(4, 4);
+    return wined3d_settings.max_gl_version;
 }
 
 static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, UINT ordinal, DWORD wined3d_creation_flags)

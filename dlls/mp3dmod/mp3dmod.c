@@ -33,6 +33,11 @@
 #include "wine/debug.h"
 #include "wine/heap.h"
 
+#include "initguid.h"
+DEFINE_GUID(WMMEDIATYPE_Audio, 0x73647561,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);
+DEFINE_GUID(WMMEDIASUBTYPE_MP3,0x00000055,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);
+DEFINE_GUID(WMMEDIASUBTYPE_PCM,0x00000001,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);
+
 WINE_DEFAULT_DEBUG_CHANNEL(mp3dmod);
 
 static HINSTANCE mp3dmod_instance;
@@ -43,6 +48,7 @@ struct mp3_decoder {
     mpg123_handle *mh;
     DMO_MEDIA_TYPE outtype;
     IMediaBuffer *buffer;
+    REFERENCE_TIME timestamp;
 };
 
 static inline struct mp3_decoder *impl_from_IMediaObject(IMediaObject *iface)
@@ -296,9 +302,16 @@ static DWORD get_framesize(DMO_MEDIA_TYPE *type)
     return 1152 * format->nBlockAlign;
 }
 
+static REFERENCE_TIME get_frametime(DMO_MEDIA_TYPE *type)
+{
+    WAVEFORMATEX *format = (WAVEFORMATEX *)type->pbFormat;
+    return (REFERENCE_TIME) 10000000 * 1152 / format->nSamplesPerSec;
+}
+
 static HRESULT WINAPI MediaObject_ProcessOutput(IMediaObject *iface, DWORD flags, DWORD count, DMO_OUTPUT_DATA_BUFFER *buffers, DWORD *status)
 {
     struct mp3_decoder *This = impl_from_IMediaObject(iface);
+    REFERENCE_TIME time = 0, frametime;
     DWORD len, maxlen, framesize;
     int got_data = 0;
     size_t written;
@@ -325,6 +338,7 @@ static HRESULT WINAPI MediaObject_ProcessOutput(IMediaObject *iface, DWORD flags
     if (FAILED(hr)) return hr;
 
     framesize = get_framesize(&This->outtype);
+    frametime = get_frametime(&This->outtype);
 
     while (1)
     {
@@ -353,10 +367,16 @@ static HRESULT WINAPI MediaObject_ProcessOutput(IMediaObject *iface, DWORD flags
         len += framesize;
         hr = IMediaBuffer_SetLength(buffers[0].pBuffer, len);
         if (FAILED(hr)) return hr;
+
+        time += frametime;
     }
 
     if (got_data)
     {
+        buffers[0].dwStatus |= (DMO_OUTPUT_DATA_BUFFERF_TIME | DMO_OUTPUT_DATA_BUFFERF_TIMELENGTH);
+        buffers[0].rtTimelength = time;
+        buffers[0].rtTimestamp = This->timestamp;
+        This->timestamp += time;
         return S_OK;
     }
     return S_FALSE;
@@ -511,6 +531,18 @@ HRESULT WINAPI DllCanUnloadNow(void)
  */
 HRESULT WINAPI DllRegisterServer(void)
 {
+    static const WCHAR nameW[] = {'M','P','3',' ','D','e','c','o','d','e','r',' ','D','M','O',0};
+    DMO_PARTIAL_MEDIATYPE in, out;
+    HRESULT hr;
+
+    in.type = WMMEDIATYPE_Audio;
+    in.subtype = WMMEDIASUBTYPE_MP3;
+    out.type = WMMEDIATYPE_Audio;
+    out.subtype = WMMEDIASUBTYPE_PCM;
+    hr = DMORegister(nameW, &CLSID_CMP3DecMediaObject, &DMOCATEGORY_AUDIO_DECODER,
+        0, 1, &in, 1, &out);
+    if (FAILED(hr)) return hr;
+
     return __wine_register_resources( mp3dmod_instance );
 }
 
@@ -519,5 +551,10 @@ HRESULT WINAPI DllRegisterServer(void)
  */
 HRESULT WINAPI DllUnregisterServer(void)
 {
+    HRESULT hr;
+
+    hr = DMOUnregister(&CLSID_CMP3DecMediaObject, &DMOCATEGORY_AUDIO_DECODER);
+    if (FAILED(hr)) return hr;
+
     return __wine_unregister_resources( mp3dmod_instance );
 }

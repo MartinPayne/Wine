@@ -168,6 +168,48 @@ UINT msi_strcpy_to_awstring( const WCHAR *str, int len, awstring *awbuf, DWORD *
     return r;
 }
 
+UINT msi_strncpyWtoA(const WCHAR *str, int lenW, char *buf, DWORD *sz, BOOL remote)
+{
+    UINT r = ERROR_SUCCESS;
+    DWORD lenA;
+
+    if (!sz)
+        return buf ? ERROR_INVALID_PARAMETER : ERROR_SUCCESS;
+
+    if (lenW < 0) lenW = strlenW(str);
+    lenA = WideCharToMultiByte(CP_ACP, 0, str, lenW + 1, NULL, 0, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, str, lenW + 1, buf, *sz, NULL, NULL);
+    lenA--;
+    if (buf && lenA >= *sz)
+    {
+        if (*sz) buf[*sz - 1] = 0;
+        r = ERROR_MORE_DATA;
+    }
+    if (remote && lenA >= *sz)
+        lenA *= 2;
+    *sz = lenA;
+    return r;
+}
+
+UINT msi_strncpyW(const WCHAR *str, int len, WCHAR *buf, DWORD *sz)
+{
+    UINT r = ERROR_SUCCESS;
+
+    if (!sz)
+        return buf ? ERROR_INVALID_PARAMETER : ERROR_SUCCESS;
+
+    if (len < 0) len = strlenW(str);
+    if (buf)
+        memcpy(buf, str, min(len + 1, *sz) * sizeof(WCHAR));
+    if (buf && len >= *sz)
+    {
+        if (*sz) buf[*sz - 1] = 0;
+        r = ERROR_MORE_DATA;
+    }
+    *sz = len;
+    return r;
+}
+
 const WCHAR *msi_get_target_folder( MSIPACKAGE *package, const WCHAR *name )
 {
     MSIFOLDER *folder = msi_get_loaded_folder( package, name );
@@ -186,86 +228,94 @@ const WCHAR *msi_get_target_folder( MSIPACKAGE *package, const WCHAR *name )
 }
 
 /***********************************************************************
- * MsiGetTargetPath   (internal)
+ * MsiGetTargetPathA        (MSI.@)
  */
-static UINT MSI_GetTargetPath( MSIHANDLE hInstall, LPCWSTR szFolder,
-                               awstring *szPathBuf, LPDWORD pcchPathBuf )
+UINT WINAPI MsiGetTargetPathA(MSIHANDLE hinst, const char *folder, char *buf, DWORD *sz)
 {
     MSIPACKAGE *package;
     const WCHAR *path;
-    UINT r = ERROR_FUNCTION_FAILED;
+    WCHAR *folderW;
+    UINT r;
 
-    if (!szFolder)
+    TRACE("%s %p %p\n", debugstr_a(folder), buf, sz);
+
+    if (!folder)
         return ERROR_INVALID_PARAMETER;
 
-    package = msihandle2msiinfo( hInstall, MSIHANDLETYPE_PACKAGE );
+    if (!(folderW = strdupAtoW(folder)))
+        return ERROR_OUTOFMEMORY;
+
+    package = msihandle2msiinfo(hinst, MSIHANDLETYPE_PACKAGE);
     if (!package)
     {
-        LPWSTR value = NULL;
+        WCHAR *path = NULL;
         MSIHANDLE remote;
 
-        if (!(remote = msi_get_remote(hInstall)))
+        if (!(remote = msi_get_remote(hinst)))
+        {
+            heap_free(folderW);
             return ERROR_INVALID_HANDLE;
+        }
 
-        r = remote_GetTargetPath(remote, szFolder, &value);
-        if (r != ERROR_SUCCESS)
-            return r;
+        r = remote_GetTargetPath(remote, folderW, &path);
+        if (!r)
+            r = msi_strncpyWtoA(path, -1, buf, sz, TRUE);
 
-        r = msi_strcpy_to_awstring(value, -1, szPathBuf, pcchPathBuf);
-
-        midl_user_free(value);
+        midl_user_free(path);
+        heap_free(folderW);
         return r;
     }
 
-    path = msi_get_target_folder( package, szFolder );
-    msiobj_release( &package->hdr );
+    path = msi_get_target_folder(package, folderW);
+    if (path)
+        r = msi_strncpyWtoA(path, -1, buf, sz, FALSE);
+    else
+        r = ERROR_DIRECTORY;
 
-    if (!path)
-        return ERROR_DIRECTORY;
-
-    return msi_strcpy_to_awstring( path, -1, szPathBuf, pcchPathBuf );
-}
-
-/***********************************************************************
- * MsiGetTargetPathA        (MSI.@)
- */
-UINT WINAPI MsiGetTargetPathA( MSIHANDLE hInstall, LPCSTR szFolder, 
-                               LPSTR szPathBuf, LPDWORD pcchPathBuf )
-{
-    LPWSTR szwFolder;
-    awstring path;
-    UINT r;
-
-    TRACE("%s %p %p\n", debugstr_a(szFolder), szPathBuf, pcchPathBuf);
-
-    szwFolder = strdupAtoW(szFolder);
-    if (szFolder && !szwFolder)
-        return ERROR_FUNCTION_FAILED; 
-
-    path.unicode = FALSE;
-    path.str.a = szPathBuf;
-
-    r = MSI_GetTargetPath( hInstall, szwFolder, &path, pcchPathBuf );
-
-    msi_free( szwFolder );
-
+    heap_free(folderW);
+    msiobj_release(&package->hdr);
     return r;
 }
 
 /***********************************************************************
  * MsiGetTargetPathW        (MSI.@)
  */
-UINT WINAPI MsiGetTargetPathW( MSIHANDLE hInstall, LPCWSTR szFolder,
-                               LPWSTR szPathBuf, LPDWORD pcchPathBuf )
+UINT WINAPI MsiGetTargetPathW(MSIHANDLE hinst, const WCHAR *folder, WCHAR *buf, DWORD *sz)
 {
-    awstring path;
+    MSIPACKAGE *package;
+    const WCHAR *path;
+    UINT r;
 
-    TRACE("%s %p %p\n", debugstr_w(szFolder), szPathBuf, pcchPathBuf);
+    TRACE("%s %p %p\n", debugstr_w(folder), buf, sz);
 
-    path.unicode = TRUE;
-    path.str.w = szPathBuf;
+    if (!folder)
+        return ERROR_INVALID_PARAMETER;
 
-    return MSI_GetTargetPath( hInstall, szFolder, &path, pcchPathBuf );
+    package = msihandle2msiinfo(hinst, MSIHANDLETYPE_PACKAGE);
+    if (!package)
+    {
+        WCHAR *path = NULL;
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hinst)))
+            return ERROR_INVALID_HANDLE;
+
+        r = remote_GetTargetPath(remote, folder, &path);
+        if (!r)
+            r = msi_strncpyW(path, -1, buf, sz);
+
+        midl_user_free(path);
+        return r;
+    }
+
+    path = msi_get_target_folder(package, folder);
+    if (path)
+        r = msi_strncpyW(path, -1, buf, sz);
+    else
+        r = ERROR_DIRECTORY;
+
+    msiobj_release(&package->hdr);
+    return r;
 }
 
 static WCHAR *get_source_root( MSIPACKAGE *package )
@@ -317,93 +367,94 @@ WCHAR *msi_resolve_source_folder( MSIPACKAGE *package, const WCHAR *name, MSIFOL
 }
 
 /***********************************************************************
- * MSI_GetSourcePath   (internal)
+ * MsiGetSourcePathA     (MSI.@)
  */
-static UINT MSI_GetSourcePath( MSIHANDLE hInstall, LPCWSTR szFolder,
-                               awstring *szPathBuf, LPDWORD pcchPathBuf )
+UINT WINAPI MsiGetSourcePathA(MSIHANDLE hinst, const char *folder, char *buf, DWORD *sz)
 {
     MSIPACKAGE *package;
-    LPWSTR path;
-    UINT r = ERROR_FUNCTION_FAILED;
+    const WCHAR *path;
+    WCHAR *folderW;
+    UINT r;
 
-    TRACE("%s %p %p\n", debugstr_w(szFolder), szPathBuf, pcchPathBuf );
+    TRACE("%s %p %p\n", debugstr_a(folder), buf, sz);
 
-    if (!szFolder)
+    if (!folder)
         return ERROR_INVALID_PARAMETER;
 
-    package = msihandle2msiinfo( hInstall, MSIHANDLETYPE_PACKAGE );
+    if (!(folderW = strdupAtoW(folder)))
+        return ERROR_OUTOFMEMORY;
+
+    package = msihandle2msiinfo(hinst, MSIHANDLETYPE_PACKAGE);
     if (!package)
     {
-        LPWSTR value = NULL;
+        WCHAR *path = NULL;
         MSIHANDLE remote;
 
-        if (!(remote = msi_get_remote(hInstall)))
+        if (!(remote = msi_get_remote(hinst)))
+        {
+            heap_free(folderW);
             return ERROR_INVALID_HANDLE;
+        }
 
-        r = remote_GetSourcePath(remote, szFolder, &value);
-        if (r != ERROR_SUCCESS)
-            return r;
+        r = remote_GetSourcePath(remote, folderW, &path);
+        if (!r)
+            r = msi_strncpyWtoA(path, -1, buf, sz, TRUE);
 
-        r = msi_strcpy_to_awstring(value, -1, szPathBuf, pcchPathBuf);
-
-        midl_user_free(value);
+        midl_user_free(path);
+        heap_free(folderW);
         return r;
     }
 
-    if (szPathBuf->str.w && !pcchPathBuf )
-    {
-        msiobj_release( &package->hdr );
-        return ERROR_INVALID_PARAMETER;
-    }
+    path = msi_resolve_source_folder(package, folderW, NULL);
+    if (path)
+        r = msi_strncpyWtoA(path, -1, buf, sz, FALSE);
+    else
+        r = ERROR_DIRECTORY;
 
-    path = msi_resolve_source_folder( package, szFolder, NULL );
-    msiobj_release( &package->hdr );
-
-    TRACE("path = %s\n", debugstr_w(path));
-    if (!path)
-        return ERROR_DIRECTORY;
-
-    r = msi_strcpy_to_awstring( path, -1, szPathBuf, pcchPathBuf );
-    msi_free( path );
-    return r;
-}
-
-/***********************************************************************
- * MsiGetSourcePathA     (MSI.@)
- */
-UINT WINAPI MsiGetSourcePathA( MSIHANDLE hInstall, LPCSTR szFolder, 
-                               LPSTR szPathBuf, LPDWORD pcchPathBuf )
-{
-    LPWSTR folder;
-    awstring str;
-    UINT r;
-
-    TRACE("%s %p %p\n", debugstr_a(szFolder), szPathBuf, pcchPathBuf);
-
-    str.unicode = FALSE;
-    str.str.a = szPathBuf;
-
-    folder = strdupAtoW( szFolder );
-    r = MSI_GetSourcePath( hInstall, folder, &str, pcchPathBuf );
-    msi_free( folder );
-
+    heap_free(folderW);
+    msiobj_release(&package->hdr);
     return r;
 }
 
 /***********************************************************************
  * MsiGetSourcePathW     (MSI.@)
  */
-UINT WINAPI MsiGetSourcePathW( MSIHANDLE hInstall, LPCWSTR szFolder,
-                               LPWSTR szPathBuf, LPDWORD pcchPathBuf )
+UINT WINAPI MsiGetSourcePathW(MSIHANDLE hinst, const WCHAR *folder, WCHAR *buf, DWORD *sz)
 {
-    awstring str;
+    MSIPACKAGE *package;
+    const WCHAR *path;
+    UINT r;
 
-    TRACE("%s %p %p\n", debugstr_w(szFolder), szPathBuf, pcchPathBuf );
+    TRACE("%s %p %p\n", debugstr_w(folder), buf, sz);
 
-    str.unicode = TRUE;
-    str.str.w = szPathBuf;
+    if (!folder)
+        return ERROR_INVALID_PARAMETER;
 
-    return MSI_GetSourcePath( hInstall, szFolder, &str, pcchPathBuf );
+    package = msihandle2msiinfo(hinst, MSIHANDLETYPE_PACKAGE);
+    if (!package)
+    {
+        WCHAR *path = NULL;
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hinst)))
+            return ERROR_INVALID_HANDLE;
+
+        r = remote_GetSourcePath(remote, folder, &path);
+        if (!r)
+            r = msi_strncpyW(path, -1, buf, sz);
+
+        midl_user_free(path);
+        return r;
+    }
+
+    path = msi_resolve_source_folder(package, folder, NULL);
+    if (path)
+        r = msi_strncpyW(path, -1, buf, sz);
+    else
+        r = ERROR_DIRECTORY;
+
+    msiobj_release(&package->hdr);
+    return r;
 }
 
 /***********************************************************************

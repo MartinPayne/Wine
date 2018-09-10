@@ -2554,7 +2554,7 @@ static UINT vt_to_itemtype(UINT vt)
         { VT_BLOB, PropertyTagTypeUndefined }
     };
     UINT i;
-    for (i = 0; i < sizeof(vt2type)/sizeof(vt2type[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(vt2type); i++)
     {
         if (vt2type[i].vt == vt) return vt2type[i].type;
     }
@@ -3454,10 +3454,10 @@ static void png_metadata_reader(GpBitmap *bitmap, IWICBitmapDecoder *decoder, UI
                         {
                             if (name.vt == VT_LPSTR)
                             {
-                                for (j=0; j<sizeof(keywords)/sizeof(keywords[0]); j++)
+                                for (j = 0; j < ARRAY_SIZE(keywords); j++)
                                     if (!strcmp(keywords[j].name, name.u.pszVal))
                                         break;
-                                if (j < sizeof(keywords)/sizeof(keywords[0]) && !keywords[j].seen)
+                                if (j < ARRAY_SIZE(keywords) && !keywords[j].seen)
                                 {
                                     keywords[j].seen = TRUE;
                                     item = create_prop(keywords[j].propid, &value);
@@ -4567,7 +4567,7 @@ static GpStatus encode_image_jpeg(GpImage *image, IStream* stream,
 static GpStatus encode_image_gif(GpImage *image, IStream* stream,
     GDIPCONST EncoderParameters* params)
 {
-    return encode_image_wic(image, stream, &CLSID_WICGifEncoder, params);
+    return encode_image_wic(image, stream, &GUID_ContainerFormatGif, params);
 }
 
 /*****************************************************************************
@@ -4580,7 +4580,7 @@ GpStatus WINGDIPAPI GdipSaveImageToStream(GpImage *image, IStream* stream,
     encode_image_func encode_image;
     int i;
 
-    TRACE("%p %p %p %p\n", image, stream, clsid, params);
+    TRACE("%p, %p, %s, %p\n", image, stream, wine_dbgstr_guid(clsid), params);
 
     if(!image || !stream)
         return InvalidParameter;
