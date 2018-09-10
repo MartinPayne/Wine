@@ -979,6 +979,49 @@ for %%i in (%WINE_STR_PARMS%) do (
 for %%i in (%WINE_STR_PARMS%) do (
     for %%j in (%WINE_STR_PARMS%) do (
         call :GTRtest %%i %%j))
+
+echo ------------ Testing if/exist ------------
+mkdir subdir
+echo something>subdir\bar
+echo something else>foo
+if exist foo (
+   echo exist explicit works
+) else (
+   echo ERROR exist explicit broken
+)
+if exist bar (
+   echo ERROR exist explicit unknown file broken
+) else (
+   echo exist explicit unknown file works
+)
+if exist subdir\bar (
+   echo exist explicit in subdir works
+) else (
+   echo ERROR exist explicit in subdir broken
+)
+if exist fo* (
+   echo exist simple wildcard works
+) else (
+   echo ERROR exist simple wildcard broken
+)
+if exist subdir\ba* (
+   echo exist wildcard works
+) else (
+   echo ERROR exist wildcard broken
+)
+if not exist subdir\ba* (
+   echo ERROR negate exist wildcard broken
+) else (
+   echo negate exist wildcard works
+)
+if exist idontexist\ba* (
+   echo ERROR exist wildcard bad subdir broken
+) else (
+   echo exist wildcard bad subdir broken works
+)
+del foo subdir\bar
+rd subdir
+
 echo ------ for numbers
 if -1 LSS 1 (echo negative numbers handled)
 if not -1 LSS -10 (echo negative numbers handled)
@@ -1112,9 +1155,16 @@ mkdir foobar & cd foobar
 mkdir foo
 mkdir bar
 mkdir baz
+mkdir pop
 echo > bazbaz
 echo --- basic wildcards
 for %%i in (ba*) do echo %%i
+echo --- wildcards in subdirs
+echo something>pop\bar1
+echo something>pop\bar2.txt
+echo something>pop\bar3
+for %%f in (pop\ba*) do ( call echo %%f )
+rmdir /s/q pop
 echo --- for /d
 for /d %%i in (baz foo bar) do echo %%i 2>&1
 rem Confirm we don't match files:
@@ -2977,6 +3027,57 @@ echo FAILURE at dest 10
 :dest10:this is also ignored
 echo Correctly ignored trailing information
 
+rem Testing which label is reached when there are many options
+echo Begin:
+set nextlabel=
+call :sub
+set nextlabel=middle
+goto :sub
+
+:sub
+echo ..First sub
+if not "%nextlabel%"=="" goto :%nextlabel%
+goto :EOF
+
+:sub
+echo ..Second sub
+if not "%nextlabel%"=="" goto :%nextlabel%
+goto :EOF
+
+:middle
+echo Middle:
+set nextlabel=
+call :sub
+set nextlabel=nearend
+goto :sub
+
+:sub
+echo ..Third sub
+if not "%nextlabel%"=="" goto :%nextlabel%
+goto :EOF
+
+:nearend
+echo Near end:
+set nextlabel=
+call :sub
+set nextlabel=end
+goto :sub
+
+:sub
+echo ..Fourth sub
+if not "%nextlabel%"=="" goto :%nextlabel%
+goto :EOF
+
+:end
+echo At end:
+set nextlabel=
+call :sub
+set nextlabel=done
+goto :sub
+
+:done
+echo Finished
+
 echo ------------ Testing PATH ------------
 set WINE_backup_path=%path%
 set path=original
@@ -2991,6 +3092,41 @@ set WINE_backup_path=
 echo ------------ Testing start /W ------------
 echo start /W failed to wait>foobar.txt
 start /W "" cmd /C "ping -n1 & echo start /W seems to really wait>foobar.txt"& type foobar.txt& del foobar.txt
+
+echo ------------ Testing changing the drive letter ----------
+pushd C:\
+
+echo Normal:
+call :setError 0
+C:
+if errorlevel 1 echo Normal drive change failed
+
+echo Normal+space
+call :setError 0
+C:@space@
+if errorlevel 1 echo Normal+space drive change failed
+
+echo Normal+space+garbage
+call :setError 0
+C: garbage
+if errorlevel 1 echo Normal+space+garbage drive change failed
+
+call :setError 0
+echo Quoted should fail
+"C:"
+if not errorlevel 1 echo quoted drive change unexpectedly worked
+
+echo Normal+tab
+call :setError 0
+C:@tab@
+if errorlevel 1 echo Normal+tab drive change failed
+
+echo Normal+tab+garbage
+call :setError 0
+C:@tab@garbagetab
+if errorlevel 1 echo Normal+tab+garbage drive change failed
+
+popd
 
 echo ------------ Testing combined CALLs/GOTOs ------------
 echo @echo off>foo.cmd

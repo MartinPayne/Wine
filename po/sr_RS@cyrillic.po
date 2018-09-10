@@ -3457,6 +3457,33 @@ msgstr "Сертификати..."
 msgid "Publishers..."
 msgstr "Издавачи..."
 
+#: inetcpl.rc:123
+#, fuzzy
+#| msgid "LAN Connection"
+msgid "Connections"
+msgstr "LAN веза"
+
+#: inetcpl.rc:125
+#, fuzzy
+msgid "Proxy server"
+msgstr "Локална грешка"
+
+#: inetcpl.rc:126
+msgid "Use a proxy server"
+msgstr ""
+
+#: inetcpl.rc:127
+#, fuzzy
+#| msgid "Address"
+msgid "Address:"
+msgstr "Адреса"
+
+#: inetcpl.rc:129
+#, fuzzy
+#| msgid "Local Port"
+msgid "Port:"
+msgstr "Локални порт"
+
 #: inetcpl.rc:31
 msgid "Internet Settings"
 msgstr "Поставке интернета"
@@ -15932,7 +15959,7 @@ msgctxt "Directory key"
 msgid "D"
 msgstr "Ф"
 
-#: xcopy.rc:80
+#: xcopy.rc:81
 #, fuzzy
 msgid ""
 "XCOPY - Copies source files or directory trees to a destination.\n"
@@ -15963,6 +15990,7 @@ msgid ""
 "[/A]  Only copy files with archive attribute set.\n"
 "[/M]  Only copy files with archive attribute set, removes the\n"
 "\tarchive attribute.\n"
+"[/K]  Copy file attributes, without this attributes are not preserved.\n"
 "[/D | /D:m-d-y] Copy new files or those modified after the supplied date.\n"
 "\t\tIf no date is supplied, only copy if destination is older\n"
 "\t\tthan source.\n"

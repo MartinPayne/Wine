@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2018-05-29 20:50+0300\n"
+"PO-Revision-Date: 2018-07-06 09:07+0300\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -3431,6 +3431,26 @@ msgstr "Liudijimai..."
 #: inetcpl.rc:115
 msgid "Publishers..."
 msgstr "Publikuotojai..."
+
+#: inetcpl.rc:123
+msgid "Connections"
+msgstr "Ryšiai"
+
+#: inetcpl.rc:125
+msgid "Proxy server"
+msgstr "Įgaliotasis serveris"
+
+#: inetcpl.rc:126
+msgid "Use a proxy server"
+msgstr "Naudoti įgaliotąjį serverį"
+
+#: inetcpl.rc:127
+msgid "Address:"
+msgstr "Adresas:"
+
+#: inetcpl.rc:129
+msgid "Port:"
+msgstr "Prievadas:"
 
 #: inetcpl.rc:31
 msgid "Internet Settings"
@@ -14786,6 +14806,8 @@ msgid ""
 "A program on your system has crashed, but WineDbg was unable to attach to "
 "the process to obtain a backtrace."
 msgstr ""
+"Užstrigo programa, bet WineDbg nepavyko prisijungti prie proceso ir gauti "
+"dėklo pėdsako."
 
 #: winedbg.rc:41
 msgid "(unidentified)"
@@ -15646,7 +15668,7 @@ msgctxt "Directory key"
 msgid "D"
 msgstr "K"
 
-#: xcopy.rc:80
+#: xcopy.rc:81
 msgid ""
 "XCOPY - Copies source files or directory trees to a destination.\n"
 "\n"
@@ -15676,6 +15698,7 @@ msgid ""
 "[/A]  Only copy files with archive attribute set.\n"
 "[/M]  Only copy files with archive attribute set, removes the\n"
 "\tarchive attribute.\n"
+"[/K]  Copy file attributes, without this attributes are not preserved.\n"
 "[/D | /D:m-d-y] Copy new files or those modified after the supplied date.\n"
 "\t\tIf no date is supplied, only copy if destination is older\n"
 "\t\tthan source.\n"
@@ -15709,6 +15732,7 @@ msgstr ""
 "[/A]  Kopijuoti tik failus su nustatytu archyvavimo požymiu.\n"
 "[/M]  Kopijuoti tik failus su nustatytu archyvavimo požymiu, pašalinti\n"
 "\tarchyvavimo požymį.\n"
+"[/K]  Kopijuoti failų požymius, be šio požymiai neišlaikomi.\n"
 "[/D | /D:m-d-y] Kopijuoti naujus failus arba modifikuotos po nurodytos "
 "datos.\n"
 "\t\tJei data nenurodyta, kopijuoti tik jei paskirties failas yra\n"

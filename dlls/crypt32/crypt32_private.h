@@ -21,8 +21,6 @@
 
 #include "wine/list.h"
 
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
-
 /* a few asn.1 tags we need */
 #define ASN_BOOL            (ASN_UNIVERSAL | ASN_PRIMITIVE | 0x01)
 #define ASN_BITSTRING       (ASN_UNIVERSAL | ASN_PRIMITIVE | 0x03)
@@ -343,7 +341,7 @@ void CRYPT_ImportSystemRootCertsToReg(void) DECLSPEC_HIDDEN;
 BOOL CRYPT_SerializeContextsToReg(HKEY key, DWORD flags, const WINE_CONTEXT_INTERFACE *contextInterface,
     HCERTSTORE memStore) DECLSPEC_HIDDEN;
 
-BOOL CRYPT_IsCertificateSelfSigned(PCCERT_CONTEXT cert) DECLSPEC_HIDDEN;
+DWORD CRYPT_IsCertificateSelfSigned(const CERT_CONTEXT *cert) DECLSPEC_HIDDEN;
 
 /* Allocates and initializes a certificate chain engine, but without creating
  * the root store.  Instead, it uses root, and assumes the caller has done any

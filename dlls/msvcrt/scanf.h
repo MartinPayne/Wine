@@ -548,13 +548,13 @@ _FUNCTION_ {
                     while (width && (nch != _EOF_))
                     {
                         if (!suppress) {
-                            *str++ = _CHAR2SUPPORTED_(nch);
                             if(size) size--;
                             else {
                                 _UNLOCK_FILE_(file);
                                 *pstr = 0;
                                 return rd;
                             }
+                            *str++ = _CHAR2SUPPORTED_(nch);
                         }
                         st++;
                         width--;
@@ -574,13 +574,13 @@ _FUNCTION_ {
                     while (width && (nch != _EOF_))
                     {
                         if (!suppress) {
-                            *str++ = _WIDE2SUPPORTED_(nch);
                             if(size) size--;
                             else {
                                 _UNLOCK_FILE_(file);
                                 *pstr = 0;
                                 return rd;
                             }
+                            *str++ = _WIDE2SUPPORTED_(nch);
                         }
                         st++;
                         width--;
@@ -667,6 +667,7 @@ _FUNCTION_ {
                         else {
                             _UNLOCK_FILE_(file);
                             *str = 0;
+                            HeapFree(GetProcessHeap(), 0, Mask);
                             return rd;
                         }
                     }

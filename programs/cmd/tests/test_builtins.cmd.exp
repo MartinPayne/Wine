@@ -768,6 +768,14 @@ BA GTR B
 BA GTR AB
 BA GTR AA
 AA GTR A
+------------ Testing if/exist ------------
+exist explicit works
+exist explicit unknown file works
+exist explicit in subdir works
+exist simple wildcard works
+exist wildcard works
+negate exist wildcard works
+exist wildcard bad subdir broken works
 ------ for numbers
 negative numbers handled
 negative numbers handled
@@ -909,6 +917,10 @@ B C
 B D
 --- basic wildcards
 bazbaz
+--- wildcards in subdirs
+pop\bar1@space@
+pop\bar2.txt@space@
+pop\bar3@space@
 --- for /d
 baz@space@
 foo@space@
@@ -1570,12 +1582,32 @@ goto with redirections worked
 Ignoring double colons worked
 label with mixed whitespace and no echo worked
 Correctly ignored trailing information
+Begin:
+..First sub
+..First sub
+Middle:
+..Third sub
+..Third sub
+Near end:
+..Fourth sub
+..Fourth sub
+At end:
+..First sub
+..First sub
+Finished
 ------------ Testing PATH ------------
 PATH=original
 PATH=try2
 PATH=try3
 ------------ Testing start /W ------------
 start /W seems to really wait
+------------ Testing changing the drive letter ----------
+Normal:
+Normal+space
+Normal+space+garbage
+Quoted should fail
+Normal+tab
+Normal+tab+garbage
 ------------ Testing combined CALLs/GOTOs ------------
 world
 cheball

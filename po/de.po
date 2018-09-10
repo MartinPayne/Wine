@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2018-05-18 15:21+0200\n"
+"PO-Revision-Date: 2018-07-05 11:58+0200\n"
 "Last-Translator: Julian Rüger\n"
 "Language-Team: German\n"
 "Language: de\n"
@@ -3435,6 +3435,26 @@ msgstr "Zertifikate..."
 #: inetcpl.rc:115
 msgid "Publishers..."
 msgstr "Herausgeber..."
+
+#: inetcpl.rc:123
+msgid "Connections"
+msgstr "Verbindungen"
+
+#: inetcpl.rc:125
+msgid "Proxy server"
+msgstr "Proxyserver"
+
+#: inetcpl.rc:126
+msgid "Use a proxy server"
+msgstr "Proxy verwenden"
+
+#: inetcpl.rc:127
+msgid "Address:"
+msgstr "Adresse:"
+
+#: inetcpl.rc:129
+msgid "Port:"
+msgstr "Port:"
 
 #: inetcpl.rc:31
 msgid "Internet Settings"
@@ -12891,10 +12911,8 @@ msgid "Confirm Value Delete"
 msgstr "Löschen des Wertes bestätigen"
 
 #: regedit.rc:210
-#, fuzzy
-#| msgid "Are you sure you want to delete the registry value '%1'?"
 msgid "Are you sure you want to delete the selected registry value?"
-msgstr "Sind Sie sicher, dass Sie den Wert '%1' löschen möchten?"
+msgstr "Sind Sie sicher, dass Sie den ausgewählten Wert löschen möchten?"
 
 #: regedit.rc:216
 msgid "Search complete. The string '%1' was not found."
@@ -14883,6 +14901,8 @@ msgid ""
 "A program on your system has crashed, but WineDbg was unable to attach to "
 "the process to obtain a backtrace."
 msgstr ""
+"Ein Programm auf Ihrem System ist abgestürzt, aber WineDbg konnte nicht an "
+"den Prozess anknüpfen, um eine Backtrace zu erstellen."
 
 #: winedbg.rc:41
 msgid "(unidentified)"
@@ -15747,7 +15767,42 @@ msgctxt "Directory key"
 msgid "D"
 msgstr "V"
 
-#: xcopy.rc:80
+#: xcopy.rc:81
+#, fuzzy
+#| msgid ""
+#| "XCOPY - Copies source files or directory trees to a destination.\n"
+#| "\n"
+#| "Syntax:\n"
+#| "XCOPY source [destination] [/I] [/S] [/Q] [/F] [/L] [/W] [/T] [/N] [/U]\n"
+#| "\t     [/R] [/H] [/C] [/P] [/A] [/M] [/E] [/D] [/Y] [/-Y]\n"
+#| "\n"
+#| "Where:\n"
+#| "\n"
+#| "[/I]  Assume directory if destination does not exist and copying two or\n"
+#| "\tmore files.\n"
+#| "[/S]  Copy directories and subdirectories.\n"
+#| "[/E]  Copy directories and subdirectories, including any empty ones.\n"
+#| "[/Q]  Do not list names during copy, that is be quiet.\n"
+#| "[/F]  Show full source and destination names during copy.\n"
+#| "[/L]  Simulate operation, showing names which would be copied.\n"
+#| "[/W]  Prompts before beginning the copy operation.\n"
+#| "[/T]  Creates empty directory structure but does not copy files.\n"
+#| "[/Y]  Suppress prompting when overwriting files.\n"
+#| "[/-Y] Enable prompting when overwriting files.\n"
+#| "[/P]  Prompts on each source file before copying.\n"
+#| "[/N]  Copy using short names.\n"
+#| "[/U]  Copy only files which already exist in destination.\n"
+#| "[/R]  Overwrite any read only files.\n"
+#| "[/H]  Include hidden and system files in the copy.\n"
+#| "[/C]  Continue even if an error occurs during the copy.\n"
+#| "[/A]  Only copy files with archive attribute set.\n"
+#| "[/M]  Only copy files with archive attribute set, removes the\n"
+#| "\tarchive attribute.\n"
+#| "[/D | /D:m-d-y] Copy new files or those modified after the supplied "
+#| "date.\n"
+#| "\t\tIf no date is supplied, only copy if destination is older\n"
+#| "\t\tthan source.\n"
+#| "\n"
 msgid ""
 "XCOPY - Copies source files or directory trees to a destination.\n"
 "\n"
@@ -15777,6 +15832,7 @@ msgid ""
 "[/A]  Only copy files with archive attribute set.\n"
 "[/M]  Only copy files with archive attribute set, removes the\n"
 "\tarchive attribute.\n"
+"[/K]  Copy file attributes, without this attributes are not preserved.\n"
 "[/D | /D:m-d-y] Copy new files or those modified after the supplied date.\n"
 "\t\tIf no date is supplied, only copy if destination is older\n"
 "\t\tthan source.\n"

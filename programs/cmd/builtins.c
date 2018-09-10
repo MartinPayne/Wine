@@ -2261,19 +2261,25 @@ void WCMD_for (WCHAR *p, CMD_LIST **cmdList) {
            thisSet->bracketDepth >= thisDepth) {
 
       /* Loop through all entries on the same line */
-      WCHAR *item;
+      WCHAR *staticitem;
       WCHAR *itemStart;
       WCHAR buffer[MAXSTRING];
 
       WINE_TRACE("Processing for set %p\n", thisSet);
       i = 0;
-      while (*(item = WCMD_parameter (thisSet->command, i, &itemStart, TRUE, FALSE))) {
+      while (*(staticitem = WCMD_parameter (thisSet->command, i, &itemStart, TRUE, FALSE))) {
 
         /*
          * If the parameter within the set has a wildcard then search for matching files
          * otherwise do a literal substitution.
          */
         static const WCHAR wildcards[] = {'*','?','\0'};
+
+        /* Take a copy of the item returned from WCMD_parameter as it is held in a
+           static buffer which can be overwritten during parsing of the for body   */
+        WCHAR item[MAXSTRING];
+        strcpyW(item, staticitem);
+
         thisCmdStart = cmdStart;
 
         itemNum++;
@@ -2576,30 +2582,61 @@ void WCMD_goto (CMD_LIST **cmdList) {
     if (labelend) *labelend = 0x00;
     WINE_TRACE("goto label: '%s'\n", wine_dbgstr_w(paramStart));
 
-    SetFilePointer (context -> h, 0, NULL, FILE_BEGIN);
-    while (*paramStart &&
-           WCMD_fgets (string, sizeof(string)/sizeof(WCHAR), context -> h)) {
-      str = string;
+    /* Loop through potentially twice - once from current file position
+       through to the end, and second time from start to current file
+       position                                                         */
+    if (*paramStart) {
+        int loop;
+        LARGE_INTEGER startli;
+        for (loop=0; loop<2; loop++) {
+            if (loop==0) {
+              /* On first loop, save the file size */
+              startli.QuadPart = 0;
+              startli.u.LowPart = SetFilePointer(context -> h, startli.u.LowPart,
+                                                 &startli.u.HighPart, FILE_CURRENT);
+            } else {
+              /* On second loop, start at the beginning of the file */
+              WINE_TRACE("Label not found, trying from beginning of file\n");
+              if (loop==1) SetFilePointer (context -> h, 0, NULL, FILE_BEGIN);
+            }
 
-      /* Ignore leading whitespace or no-echo character */
-      while (*str=='@' || isspaceW (*str)) str++;
+            while (WCMD_fgets (string, sizeof(string)/sizeof(WCHAR), context -> h)) {
+              str = string;
 
-      /* If the first real character is a : then this is a label */
-      if (*str == ':') {
-        str++;
+              /* Ignore leading whitespace or no-echo character */
+              while (*str=='@' || isspaceW (*str)) str++;
 
-        /* Skip spaces between : and label */
-        while (isspaceW (*str)) str++;
-        WINE_TRACE("str before brk %s\n", wine_dbgstr_w(str));
+              /* If the first real character is a : then this is a label */
+              if (*str == ':') {
+                str++;
 
-        /* Label ends at whitespace or redirection characters */
-        labelend = strpbrkW(str, labelEndsW);
-        if (labelend) *labelend = 0x00;
-        WINE_TRACE("comparing found label %s\n", wine_dbgstr_w(str));
+                /* Skip spaces between : and label */
+                while (isspaceW (*str)) str++;
+                WINE_TRACE("str before brk %s\n", wine_dbgstr_w(str));
 
-        if (lstrcmpiW (str, paramStart) == 0) return;
-      }
+                /* Label ends at whitespace or redirection characters */
+                labelend = strpbrkW(str, labelEndsW);
+                if (labelend) *labelend = 0x00;
+                WINE_TRACE("comparing found label %s\n", wine_dbgstr_w(str));
+
+                if (lstrcmpiW (str, paramStart) == 0) return;
+              }
+
+              /* See if we have gone beyond the end point if second time through */
+              if (loop==1) {
+                LARGE_INTEGER curli;
+                curli.QuadPart = 0;
+                curli.u.LowPart = SetFilePointer(context -> h, curli.u.LowPart,
+                                                &curli.u.HighPart, FILE_CURRENT);
+                if (curli.QuadPart > startli.QuadPart) {
+                  WINE_TRACE("Reached wrap point, label not found\n");
+                  break;
+                }
+              }
+            }
+        }
     }
+
     WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOTARGET));
     context -> skip_rest = TRUE;
   }
@@ -2804,8 +2841,11 @@ void WCMD_if (WCHAR *p, CMD_LIST **cmdList)
     WCMD_parameter(p, 2+negate, &command, FALSE, FALSE);
   }
   else if (!lstrcmpiW (condition, existW)) {
-    test = (GetFileAttributesW(WCMD_parameter(p, 1+negate, NULL, FALSE, FALSE))
-             != INVALID_FILE_ATTRIBUTES);
+    WIN32_FIND_DATAW fd;
+    HANDLE hff = FindFirstFileW(WCMD_parameter(p, 1+negate, NULL, FALSE, FALSE), &fd);
+    test = (hff != INVALID_HANDLE_VALUE );
+    if (!test) FindClose(hff);
+
     WCMD_parameter(p, 2+negate, &command, FALSE, FALSE);
   }
   else if (!lstrcmpiW (condition, defdW)) {
@@ -4883,7 +4923,7 @@ void WCMD_assoc (const WCHAR *args, BOOL assoc) {
               LoadStringW(hinst, WCMD_NOFTYPE, msgbuffer,
                           sizeof(msgbuffer)/sizeof(WCHAR));
             }
-            WCMD_output_stderr(msgbuffer, keyValue);
+            WCMD_output_stderr(msgbuffer, args);
             errorlevel = 2;
           }
 

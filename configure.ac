@@ -789,7 +789,6 @@ case $host_os in
         LIBS="$LIBS $SECURITY_LIBS"
         AC_CHECK_FUNCS(SSLCopyPeerCertificates)
         LIBS="$ac_save_LIBS"
-        with_gnutls=${with_gnutls:-no}
     fi
     if test "$ac_cv_header_CoreAudio_CoreAudio_h" = "yes" -a "$ac_cv_header_AudioUnit_AudioUnit_h" = "yes"
     then
@@ -3187,6 +3186,7 @@ WINE_CONFIG_MAKEFILE(dlls/d3dxof/tests)
 WINE_CONFIG_MAKEFILE(dlls/davclnt)
 WINE_CONFIG_MAKEFILE(dlls/dbgeng)
 WINE_CONFIG_MAKEFILE(dlls/dbghelp)
+WINE_CONFIG_MAKEFILE(dlls/dbghelp/tests)
 WINE_CONFIG_MAKEFILE(dlls/dciman32)
 WINE_CONFIG_MAKEFILE(dlls/ddeml.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/ddraw)

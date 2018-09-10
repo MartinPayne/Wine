@@ -1923,6 +1923,9 @@ void WINAPI KeInitializeSpinLock( PKSPIN_LOCK SpinLock )
 void WINAPI KeInitializeTimerEx( PKTIMER Timer, TIMER_TYPE Type )
 {
     FIXME( "stub: %p %d\n", Timer, Type );
+
+    RtlZeroMemory(Timer, sizeof(KTIMER));
+    Timer->Header.Type = Type ? 9 : 8;
 }
 
 
@@ -2760,6 +2763,15 @@ NTSTATUS WINAPI IoRegisterPlugPlayNotification(IO_NOTIFICATION_EVENT_CATEGORY ca
                                                PVOID context, PVOID *notification)
 {
     FIXME("(%u %u %p %p %p %p %p) stub\n", category, flags, data, driver, callback, context, notification);
+    return STATUS_SUCCESS;
+}
+
+/*****************************************************
+ *           IoUnregisterPlugPlayNotification    (NTOSKRNL.EXE.@)
+ */
+NTSTATUS WINAPI IoUnregisterPlugPlayNotification(PVOID notification)
+{
+    FIXME("stub: %p\n", notification);
     return STATUS_SUCCESS;
 }
 

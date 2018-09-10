@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Vitaliy Margolen
+ * Copyright 2018 Zebediah Figura
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,32 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma makedep header
+#include "winuser.h"
 
-import "objidl.idl";
-import "strmif.idl";
-import "unknwn.idl";
-
-
-/*****************************************************************************
- * IAMFilterData interface
- */
-[
-    object,
-    uuid(97f7c4d4-547b-4a5f-8332-536430ad2e4d),
-    pointer_default(unique)
-]
-interface IAMFilterData : IUnknown
-{
-    typedef [unique] IAMFilterData *LPIAMFILTERDATA;
-
-    HRESULT ParseFilterData(
-        [in] BYTE * rgbFilterData,
-        [in] ULONG cb,
-        [out] BYTE ** prgbRegFilter2);
-
-    HRESULT CreateFilterData(
-        [in] REGFILTER2 * prf2,
-        [out] BYTE ** prgbFilterData,
-        [out] ULONG * pcb);
-}
+/* @makedep: odbccp32.manifest */
+1 RT_MANIFEST odbccp32.manifest
