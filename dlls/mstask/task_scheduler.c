@@ -59,7 +59,7 @@ static void TaskSchedulerDestructor(TaskSchedulerImpl *This)
 {
     TRACE("%p\n", This);
     ITaskService_Release(This->service);
-    HeapFree(GetProcessHeap(), 0, This);
+    heap_free(This);
     InterlockedDecrement(&dll_ref);
 }
 
@@ -97,7 +97,7 @@ static ULONG WINAPI EnumWorkItems_Release(IEnumWorkItems *iface)
 
     if (ref == 0)
     {
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
         InterlockedDecrement(&dll_ref);
     }
 
@@ -148,7 +148,7 @@ static HRESULT create_task_enum(IEnumWorkItems **ret)
 
     *ret = NULL;
 
-    tasks = HeapAlloc(GetProcessHeap(), 0, sizeof(*tasks));
+    tasks = heap_alloc(sizeof(*tasks));
     if (!tasks)
         return E_OUTOFMEMORY;
 
@@ -268,16 +268,38 @@ static HRESULT WINAPI MSTASK_ITaskScheduler_Enum(
     return create_task_enum(tasks);
 }
 
-static HRESULT WINAPI MSTASK_ITaskScheduler_Activate(
-        ITaskScheduler* iface,
-        LPCWSTR pwszName,
-        REFIID riid,
-        IUnknown **ppunk)
+static HRESULT WINAPI MSTASK_ITaskScheduler_Activate(ITaskScheduler *iface,
+        LPCWSTR task_name, REFIID riid, IUnknown **unknown)
 {
-    TRACE("%p, %s, %s, %p: stub\n", iface, debugstr_w(pwszName),
-            debugstr_guid(riid), ppunk);
-    FIXME("Partial stub always returning ERROR_FILE_NOT_FOUND\n");
-    return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    ITask *task;
+    IPersistFile *pfile;
+    HRESULT hr;
+
+    TRACE("%p, %s, %s, %p\n", iface, debugstr_w(task_name), debugstr_guid(riid), unknown);
+
+    hr = ITaskScheduler_NewWorkItem(iface, task_name, &CLSID_CTask, riid, (IUnknown **)&task);
+    if (hr != S_OK) return hr;
+
+    hr = ITask_QueryInterface(task, &IID_IPersistFile, (void **)&pfile);
+    if (hr == S_OK)
+    {
+        WCHAR *curfile;
+
+        hr = IPersistFile_GetCurFile(pfile, &curfile);
+        if (hr == S_OK)
+        {
+            hr = IPersistFile_Load(pfile, curfile, STGM_READ | STGM_SHARE_DENY_WRITE);
+            CoTaskMemFree(curfile);
+        }
+
+        IPersistFile_Release(pfile);
+    }
+
+    if (hr == S_OK)
+        *unknown = (IUnknown *)task;
+    else
+        ITask_Release(task);
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITaskScheduler_Delete(
@@ -309,13 +331,30 @@ static HRESULT WINAPI MSTASK_ITaskScheduler_NewWorkItem(
     return TaskConstructor(This->service, task_name, (ITask **)task);
 }
 
-static HRESULT WINAPI MSTASK_ITaskScheduler_AddWorkItem(
-        ITaskScheduler* iface,
-        LPCWSTR pwszTaskName,
-        IScheduledWorkItem *pWorkItem)
+static HRESULT WINAPI MSTASK_ITaskScheduler_AddWorkItem(ITaskScheduler *iface, LPCWSTR name, IScheduledWorkItem *item)
 {
-    FIXME("%p, %s, %p: stub\n", iface, debugstr_w(pwszTaskName), pWorkItem);
-    return E_NOTIMPL;
+    static const WCHAR tasksW[] = { '\\','T','a','s','k','s','\\',0 };
+    static const WCHAR jobW[] = { '.','j','o','b',0 };
+    WCHAR task_name[MAX_PATH];
+    IPersistFile *pfile;
+    HRESULT hr;
+
+    TRACE("%p, %s, %p\n", iface, debugstr_w(name), item);
+
+    if (strchrW(name, '.')) return E_INVALIDARG;
+
+    GetWindowsDirectoryW(task_name, MAX_PATH);
+    lstrcatW(task_name, tasksW);
+    lstrcatW(task_name, name);
+    lstrcatW(task_name, jobW);
+
+    hr = IScheduledWorkItem_QueryInterface(item, &IID_IPersistFile, (void **)&pfile);
+    if (hr == S_OK)
+    {
+        hr = IPersistFile_Save(pfile, task_name, TRUE);
+        IPersistFile_Release(pfile);
+    }
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITaskScheduler_IsOfType(
@@ -363,7 +402,7 @@ HRESULT TaskSchedulerConstructor(LPVOID *ppObj)
         return hr;
     }
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    This = heap_alloc(sizeof(*This));
     if (!This)
     {
         ITaskService_Release(service);

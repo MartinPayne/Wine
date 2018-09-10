@@ -69,6 +69,8 @@ static DWORD (WINAPI *pGetLayout)(HDC hdc);
 static BOOL (WINAPI *pMirrorRgn)(HWND hwnd, HRGN hrgn);
 static BOOL (WINAPI *pGetWindowDisplayAffinity)(HWND hwnd, DWORD *affinity);
 static BOOL (WINAPI *pSetWindowDisplayAffinity)(HWND hwnd, DWORD affinity);
+static BOOL (WINAPI *pAdjustWindowRectExForDpi)(LPRECT,DWORD,BOOL,DWORD,UINT);
+static BOOL (WINAPI *pSystemParametersInfoForDpi)(UINT,UINT,void*,UINT,UINT);
 
 static BOOL test_lbuttondown_flag;
 static DWORD num_gettext_msgs;
@@ -1014,23 +1016,19 @@ static void FixedAdjustWindowRectEx(RECT* rc, LONG style, BOOL menu, LONG exstyl
 /* reimplement it to check that the Wine algorithm gives the correct result */
 static void wine_AdjustWindowRectEx( RECT *rect, LONG style, BOOL menu, LONG exStyle )
 {
-    int adjust;
+    NONCLIENTMETRICSW ncm;
+    int adjust = 0;
 
-    if ((exStyle & (WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME)) ==
-        WS_EX_STATICEDGE)
-    {
+    ncm.cbSize = offsetof( NONCLIENTMETRICSW, iPaddedBorderWidth );
+    SystemParametersInfoW( SPI_GETNONCLIENTMETRICS, 0, &ncm, 0 );
+
+    if ((exStyle & (WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME)) == WS_EX_STATICEDGE)
         adjust = 1; /* for the outer frame always present */
-    }
-    else
-    {
-        adjust = 0;
-        if ((exStyle & WS_EX_DLGMODALFRAME) ||
-            (style & (WS_THICKFRAME|WS_DLGFRAME))) adjust = 2; /* outer */
-    }
-    if (style & WS_THICKFRAME)
-        adjust += GetSystemMetrics(SM_CXFRAME) - GetSystemMetrics(SM_CXDLGFRAME); /* The resize border */
-    if ((style & (WS_BORDER|WS_DLGFRAME)) ||
-        (exStyle & WS_EX_DLGMODALFRAME))
+    else if ((exStyle & WS_EX_DLGMODALFRAME) || (style & (WS_THICKFRAME|WS_DLGFRAME)))
+        adjust = 2; /* outer */
+
+    if (style & WS_THICKFRAME) adjust += ncm.iBorderWidth; /* The resize border */
+    if ((style & (WS_BORDER|WS_DLGFRAME)) || (exStyle & WS_EX_DLGMODALFRAME))
         adjust++; /* The other border */
 
     InflateRect (rect, adjust, adjust);
@@ -1038,11 +1036,11 @@ static void wine_AdjustWindowRectEx( RECT *rect, LONG style, BOOL menu, LONG exS
     if ((style & WS_CAPTION) == WS_CAPTION)
     {
         if (exStyle & WS_EX_TOOLWINDOW)
-            rect->top -= GetSystemMetrics(SM_CYSMCAPTION);
+            rect->top -= ncm.iSmCaptionHeight + 1;
         else
-            rect->top -= GetSystemMetrics(SM_CYCAPTION);
+            rect->top -= ncm.iCaptionHeight + 1;
     }
-    if (menu) rect->top -= GetSystemMetrics(SM_CYMENU);
+    if (menu) rect->top -= ncm.iMenuHeight + 1;
 
     if (exStyle & WS_EX_CLIENTEDGE)
         InflateRect(rect, GetSystemMetrics(SM_CXEDGE), GetSystemMetrics(SM_CYEDGE));
@@ -1055,6 +1053,39 @@ static void wine_AdjustWindowRectEx( RECT *rect, LONG style, BOOL menu, LONG exS
             rect->right += GetSystemMetrics(SM_CXVSCROLL);
     }
     if (style & WS_HSCROLL) rect->bottom += GetSystemMetrics(SM_CYHSCROLL);
+}
+
+static void wine_AdjustWindowRectExForDpi( RECT *rect, LONG style, BOOL menu, LONG exStyle, UINT dpi )
+{
+    NONCLIENTMETRICSW ncm;
+    int adjust = 0;
+
+    ncm.cbSize = sizeof(ncm);
+    pSystemParametersInfoForDpi( SPI_GETNONCLIENTMETRICS, 0, &ncm, 0, dpi );
+
+    if ((exStyle & (WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME)) == WS_EX_STATICEDGE)
+        adjust = 1; /* for the outer frame always present */
+    else if ((exStyle & WS_EX_DLGMODALFRAME) || (style & (WS_THICKFRAME|WS_DLGFRAME)))
+        adjust = 2; /* outer */
+
+    if (style & WS_THICKFRAME) adjust += ncm.iBorderWidth + ncm.iPaddedBorderWidth;
+
+    if ((style & (WS_BORDER|WS_DLGFRAME)) || (exStyle & WS_EX_DLGMODALFRAME))
+        adjust++; /* The other border */
+
+    InflateRect (rect, adjust, adjust);
+
+    if ((style & WS_CAPTION) == WS_CAPTION)
+    {
+        if (exStyle & WS_EX_TOOLWINDOW)
+            rect->top -= ncm.iSmCaptionHeight + 1;
+        else
+            rect->top -= ncm.iCaptionHeight + 1;
+    }
+    if (menu) rect->top -= ncm.iMenuHeight + 1;
+
+    if (exStyle & WS_EX_CLIENTEDGE)
+        InflateRect(rect, GetSystemMetrics(SM_CXEDGE), GetSystemMetrics(SM_CYEDGE));
 }
 
 static void test_nonclient_area(HWND hwnd)
@@ -5286,8 +5317,15 @@ static void test_AWR_flags(void)
             rect2 = rect;
             AdjustWindowRectEx( &rect, style, FALSE, exstyle );
             wine_AdjustWindowRectEx( &rect2, style, FALSE, exstyle );
-            ok( EqualRect( &rect, &rect2 ), "rects do not match: win %s wine %s\n",
-                wine_dbgstr_rect( &rect ), wine_dbgstr_rect( &rect2 ));
+            ok( EqualRect( &rect, &rect2 ), "%08x %08x rects do not match: win %s wine %s\n",
+                style, exstyle, wine_dbgstr_rect( &rect ), wine_dbgstr_rect( &rect2 ));
+            if (pAdjustWindowRectExForDpi)
+            {
+                pAdjustWindowRectExForDpi( &rect, style, FALSE, exstyle, 192 );
+                wine_AdjustWindowRectExForDpi( &rect2, style, FALSE, exstyle, 192 );
+                ok( EqualRect( &rect, &rect2 ), "%08x %08x rects do not match: win %s wine %s\n",
+                    style, exstyle, wine_dbgstr_rect( &rect ), wine_dbgstr_rect( &rect2 ));
+            }
         }
     }
 }
@@ -10499,6 +10537,172 @@ static void test_display_affinity( HWND win )
     SetWindowLongW(win, GWL_EXSTYLE, styleex);
 }
 
+static struct destroy_data
+{
+    HWND main_wnd;
+    HWND thread1_wnd;
+    HWND thread2_wnd;
+    HANDLE evt;
+    DWORD main_tid;
+    DWORD destroy_count;
+    DWORD ncdestroy_count;
+} destroy_data;
+
+static LRESULT WINAPI destroy_thread1_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    switch (msg)
+    {
+    case WM_DESTROY:
+        ok( destroy_data.destroy_count > 0, "parent didn't get WM_DESTROY\n" );
+        PostQuitMessage(0);
+        break;
+    case WM_NCDESTROY:
+        ok( destroy_data.ncdestroy_count > 0, "parent didn't get WM_NCDESTROY\n" );
+        break;
+    }
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+static LRESULT WINAPI destroy_thread2_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    switch (msg)
+    {
+    case WM_DESTROY:
+        ok( destroy_data.destroy_count > 0, "parent didn't get WM_DESTROY\n" );
+        break;
+    case WM_NCDESTROY:
+        ok( destroy_data.ncdestroy_count > 0, "parent didn't get WM_NCDESTROY\n" );
+        ok( WaitForSingleObject(destroy_data.evt, 10000) != WAIT_TIMEOUT, "timeout\n" );
+        PostQuitMessage(0);
+        break;
+    }
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+static LRESULT WINAPI destroy_main_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    switch (msg)
+    {
+    case WM_DESTROY:
+        destroy_data.destroy_count++;
+        break;
+    case WM_NCDESTROY:
+        destroy_data.ncdestroy_count++;
+        break;
+    }
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+static DWORD CALLBACK destroy_thread1(void *user)
+{
+    MSG msg;
+
+    destroy_data.thread1_wnd = CreateWindowExA(0, "destroy_test_thread1",
+            "destroy test thread", WS_CHILD, 100, 100, 100, 100,
+            destroy_data.main_wnd, 0, GetModuleHandleA(NULL), NULL);
+    ok(destroy_data.thread1_wnd != NULL, "CreateWindowEx failed with error %d\n", GetLastError());
+    PostThreadMessageW(destroy_data.main_tid, WM_USER, 0, 0);
+
+    while (GetMessageA(&msg, 0, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    PostThreadMessageW(destroy_data.main_tid, WM_USER + 2, 0, 0);
+    ok( WaitForSingleObject(destroy_data.evt, 10000) != WAIT_TIMEOUT, "timeout\n" );
+    ok( IsWindow( destroy_data.thread1_wnd ), "window destroyed\n" );
+    return 0;
+}
+
+static DWORD CALLBACK destroy_thread2(void *user)
+{
+    MSG msg;
+
+    destroy_data.thread2_wnd = CreateWindowExA(0, "destroy_test_thread2",
+            "destroy test thread", WS_CHILD, 100, 100, 100, 100,
+            destroy_data.main_wnd, 0, GetModuleHandleA(NULL), NULL);
+    ok(destroy_data.thread2_wnd != NULL, "CreateWindowEx failed with error %d\n", GetLastError());
+
+    PostThreadMessageW(destroy_data.main_tid, WM_USER + 1, 0, 0);
+    Sleep( 100 );
+
+    while (GetMessageA(&msg, 0, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    ok( !IsWindow( destroy_data.thread2_wnd ), "window not destroyed\n" );
+    return 0;
+}
+
+static void test_destroy_quit(void)
+{
+    MSG msg;
+    WNDCLASSA wnd_classA;
+    ATOM ret;
+    HANDLE thread1, thread2;
+
+    destroy_data.main_tid = GetCurrentThreadId();
+    destroy_data.evt = CreateEventW(NULL, TRUE, FALSE, NULL);
+    destroy_data.destroy_count = 0;
+    destroy_data.ncdestroy_count = 0;
+
+    memset(&wnd_classA, 0, sizeof(wnd_classA));
+    wnd_classA.lpszClassName = "destroy_test_main";
+    wnd_classA.lpfnWndProc = destroy_main_wndproc;
+    ret = RegisterClassA(&wnd_classA);
+    ok(ret, "RegisterClass failed with error %d\n", GetLastError());
+
+    wnd_classA.lpszClassName = "destroy_test_thread1";
+    wnd_classA.lpfnWndProc = destroy_thread1_wndproc;
+    ret = RegisterClassA(&wnd_classA);
+    ok(ret, "RegisterClass failed with error %d\n", GetLastError());
+
+    wnd_classA.lpszClassName = "destroy_test_thread2";
+    wnd_classA.lpfnWndProc = destroy_thread2_wndproc;
+    ret = RegisterClassA(&wnd_classA);
+    ok(ret, "RegisterClass failed with error %d\n", GetLastError());
+
+    destroy_data.main_wnd = CreateWindowExA(0, "destroy_test_main",
+            "destroy test main", WS_OVERLAPPED | WS_CAPTION, 100, 100, 100, 100,
+            0, 0, GetModuleHandleA(NULL), NULL);
+    ok(destroy_data.main_wnd != NULL, "CreateWindowEx failed with error %d\n", GetLastError());
+    if (!destroy_data.main_wnd)
+    {
+        CloseHandle(destroy_data.evt);
+        return;
+    }
+
+    thread1 = CreateThread(NULL, 0, destroy_thread1, 0, 0, NULL);
+
+    while (GetMessageA(&msg, 0, 0, 0))
+    {
+        BOOL done = 0;
+        switch (msg.message)
+        {
+        case WM_USER:
+            thread2 = CreateThread(NULL, 0, destroy_thread2, 0, 0, NULL);
+            CloseHandle( thread2 );
+            break;
+        case WM_USER + 1:
+            DestroyWindow(destroy_data.main_wnd);
+            break;
+        case WM_USER + 2:
+            SetEvent(destroy_data.evt);
+            done = 1;
+            break;
+        default:
+            DispatchMessageA(&msg);
+            break;
+        }
+        if (done) break;
+    }
+
+    ok( WaitForSingleObject( thread1, 10000 ) != WAIT_TIMEOUT, "timeout" );
+    ok( !IsWindow( destroy_data.thread1_wnd ), "window not destroyed\n" );
+    CloseHandle( thread1 );
+}
+
 START_TEST(win)
 {
     char **argv;
@@ -10525,6 +10729,8 @@ START_TEST(win)
     pMirrorRgn = (void *)GetProcAddress( gdi32, "MirrorRgn" );
     pGetWindowDisplayAffinity = (void *)GetProcAddress( user32, "GetWindowDisplayAffinity" );
     pSetWindowDisplayAffinity = (void *)GetProcAddress( user32, "SetWindowDisplayAffinity" );
+    pAdjustWindowRectExForDpi = (void *)GetProcAddress( user32, "AdjustWindowRectExForDpi" );
+    pSystemParametersInfoForDpi = (void *)GetProcAddress( user32, "SystemParametersInfoForDpi" );
 
     if (argc==4 && !strcmp(argv[2], "create_children"))
     {
@@ -10652,6 +10858,7 @@ START_TEST(win)
     test_display_affinity(hwndMain);
     test_hide_window();
     test_minimize_window(hwndMain);
+    test_destroy_quit();
 
     /* add the tests above this line */
     if (hhook) UnhookWindowsHookEx(hhook);

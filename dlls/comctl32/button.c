@@ -282,9 +282,6 @@ static UINT BUTTON_BStoDT( DWORD style, DWORD ex_style )
             default:         dtStyle |= DT_VCENTER; break;
         }
     }
-    else
-        /* GroupBox's text is always single line and is top aligned. */
-        dtStyle |= DT_SINGLELINE;
 
     return dtStyle;
 }
@@ -1153,14 +1150,14 @@ static void CB_Paint( const BUTTON_INFO *infoPtr, HDC hDC, UINT action )
 	/* rbox must have the correct height */
 	delta = rbox.bottom - rbox.top - checkBoxHeight;
 
-	if (style & BS_TOP) {
+	if ((style & BS_VCENTER) == BS_TOP) {
 	    if (delta > 0) {
 		rbox.bottom = rbox.top + checkBoxHeight;
 	    } else {
 		rbox.top -= -delta/2 + 1;
 		rbox.bottom = rbox.top + checkBoxHeight;
 	    }
-	} else if (style & BS_BOTTOM) {
+	} else if ((style & BS_VCENTER) == BS_BOTTOM) {
 	    if (delta > 0) {
 		rbox.top = rbox.bottom - checkBoxHeight;
 	    } else {

@@ -2,6 +2,7 @@
  * Test suite for Task interface
  *
  * Copyright (C) 2008 Google (Roy Shea)
+ * Copyright (C) 2018 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -496,11 +497,13 @@ static void test_SetAccountInformation_GetAccountInformation(void)
     return;
 }
 
-static void test_GetFlags(void)
+static void test_task_state(void)
 {
     BOOL setup;
-    HRESULT hr;
-    DWORD flags;
+    HRESULT hr, status;
+    DWORD flags, val;
+    WORD val1, val2;
+    SYSTEMTIME st;
 
     setup = setup_task();
     ok(setup, "Failed to setup test_task\n");
@@ -526,6 +529,65 @@ static void test_GetFlags(void)
     ok(hr == S_OK, "GetTaskFlags error %#x\n", hr);
     ok(flags == 0, "got %#x\n", flags);
 
+    if (0) /* crashes under Windows */
+        hr = ITask_GetStatus(test_task, NULL);
+
+    status = 0xdeadbeef;
+    hr = ITask_GetStatus(test_task, &status);
+    ok(hr == S_OK, "GetStatus error %#x\n", hr);
+    ok(status == SCHED_S_TASK_NOT_SCHEDULED, "got %#x\n", status);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetErrorRetryCount(test_task, NULL);
+
+    hr = ITask_GetErrorRetryCount(test_task, &val1);
+    ok(hr == E_NOTIMPL, "got %#x\n", hr);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetErrorRetryInterval(test_task, NULL);
+
+    hr = ITask_GetErrorRetryInterval(test_task, &val1);
+    ok(hr == E_NOTIMPL, "got %#x\n", hr);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetIdleWait(test_task, NULL, NULL);
+
+    val1 = 0xdead;
+    val2 = 0xbeef;
+    hr = ITask_GetIdleWait(test_task, &val1, &val2);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(val1 == 10, "got %u\n", val1);
+    ok(val2 == 60, "got %u\n", val2);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetPriority(test_task, NULL);
+
+    val = 0xdeadbeef;
+    hr = ITask_GetPriority(test_task, &val);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(val == NORMAL_PRIORITY_CLASS, "got %#x\n", val);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetExitCode(test_task, NULL);
+
+    val = 0xdeadbeef;
+    hr = ITask_GetExitCode(test_task, &val);
+    ok(hr == SCHED_S_TASK_HAS_NOT_RUN, "got %#x\n", hr);
+    ok(val == 0, "got %#x\n", val);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetMostRecentRunTime(test_task, NULL);
+
+    memset(&st, 0xff, sizeof(st));
+    hr = ITask_GetMostRecentRunTime(test_task, &st);
+    ok(hr == SCHED_S_TASK_HAS_NOT_RUN, "got %#x\n", hr);
+    ok(st.wYear == 0, "got %u\n", st.wYear);
+    ok(st.wMonth == 0, "got %u\n", st.wMonth);
+    ok(st.wDay == 0, "got %u\n", st.wDay);
+    ok(st.wHour == 0, "got %u\n", st.wHour);
+    ok(st.wMinute == 0, "got %u\n", st.wMinute);
+    ok(st.wSecond == 0, "got %u\n", st.wSecond);
+
     cleanup_task();
 }
 
@@ -538,6 +600,6 @@ START_TEST(task)
     test_SetComment_GetComment();
     test_SetMaxRunTime_GetMaxRunTime();
     test_SetAccountInformation_GetAccountInformation();
-    test_GetFlags();
+    test_task_state();
     CoUninitialize();
 }

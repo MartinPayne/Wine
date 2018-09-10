@@ -5,8 +5,8 @@
 @ stub ExInterlockedAddLargeStatistic
 @ stub ExInterlockedCompareExchange64
 @ stub ExInterlockedFlushSList
-@ stub ExInterlockedPopEntrySList
-@ stub ExInterlockedPushEntrySList
+@ stdcall -norelay ExInterlockedPopEntrySList(ptr ptr) NTOSKRNL_ExInterlockedPopEntrySList
+@ stdcall -norelay ExInterlockedPushEntrySList (ptr ptr ptr) NTOSKRNL_ExInterlockedPushEntrySList
 @ stub ExReInitializeRundownProtection
 @ stdcall -norelay ExReleaseFastMutexUnsafe(ptr)
 @ stub ExReleaseResourceLite
@@ -273,7 +273,7 @@
 @ stub FsRtlPrepareMdlWriteDev
 @ stub FsRtlPrivateLock
 @ stub FsRtlProcessFileLock
-@ stub FsRtlRegisterFileSystemFilterCallbacks
+@ stdcall FsRtlRegisterFileSystemFilterCallbacks(ptr ptr)
 @ stdcall FsRtlRegisterUncProvider(ptr ptr long)
 @ stub FsRtlReleaseFile
 @ stub FsRtlRemoveLargeMcbEntry

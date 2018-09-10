@@ -58,7 +58,7 @@ START_TEST(atsvcapi)
     WCHAR server_name[MAX_COMPUTERNAME_LENGTH + 1];
     PTOP_LEVEL_EXCEPTION_FILTER old_exception_filter;
     AT_ENUM_CONTAINER container;
-    AT_INFO info;
+    AT_INFO info, *info2;
     DWORD ret, i, total, start_index, jobid, try, try_count;
     BOOL found;
 
@@ -91,7 +91,6 @@ START_TEST(atsvcapi)
         win_skip("NetrJobAdd: Access denied, skipping the tests\n");
         goto skip_tests;
     }
-todo_wine
     ok(ret == ERROR_SUCCESS || broken(ret == ERROR_NOT_SUPPORTED) /* Win8+ */, "NetrJobAdd error %u\n", ret);
     if (ret == ERROR_NOT_SUPPORTED)
     {
@@ -104,6 +103,13 @@ todo_wine
     /* From now on: if the call fails that's a failure */
     test_failures = 1;
     test_skipped = 0;
+
+    info2 = NULL;
+    ret = NetrJobGetInfo(server_name, 0xdeadbeef, &info2);
+    ok(ret == APE_AT_ID_NOT_FOUND || broken(1) /* vista and w2008 return rubbish here */, "wrong error %u\n", ret);
+
+    ret = NetrJobDel(server_name, 0xdeadbeef, 0xdeadbeef);
+    ok(ret == APE_AT_ID_NOT_FOUND, "wrong error %u\n", ret);
 
     try_count = 5;
 
@@ -128,8 +134,6 @@ todo_wine
 
         for (i = 0; i < container.EntriesRead; i++)
         {
-            AT_INFO *info2;
-
             trace("%u: jobid %u, command %s\n", i, container.Buffer[i].JobId, wine_dbgstr_w(container.Buffer[i].Command));
 
             if (container.Buffer[i].JobId == jobid ||

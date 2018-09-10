@@ -33,10 +33,11 @@
 #include "msi.h"
 #include "msiquery.h"
 #include "msidefs.h"
-#include "msipriv.h"
 #include "objidl.h"
 #include "propvarutil.h"
-#include "msiserver.h"
+
+#include "msipriv.h"
+#include "winemsi.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msi);
 
@@ -522,26 +523,16 @@ UINT WINAPI MsiGetSummaryInformationW( MSIHANDLE hDatabase,
         db = msihandle2msiinfo( hDatabase, MSIHANDLETYPE_DATABASE );
         if( !db )
         {
-            HRESULT hr;
-            IWineMsiRemoteDatabase *remote_database;
+            MSIHANDLE remote, remote_suminfo;
 
-            remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hDatabase );
-            if ( !remote_database )
+            if (!(remote = msi_get_remote(hDatabase)))
                 return ERROR_INVALID_HANDLE;
 
-            hr = IWineMsiRemoteDatabase_GetSummaryInformation( remote_database,
-                                                               uiUpdateCount, pHandle );
-            IWineMsiRemoteDatabase_Release( remote_database );
+            ret = remote_DatabaseGetSummaryInformation(remote, uiUpdateCount, &remote_suminfo);
+            if (!ret)
+                *pHandle = alloc_msi_remote_handle(remote_suminfo);
 
-            if (FAILED(hr))
-            {
-                if (HRESULT_FACILITY(hr) == FACILITY_WIN32)
-                    return HRESULT_CODE(hr);
-
-                return ERROR_FUNCTION_FAILED;
-            }
-
-            return ERROR_SUCCESS;
+            return ret;
         }
     }
 

@@ -1371,16 +1371,46 @@ IRichEditOle_fnGetObject(IRichEditOle *me, LONG iob,
                REOBJECT *lpreobject, DWORD dwFlags)
 {
     IRichEditOleImpl *This = impl_from_IRichEditOle(me);
-    FIXME("stub %p\n",This);
-    return E_NOTIMPL;
+    struct re_object *reobj = NULL;
+    LONG count = 0;
+
+    TRACE("(%p)->(%x, %p, %x)\n", This, iob, lpreobject, dwFlags);
+
+    if (!lpreobject || !lpreobject->cbStruct)
+        return E_INVALIDARG;
+
+    if (iob == REO_IOB_USE_CP)
+    {
+        ME_Cursor cursor;
+
+        TRACE("character offset: %d\n", lpreobject->cp);
+        ME_CursorFromCharOfs(This->editor, lpreobject->cp, &cursor);
+        if (!cursor.pRun->member.run.reobj)
+            return E_INVALIDARG;
+        else
+            reobj = cursor.pRun->member.run.reobj;
+    }
+    else
+    {
+        if (iob > IRichEditOle_GetObjectCount(me))
+            return E_INVALIDARG;
+        LIST_FOR_EACH_ENTRY(reobj, &This->editor->reobj_list, struct re_object, entry)
+        {
+            if (count == iob)
+                break;
+            count++;
+        }
+    }
+    ME_CopyReObject(lpreobject, &reobj->obj, dwFlags);
+    return S_OK;
 }
 
 static LONG WINAPI
 IRichEditOle_fnGetObjectCount(IRichEditOle *me)
 {
     IRichEditOleImpl *This = impl_from_IRichEditOle(me);
-    FIXME("stub %p\n",This);
-    return 0;
+    TRACE("(%p)\n",This);
+    return list_count(&This->editor->reobj_list);
 }
 
 static HRESULT WINAPI
@@ -5284,11 +5314,11 @@ void ME_GetOLEObjectSize(const ME_Context *c, ME_Run *run, SIZE *pSize)
   ENHMETAHEADER emh;
 
   assert(run->nFlags & MERF_GRAPHICS);
-  assert(run->ole_obj);
+  assert(run->reobj);
 
-  if (run->ole_obj->sizel.cx != 0 || run->ole_obj->sizel.cy != 0)
+  if (run->reobj->obj.sizel.cx != 0 || run->reobj->obj.sizel.cy != 0)
   {
-    convert_sizel(c, &run->ole_obj->sizel, pSize);
+    convert_sizel(c, &run->reobj->obj.sizel, pSize);
     if (c->editor->nZoomNumerator != 0)
     {
       pSize->cx = MulDiv(pSize->cx, c->editor->nZoomNumerator, c->editor->nZoomDenominator);
@@ -5297,13 +5327,13 @@ void ME_GetOLEObjectSize(const ME_Context *c, ME_Run *run, SIZE *pSize)
     return;
   }
 
-  if (!run->ole_obj->poleobj)
+  if (!run->reobj->obj.poleobj)
   {
     pSize->cx = pSize->cy = 0;
     return;
   }
 
-  if (IOleObject_QueryInterface(run->ole_obj->poleobj, &IID_IDataObject, (void**)&ido) != S_OK)
+  if (IOleObject_QueryInterface(run->reobj->obj.poleobj, &IID_IDataObject, (void**)&ido) != S_OK)
   {
       FIXME("Query Interface IID_IDataObject failed!\n");
       pSize->cx = pSize->cy = 0;
@@ -5366,13 +5396,13 @@ void ME_DrawOLE(ME_Context *c, int x, int y, ME_Run *run, BOOL selected)
   RECT          rc;
 
   assert(run->nFlags & MERF_GRAPHICS);
-  assert(run->ole_obj);
-  if (IOleObject_QueryInterface(run->ole_obj->poleobj, &IID_IDataObject, (void**)&ido) != S_OK)
+  assert(run->reobj);
+  if (IOleObject_QueryInterface(run->reobj->obj.poleobj, &IID_IDataObject, (void**)&ido) != S_OK)
   {
     FIXME("Couldn't get interface\n");
     return;
   }
-  has_size = run->ole_obj->sizel.cx != 0 || run->ole_obj->sizel.cy != 0;
+  has_size = run->reobj->obj.sizel.cx != 0 || run->reobj->obj.sizel.cy != 0;
   fmt.cfFormat = CF_BITMAP;
   fmt.ptd = NULL;
   fmt.dwAspect = DVASPECT_CONTENT;
@@ -5399,7 +5429,7 @@ void ME_DrawOLE(ME_Context *c, int x, int y, ME_Run *run, BOOL selected)
     old_bm = SelectObject(hMemDC, stgm.u.hBitmap);
     if (has_size)
     {
-      convert_sizel(c, &run->ole_obj->sizel, &sz);
+      convert_sizel(c, &run->reobj->obj.sizel, &sz);
     } else {
       sz.cx = dibsect.dsBm.bmWidth;
       sz.cy = dibsect.dsBm.bmHeight;
@@ -5419,7 +5449,7 @@ void ME_DrawOLE(ME_Context *c, int x, int y, ME_Run *run, BOOL selected)
     GetEnhMetaFileHeader(stgm.u.hEnhMetaFile, sizeof(emh), &emh);
     if (has_size)
     {
-      convert_sizel(c, &run->ole_obj->sizel, &sz);
+      convert_sizel(c, &run->reobj->obj.sizel, &sz);
     } else {
       sz.cx = emh.rclBounds.right - emh.rclBounds.left;
       sz.cy = emh.rclBounds.bottom - emh.rclBounds.top;
@@ -5447,21 +5477,36 @@ void ME_DrawOLE(ME_Context *c, int x, int y, ME_Run *run, BOOL selected)
     PatBlt(c->hDC, x, y - sz.cy, sz.cx, sz.cy, DSTINVERT);
 }
 
-void ME_DeleteReObject(REOBJECT* reo)
+void ME_DeleteReObject(struct re_object *reobj)
 {
-    if (reo->poleobj)   IOleObject_Release(reo->poleobj);
-    if (reo->pstg)      IStorage_Release(reo->pstg);
-    if (reo->polesite)  IOleClientSite_Release(reo->polesite);
-    heap_free(reo);
+    if (reobj->obj.poleobj)   IOleObject_Release(reobj->obj.poleobj);
+    if (reobj->obj.pstg)      IStorage_Release(reobj->obj.pstg);
+    if (reobj->obj.polesite)  IOleClientSite_Release(reobj->obj.polesite);
+    heap_free(reobj);
 }
 
-void ME_CopyReObject(REOBJECT* dst, const REOBJECT* src)
+void ME_CopyReObject(REOBJECT *dst, const REOBJECT *src, DWORD flags)
 {
     *dst = *src;
+    dst->poleobj = NULL;
+    dst->pstg = NULL;
+    dst->polesite = NULL;
 
-    if (dst->poleobj)   IOleObject_AddRef(dst->poleobj);
-    if (dst->pstg)      IStorage_AddRef(dst->pstg);
-    if (dst->polesite)  IOleClientSite_AddRef(dst->polesite);
+    if ((flags & REO_GETOBJ_POLEOBJ) && src->poleobj)
+    {
+        dst->poleobj = src->poleobj;
+        IOleObject_AddRef(dst->poleobj);
+    }
+    if ((flags & REO_GETOBJ_PSTG) && src->pstg)
+    {
+        dst->pstg = src->pstg;
+        IStorage_AddRef(dst->pstg);
+    }
+    if ((flags & REO_GETOBJ_POLESITE) && src->polesite)
+    {
+        dst->polesite = src->polesite;
+        IOleClientSite_AddRef(dst->polesite);
+    }
 }
 
 void ME_GetITextDocumentInterface(IRichEditOle *iface, LPVOID *ppvObj)

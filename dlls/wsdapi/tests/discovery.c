@@ -204,7 +204,7 @@ static void start_listening(messageStorage *msgStorage, const char *multicastAdd
 {
     struct addrinfo *multicastAddr = NULL, *bindAddr = NULL, *interfaceAddr = NULL;
     listenerThreadParams *parameter = NULL;
-    const DWORD receiveTimeout = 5000;
+    const DWORD receiveTimeout = 500;
     const UINT reuseAddr = 1;
     HANDLE hThread;
     SOCKET s = 0;
@@ -241,7 +241,7 @@ static void start_listening(messageStorage *msgStorage, const char *multicastAdd
     if (multicastAddr->ai_family == AF_INET6)
         ((SOCKADDR_IN6 *)multicastAddr->ai_addr)->sin6_scope_id = 0;
 
-    /* Set a 5-second receive timeout */
+    /* Set a 500ms receive timeout */
     if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&receiveTimeout, sizeof(receiveTimeout)) == SOCKET_ERROR) goto cleanup;
 
     /* Allocate memory for thread parameters */
@@ -507,18 +507,29 @@ static void Publish_tests(void)
     messageStorage *msgStorage;
     WSADATA wsaData;
     BOOL messageOK, hello_message_seen = FALSE, endpoint_reference_seen = FALSE, app_sequence_seen = FALSE;
-    BOOL metadata_version_seen = FALSE, any_header_seen = FALSE, wine_ns_seen = FALSE;
+    BOOL metadata_version_seen = FALSE, any_header_seen = FALSE, wine_ns_seen = FALSE, body_hello_seen = FALSE;
+    BOOL any_body_seen = FALSE, types_seen = FALSE, xml_namespaces_seen = FALSE, scopes_seen = FALSE;
+    BOOL xaddrs_seen = FALSE;
     int ret, i;
     HRESULT rc;
     ULONG ref;
     char *msg;
-    WSDXML_ELEMENT *header_any_element;
-    WSDXML_NAME header_any_name;
-    WSDXML_NAMESPACE ns;
+    WSDXML_ELEMENT *header_any_element, *body_any_element, *endpoint_any_element, *ref_param_any_element;
+    WSDXML_NAME header_any_name, another_name;
+    WSDXML_NAMESPACE ns, ns2;
     WCHAR header_any_name_text[] = {'B','e','e','r',0};
+    WCHAR another_name_text[] = {'C','i','d','e','r',0};
     static const WCHAR header_any_text[] = {'P','u','b','l','i','s','h','T','e','s','t',0};
+    static const WCHAR body_any_text[] = {'B','o','d','y','T','e','s','t',0};
+    static const WCHAR endpoint_any_text[] = {'E','n','d','P','T','e','s','t',0};
+    static const WCHAR ref_param_any_text[] = {'R','e','f','P','T','e','s','t',0};
     static const WCHAR uri[] = {'h','t','t','p',':','/','/','w','i','n','e','.','t','e','s','t','/',0};
     static const WCHAR prefix[] = {'w','i','n','e',0};
+    static const WCHAR uri2[] = {'h','t','t','p',':','/','/','m','o','r','e','.','t','e','s','t','s','/',0};
+    static const WCHAR prefix2[] = {'g','r','o','g',0};
+    static const WCHAR uri3[] = {'h','t','t','p',':','/','/','t','h','i','r','d','.','u','r','l','/',0};
+    WSD_NAME_LIST types_list;
+    WSD_URI_LIST scopes_list, xaddrs_list;
 
     rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
     ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
@@ -590,11 +601,52 @@ static void Publish_tests(void)
     rc = WSDXMLBuildAnyForSingleElement(&header_any_name, header_any_text, &header_any_element);
     ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
 
+    rc = WSDXMLBuildAnyForSingleElement(&header_any_name, body_any_text, &body_any_element);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+
+    rc = WSDXMLBuildAnyForSingleElement(&header_any_name, endpoint_any_text, &endpoint_any_element);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+
+    rc = WSDXMLBuildAnyForSingleElement(&header_any_name, ref_param_any_text, &ref_param_any_element);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+
+    /* Create types list */
+    ns2.Uri = uri2;
+    ns2.PreferredPrefix = prefix2;
+
+    another_name.LocalName = another_name_text;
+    another_name.Space = &ns2;
+
+    types_list.Next = malloc(sizeof(WSD_NAME_LIST));
+    types_list.Element = &another_name;
+
+    types_list.Next->Next = NULL;
+    types_list.Next->Element = &header_any_name;
+
+    /* Create scopes and xaddrs lists */
+    scopes_list.Next = malloc(sizeof(WSD_URI_LIST));
+    scopes_list.Element = uri;
+
+    scopes_list.Next->Next = NULL;
+    scopes_list.Next->Element = uri2;
+
+    xaddrs_list.Next = malloc(sizeof(WSD_URI_LIST));
+    xaddrs_list.Element = uri2;
+
+    xaddrs_list.Next->Next = NULL;
+    xaddrs_list.Next->Element = uri3;
+
     /* Publish the service */
-    rc = IWSDiscoveryPublisher_PublishEx(publisher, publisherIdW, 1, 1, 1, sequenceIdW, NULL, NULL, NULL,
-        header_any_element, NULL, NULL, NULL, NULL);
+    rc = IWSDiscoveryPublisher_PublishEx(publisher, publisherIdW, 1, 1, 1, sequenceIdW, &types_list, &scopes_list,
+        &xaddrs_list, header_any_element, ref_param_any_element, NULL, endpoint_any_element, body_any_element);
 
     WSDFreeLinkedMemory(header_any_element);
+    WSDFreeLinkedMemory(body_any_element);
+    WSDFreeLinkedMemory(endpoint_any_element);
+    WSDFreeLinkedMemory(ref_param_any_element);
+    free(types_list.Next);
+    free(scopes_list.Next);
+    free(xaddrs_list.Next);
 
     ok(rc == S_OK, "Publish failed: %08x\n", rc);
 
@@ -611,7 +663,10 @@ static void Publish_tests(void)
     /* Verify we've received a message */
     ok(msgStorage->messageCount >= 1, "No messages received\n");
 
-    sprintf(endpointReferenceString, "<wsa:EndpointReference><wsa:Address>%s</wsa:Address></wsa:EndpointReference>", publisherId);
+    sprintf(endpointReferenceString, "<wsa:EndpointReference><wsa:Address>%s</wsa:Address><wsa:ReferenceParameters>"
+        "<wine:Beer>RefPTest</wine:Beer></wsa:ReferenceParameters><wine:Beer>EndPTest</wine:Beer>"
+        "</wsa:EndpointReference>", publisherId);
+
     sprintf(app_sequence_string, "<wsd:AppSequence InstanceId=\"1\" SequenceId=\"%s\" MessageNumber=\"1\"></wsd:AppSequence>",
         sequenceId);
 
@@ -629,8 +684,15 @@ static void Publish_tests(void)
         metadata_version_seen = (strstr(msg, "<wsd:MetadataVersion>1</wsd:MetadataVersion>") != NULL);
         any_header_seen = (strstr(msg, "<wine:Beer>PublishTest</wine:Beer>") != NULL);
         wine_ns_seen = (strstr(msg, "xmlns:wine=\"http://wine.test/\"") != NULL);
+        body_hello_seen = (strstr(msg, "<soap:Body><wsd:Hello") != NULL);
+        any_body_seen = (strstr(msg, "<wine:Beer>BodyTest</wine:Beer>") != NULL);
+        types_seen = (strstr(msg, "<wsd:Types>grog:Cider wine:Beer</wsd:Types>") != NULL);
+        scopes_seen = (strstr(msg, "<wsd:Scopes>http://wine.test/ http://more.tests/</wsd:Scopes>") != NULL);
+        xaddrs_seen = (strstr(msg, "<wsd:XAddrs>http://more.tests/ http://third.url/</wsd:XAddrs>") != NULL);
+        xml_namespaces_seen = (strstr(msg, "xmlns:wine=\"http://wine.test/\" xmlns:grog=\"http://more.tests/\"") != NULL);
         messageOK = hello_message_seen && endpoint_reference_seen && app_sequence_seen && metadata_version_seen &&
-            any_header_seen && wine_ns_seen;
+            any_header_seen && wine_ns_seen && body_hello_seen && any_body_seen && types_seen && xml_namespaces_seen &&
+            scopes_seen && xaddrs_seen;
 
         if (messageOK) break;
     }
@@ -643,12 +705,18 @@ static void Publish_tests(void)
     heap_free(msgStorage);
 
     ok(hello_message_seen == TRUE, "Hello message not received\n");
-    todo_wine ok(endpoint_reference_seen == TRUE, "EndpointReference not received\n");
+    ok(endpoint_reference_seen == TRUE, "EndpointReference not received\n");
     ok(app_sequence_seen == TRUE, "AppSequence not received\n");
-    todo_wine ok(metadata_version_seen == TRUE, "MetadataVersion not received\n");
-    todo_wine ok(messageOK == TRUE, "Hello message metadata not received\n");
+    ok(metadata_version_seen == TRUE, "MetadataVersion not received\n");
+    ok(messageOK == TRUE, "Hello message metadata not received\n");
     ok(any_header_seen == TRUE, "Custom header not received\n");
     ok(wine_ns_seen == TRUE, "Wine namespace not received\n");
+    ok(body_hello_seen == TRUE, "Body and Hello elements not received\n");
+    ok(any_body_seen == TRUE, "Custom body element not received\n");
+    ok(types_seen == TRUE, "Types not received\n");
+    ok(xml_namespaces_seen == TRUE, "XML namespaces not received\n");
+    ok(scopes_seen == TRUE, "Scopes not received\n");
+    ok(xaddrs_seen == TRUE, "XAddrs not received\n");
 
 after_publish_test:
 
@@ -665,6 +733,143 @@ after_publish_test:
     /* Release the sinks */
     IWSDiscoveryPublisherNotify_Release(sink1);
     IWSDiscoveryPublisherNotify_Release(sink2);
+
+    WSACleanup();
+}
+
+static void UnPublish_tests(void)
+{
+    IWSDiscoveryPublisher *publisher = NULL;
+    IWSDiscoveryPublisherNotify *sink1 = NULL;
+    char endpoint_reference_string[MAX_PATH], app_sequence_string[MAX_PATH];
+    LPWSTR publisherIdW = NULL, sequenceIdW = NULL;
+    messageStorage *msg_storage;
+    WSADATA wsa_data;
+    BOOL message_ok, hello_message_seen = FALSE, endpoint_reference_seen = FALSE, app_sequence_seen = FALSE;
+    BOOL wine_ns_seen = FALSE, body_hello_seen = FALSE, any_body_seen = FALSE;
+    int ret, i;
+    HRESULT rc;
+    ULONG ref;
+    char *msg;
+    WSDXML_ELEMENT *body_any_element;
+    WSDXML_NAME body_any_name;
+    WSDXML_NAMESPACE ns;
+    WCHAR body_any_name_text[] = {'B','e','e','r',0};
+    static const WCHAR body_any_text[] = {'B','o','d','y','T','e','s','t',0};
+    static const WCHAR uri[] = {'h','t','t','p',':','/','/','w','i','n','e','.','t','e','s','t','/',0};
+    static const WCHAR prefix[] = {'w','i','n','e',0};
+
+    rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
+    ok(publisher != NULL, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: publisher == NULL\n");
+
+    rc = IWSDiscoveryPublisher_SetAddressFamily(publisher, WSDAPI_ADDRESSFAMILY_IPV4);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV4) failed: %08x\n", rc);
+
+    /* Create notification sink */
+    ok(create_discovery_publisher_notify(&sink1) == TRUE, "create_discovery_publisher_notify failed\n");
+    rc = IWSDiscoveryPublisher_RegisterNotificationSink(publisher, sink1);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08x\n", rc);
+
+    /* Set up network listener */
+    publisherIdW = utf8_to_wide(publisherId);
+    if (publisherIdW == NULL) goto after_unpublish_test;
+
+    sequenceIdW = utf8_to_wide(sequenceId);
+    if (sequenceIdW == NULL) goto after_unpublish_test;
+
+    msg_storage = heap_alloc_zero(sizeof(messageStorage));
+    if (msg_storage == NULL) goto after_unpublish_test;
+
+    msg_storage->running = TRUE;
+    InitializeCriticalSection(&msg_storage->criticalSection);
+
+    ret = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    ok(ret == 0, "WSAStartup failed (ret = %d)\n", ret);
+
+    ret = start_listening_on_all_addresses(msg_storage, AF_INET);
+    ok(ret == TRUE, "Unable to listen on IPv4 addresses (ret == %d)\n", ret);
+
+    /* Create "any" elements for header */
+    ns.Uri = uri;
+    ns.PreferredPrefix = prefix;
+
+    body_any_name.LocalName = body_any_name_text;
+    body_any_name.Space = &ns;
+
+    rc = WSDXMLBuildAnyForSingleElement(&body_any_name, body_any_text, &body_any_element);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+
+    /* Unpublish the service */
+    rc = IWSDiscoveryPublisher_UnPublish(publisher, publisherIdW, 1, 1, sequenceIdW, body_any_element);
+
+    WSDFreeLinkedMemory(body_any_element);
+
+    ok(rc == S_OK, "Unpublish failed: %08x\n", rc);
+
+    /* Wait up to 2 seconds for messages to be received */
+    if (WaitForMultipleObjects(msg_storage->numThreadHandles, msg_storage->threadHandles, TRUE, 2000) == WAIT_TIMEOUT)
+    {
+        /* Wait up to 1 more second for threads to terminate */
+        msg_storage->running = FALSE;
+        WaitForMultipleObjects(msg_storage->numThreadHandles, msg_storage->threadHandles, TRUE, 1000);
+    }
+
+    DeleteCriticalSection(&msg_storage->criticalSection);
+
+    /* Verify we've received a message */
+    ok(msg_storage->messageCount >= 1, "No messages received\n");
+
+    sprintf(endpoint_reference_string, "<wsa:EndpointReference><wsa:Address>%s</wsa:Address></wsa:EndpointReference>",
+        publisherId);
+    sprintf(app_sequence_string, "<wsd:AppSequence InstanceId=\"1\" SequenceId=\"%s\" MessageNumber=\"1\"></wsd:AppSequence>",
+        sequenceId);
+
+    message_ok = FALSE;
+
+    /* Check we're received the correct message */
+    for (i = 0; i < msg_storage->messageCount; i++)
+    {
+        msg = msg_storage->messages[i];
+        message_ok = FALSE;
+
+        hello_message_seen = (strstr(msg, "<wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Bye</wsa:Action>") != NULL);
+        endpoint_reference_seen = (strstr(msg, endpoint_reference_string) != NULL);
+        app_sequence_seen = (strstr(msg, app_sequence_string) != NULL);
+        wine_ns_seen = (strstr(msg, "xmlns:wine=\"http://wine.test/\"") != NULL);
+        body_hello_seen = (strstr(msg, "<soap:Body><wsd:Bye") != NULL);
+        any_body_seen = (strstr(msg, "<wine:Beer>BodyTest</wine:Beer>") != NULL);
+        message_ok = hello_message_seen && endpoint_reference_seen && app_sequence_seen && wine_ns_seen &&
+            body_hello_seen && any_body_seen;
+
+        if (message_ok) break;
+    }
+
+    for (i = 0; i < msg_storage->messageCount; i++)
+    {
+        heap_free(msg_storage->messages[i]);
+    }
+
+    heap_free(msg_storage);
+
+    ok(hello_message_seen == TRUE, "Bye message not received\n");
+    ok(endpoint_reference_seen == TRUE, "EndpointReference not received\n");
+    ok(app_sequence_seen == TRUE, "AppSequence not received\n");
+    ok(message_ok == TRUE, "Bye message metadata not received\n");
+    ok(wine_ns_seen == TRUE, "Wine namespace not received\n");
+    ok(body_hello_seen == TRUE, "Body and Bye elements not received\n");
+    ok(any_body_seen == TRUE, "Custom body element not received\n");
+
+after_unpublish_test:
+
+    heap_free(publisherIdW);
+    heap_free(sequenceIdW);
+
+    ref = IWSDiscoveryPublisher_Release(publisher);
+    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %d references, should have 0\n", ref);
+
+    /* Release the sinks */
+    IWSDiscoveryPublisherNotify_Release(sink1);
 
     WSACleanup();
 }
@@ -814,6 +1019,7 @@ START_TEST(discovery)
     CreateDiscoveryPublisher_tests();
     CreateDiscoveryPublisher_XMLContext_tests();
     Publish_tests();
+    UnPublish_tests();
 
     CoUninitialize();
     if (firewall_enabled) set_firewall(APP_REMOVE);

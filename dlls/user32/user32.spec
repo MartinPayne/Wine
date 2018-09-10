@@ -2,6 +2,7 @@
 @ stdcall AddClipboardFormatListener(long)
 @ stdcall AdjustWindowRect(ptr long long)
 @ stdcall AdjustWindowRectEx(ptr long long long)
+@ stdcall AdjustWindowRectExForDpi(ptr long long long long)
 @ stdcall AlignRects(ptr long long long)
 # @ stub AllowForegroundActivation
 @ stdcall AllowSetForegroundWindow (long)
@@ -295,6 +296,7 @@
 @ stdcall GetDlgItemTextA(long long ptr long)
 @ stdcall GetDlgItemTextW(long long ptr long)
 @ stdcall GetDoubleClickTime()
+@ stdcall GetDpiForMonitorInternal(long long ptr ptr)
 @ stdcall GetDpiForSystem()
 @ stdcall GetDpiForWindow(long)
 @ stdcall GetFocus()
@@ -506,6 +508,7 @@
 @ stdcall LockWindowUpdate(long)
 @ stdcall LockWorkStation()
 @ stdcall LogicalToPhysicalPoint(long ptr)
+@ stdcall LogicalToPhysicalPointForPerMonitorDPI(long ptr)
 @ stdcall LookupIconIdFromDirectory(ptr long)
 @ stdcall LookupIconIdFromDirectoryEx(ptr long long long long)
 @ stub MBToWCSEx
@@ -557,6 +560,7 @@
 @ stdcall PeekMessageA(ptr long long long long)
 @ stdcall PeekMessageW(ptr long long long long)
 @ stdcall PhysicalToLogicalPoint(long ptr)
+@ stdcall PhysicalToLogicalPointForPerMonitorDPI(long ptr)
 @ stub PlaySoundEvent
 @ stdcall PostMessageA(long long long long)
 @ stdcall PostMessageW(long long long long)

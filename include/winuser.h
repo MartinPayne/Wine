@@ -2148,6 +2148,16 @@ typedef struct tagCBTACTIVATESTRUCT
 } CBTACTIVATESTRUCT, *LPCBTACTIVATESTRUCT;
 
 
+typedef struct tagDROPSTRUCT
+{
+    HWND      hwndSource;
+    HWND      hwndSink;
+    DWORD     wFmt;
+    ULONG_PTR dwData;
+    POINT     ptDrop;
+    DWORD     dwControlData;
+} DROPSTRUCT, *PDROPSTRUCT, *LPDROPSTRUCT;
+
 /* modifiers for RegisterHotKey */
 #define	MOD_ALT		0x0001
 #define	MOD_CONTROL	0x0002
@@ -3369,6 +3379,7 @@ WINUSERAPI HKL         WINAPI ActivateKeyboardLayout(HKL,UINT);
 WINUSERAPI BOOL        WINAPI AddClipboardFormatListener(HWND);
 WINUSERAPI BOOL        WINAPI AdjustWindowRect(LPRECT,DWORD,BOOL);
 WINUSERAPI BOOL        WINAPI AdjustWindowRectEx(LPRECT,DWORD,BOOL,DWORD);
+WINUSERAPI BOOL        WINAPI AdjustWindowRectExForDpi(RECT*,DWORD,BOOL,DWORD,UINT);
 WINUSERAPI BOOL        WINAPI AllowSetForegroundWindow(DWORD);
 WINUSERAPI BOOL        WINAPI AnimateWindow(HWND,DWORD,DWORD);
 #define                       AnsiLowerA CharLowerA
@@ -3677,6 +3688,7 @@ WINUSERAPI UINT        WINAPI GetDlgItemTextA(HWND,INT,LPSTR,INT);
 WINUSERAPI UINT        WINAPI GetDlgItemTextW(HWND,INT,LPWSTR,INT);
 #define                       GetDlgItemText WINELIB_NAME_AW(GetDlgItemText)
 WINUSERAPI UINT        WINAPI GetDoubleClickTime(void);
+WINUSERAPI BOOL        WINAPI GetDpiForMonitorInternal(HMONITOR,UINT,UINT*,UINT*);
 WINUSERAPI UINT        WINAPI GetDpiForWindow(HWND);
 WINUSERAPI UINT        WINAPI GetDpiForSystem(void);
 WINUSERAPI HWND        WINAPI GetFocus(void);
@@ -3894,6 +3906,7 @@ WINUSERAPI INT         WINAPI LoadStringA(HINSTANCE,UINT,LPSTR,INT);
 WINUSERAPI INT         WINAPI LoadStringW(HINSTANCE,UINT,LPWSTR,INT);
 #define                       LoadString WINELIB_NAME_AW(LoadString)
 WINUSERAPI BOOL        WINAPI LogicalToPhysicalPoint(HWND,POINT*);
+WINUSERAPI BOOL        WINAPI LogicalToPhysicalPointForPerMonitorDPI(HWND,POINT*);
 WINUSERAPI BOOL        WINAPI LockSetForegroundWindow(UINT);
 WINUSERAPI BOOL        WINAPI LockWindowUpdate(HWND);
 WINUSERAPI BOOL        WINAPI LockWorkStation(void);
@@ -3949,6 +3962,7 @@ WINUSERAPI BOOL        WINAPI PeekMessageA(LPMSG,HWND,UINT,UINT,UINT);
 WINUSERAPI BOOL        WINAPI PeekMessageW(LPMSG,HWND,UINT,UINT,UINT);
 #define                       PeekMessage WINELIB_NAME_AW(PeekMessage)
 WINUSERAPI BOOL        WINAPI PhysicalToLogicalPoint(HWND,POINT*);
+WINUSERAPI BOOL        WINAPI PhysicalToLogicalPointForPerMonitorDPI(HWND,POINT*);
 #define                       PostAppMessageA(thread,msg,wparam,lparam) PostThreadMessageA((DWORD)(thread),msg,wparam,lparam)
 #define                       PostAppMessageW(thread,msg,wparam,lparam) PostThreadMessageW((DWORD)(thread),msg,wparam,lparam)
 #define                       PostAppMessage WINELIB_NAME_AW(PostAppMessage)

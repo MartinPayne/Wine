@@ -961,25 +961,26 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_RSSetViewports(ID3D11Devic
         UINT viewport_count, const D3D11_VIEWPORT *viewports)
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
-    struct wined3d_viewport wined3d_vp;
+    struct wined3d_viewport wined3d_vp[WINED3D_MAX_VIEWPORTS];
+    unsigned int i;
 
     TRACE("iface %p, viewport_count %u, viewports %p.\n", iface, viewport_count, viewports);
 
-    if (viewport_count > 1)
-        FIXME("Multiple viewports not implemented.\n");
-
-    if (!viewport_count)
+    if (viewport_count > ARRAY_SIZE(wined3d_vp))
         return;
 
-    wined3d_vp.x = viewports[0].TopLeftX;
-    wined3d_vp.y = viewports[0].TopLeftY;
-    wined3d_vp.width = viewports[0].Width;
-    wined3d_vp.height = viewports[0].Height;
-    wined3d_vp.min_z = viewports[0].MinDepth;
-    wined3d_vp.max_z = viewports[0].MaxDepth;
+    for (i = 0; i < viewport_count; ++i)
+    {
+        wined3d_vp[i].x = viewports[i].TopLeftX;
+        wined3d_vp[i].y = viewports[i].TopLeftY;
+        wined3d_vp[i].width = viewports[i].Width;
+        wined3d_vp[i].height = viewports[i].Height;
+        wined3d_vp[i].min_z = viewports[i].MinDepth;
+        wined3d_vp[i].max_z = viewports[i].MaxDepth;
+    }
 
     wined3d_mutex_lock();
-    wined3d_device_set_viewport(device->wined3d_device, &wined3d_vp);
+    wined3d_device_set_viewports(device->wined3d_device, viewport_count, wined3d_vp);
     wined3d_mutex_unlock();
 }
 
@@ -990,14 +991,11 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_RSSetScissorRects(ID3D11De
 
     TRACE("iface %p, rect_count %u, rects %p.\n", iface, rect_count, rects);
 
-    if (rect_count > 1)
-        FIXME("Multiple scissor rects not implemented.\n");
-
-    if (!rect_count)
+    if (rect_count > WINED3D_MAX_VIEWPORTS)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_set_scissor_rect(device->wined3d_device, rects);
+    wined3d_device_set_scissor_rects(device->wined3d_device, rect_count, rects);
     wined3d_mutex_unlock();
 }
 
@@ -2092,55 +2090,62 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_RSGetViewports(ID3D11Devic
         UINT *viewport_count, D3D11_VIEWPORT *viewports)
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
-    struct wined3d_viewport wined3d_vp;
+    struct wined3d_viewport wined3d_vp[WINED3D_MAX_VIEWPORTS];
+    unsigned int actual_count = ARRAY_SIZE(wined3d_vp), i;
 
     TRACE("iface %p, viewport_count %p, viewports %p.\n", iface, viewport_count, viewports);
 
-    if (!viewports)
-    {
-        *viewport_count = 1;
-        return;
-    }
-
-    if (!*viewport_count)
+    if (!viewport_count)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_get_viewport(device->wined3d_device, &wined3d_vp);
+    wined3d_device_get_viewports(device->wined3d_device, &actual_count, viewports ? wined3d_vp : NULL);
     wined3d_mutex_unlock();
 
-    viewports[0].TopLeftX = wined3d_vp.x;
-    viewports[0].TopLeftY = wined3d_vp.y;
-    viewports[0].Width = wined3d_vp.width;
-    viewports[0].Height = wined3d_vp.height;
-    viewports[0].MinDepth = wined3d_vp.min_z;
-    viewports[0].MaxDepth = wined3d_vp.max_z;
+    if (!viewports)
+    {
+        *viewport_count = actual_count;
+        return;
+    }
 
-    if (*viewport_count > 1)
-        memset(&viewports[1], 0, (*viewport_count - 1) * sizeof(*viewports));
+    if (*viewport_count > actual_count)
+        memset(&viewports[actual_count], 0, (*viewport_count - actual_count) * sizeof(*viewports));
+
+    *viewport_count = min(actual_count, *viewport_count);
+    for (i = 0; i < *viewport_count; ++i)
+    {
+        viewports[i].TopLeftX = wined3d_vp[i].x;
+        viewports[i].TopLeftY = wined3d_vp[i].y;
+        viewports[i].Width = wined3d_vp[i].width;
+        viewports[i].Height = wined3d_vp[i].height;
+        viewports[i].MinDepth = wined3d_vp[i].min_z;
+        viewports[i].MaxDepth = wined3d_vp[i].max_z;
+    }
 }
 
 static void STDMETHODCALLTYPE d3d11_immediate_context_RSGetScissorRects(ID3D11DeviceContext *iface,
         UINT *rect_count, D3D11_RECT *rects)
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext(iface);
+    unsigned int actual_count;
 
     TRACE("iface %p, rect_count %p, rects %p.\n", iface, rect_count, rects);
 
-    if (!rects)
-    {
-        *rect_count = 1;
-        return;
-    }
-
-    if (!*rect_count)
+    if (!rect_count)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_get_scissor_rect(device->wined3d_device, rects);
+    wined3d_device_get_scissor_rects(device->wined3d_device, &actual_count, rects);
     wined3d_mutex_unlock();
-    if (*rect_count > 1)
-        memset(&rects[1], 0, (*rect_count - 1) * sizeof(*rects));
+
+    if (!rects)
+    {
+        *rect_count = actual_count;
+        return;
+    }
+
+    if (*rect_count > actual_count)
+        memset(&rects[actual_count], 0, (*rect_count - actual_count) * sizeof(*rects));
 }
 
 static void STDMETHODCALLTYPE d3d11_immediate_context_HSGetShaderResources(ID3D11DeviceContext *iface,
@@ -3512,7 +3517,7 @@ static UINT STDMETHODCALLTYPE d3d11_device_GetCreationFlags(ID3D11Device *iface)
 
 static HRESULT STDMETHODCALLTYPE d3d11_device_GetDeviceRemovedReason(ID3D11Device *iface)
 {
-    FIXME("iface %p stub!\n", iface);
+    WARN("iface %p stub!\n", iface);
 
     return S_OK;
 }
@@ -4149,25 +4154,26 @@ static void STDMETHODCALLTYPE d3d10_device_RSSetViewports(ID3D10Device1 *iface,
         UINT viewport_count, const D3D10_VIEWPORT *viewports)
 {
     struct d3d_device *device = impl_from_ID3D10Device(iface);
-    struct wined3d_viewport wined3d_vp;
+    struct wined3d_viewport wined3d_vp[WINED3D_MAX_VIEWPORTS];
+    unsigned int i;
 
     TRACE("iface %p, viewport_count %u, viewports %p.\n", iface, viewport_count, viewports);
 
-    if (viewport_count > 1)
-        FIXME("Multiple viewports not implemented.\n");
-
-    if (!viewport_count)
+    if (viewport_count > ARRAY_SIZE(wined3d_vp))
         return;
 
-    wined3d_vp.x = viewports[0].TopLeftX;
-    wined3d_vp.y = viewports[0].TopLeftY;
-    wined3d_vp.width = viewports[0].Width;
-    wined3d_vp.height = viewports[0].Height;
-    wined3d_vp.min_z = viewports[0].MinDepth;
-    wined3d_vp.max_z = viewports[0].MaxDepth;
+    for (i = 0; i < viewport_count; ++i)
+    {
+        wined3d_vp[i].x = viewports[i].TopLeftX;
+        wined3d_vp[i].y = viewports[i].TopLeftY;
+        wined3d_vp[i].width = viewports[i].Width;
+        wined3d_vp[i].height = viewports[i].Height;
+        wined3d_vp[i].min_z = viewports[i].MinDepth;
+        wined3d_vp[i].max_z = viewports[i].MaxDepth;
+    }
 
     wined3d_mutex_lock();
-    wined3d_device_set_viewport(device->wined3d_device, &wined3d_vp);
+    wined3d_device_set_viewports(device->wined3d_device, viewport_count, wined3d_vp);
     wined3d_mutex_unlock();
 }
 
@@ -4178,14 +4184,11 @@ static void STDMETHODCALLTYPE d3d10_device_RSSetScissorRects(ID3D10Device1 *ifac
 
     TRACE("iface %p, rect_count %u, rects %p.\n", iface, rect_count, rects);
 
-    if (rect_count > 1)
-        FIXME("Multiple scissor rects not implemented.\n");
-
-    if (!rect_count)
+    if (rect_count > WINED3D_MAX_VIEWPORTS)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_set_scissor_rect(device->wined3d_device, rects);
+    wined3d_device_set_scissor_rects(device->wined3d_device, rect_count, rects);
     wined3d_mutex_unlock();
 }
 
@@ -4893,54 +4896,61 @@ static void STDMETHODCALLTYPE d3d10_device_RSGetViewports(ID3D10Device1 *iface,
         UINT *viewport_count, D3D10_VIEWPORT *viewports)
 {
     struct d3d_device *device = impl_from_ID3D10Device(iface);
-    struct wined3d_viewport wined3d_vp;
+    struct wined3d_viewport wined3d_vp[WINED3D_MAX_VIEWPORTS];
+    unsigned int actual_count = ARRAY_SIZE(wined3d_vp), i;
 
     TRACE("iface %p, viewport_count %p, viewports %p.\n", iface, viewport_count, viewports);
 
-    if (!viewports)
-    {
-        *viewport_count = 1;
-        return;
-    }
-
-    if (!*viewport_count)
+    if (!viewport_count)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_get_viewport(device->wined3d_device, &wined3d_vp);
+    wined3d_device_get_viewports(device->wined3d_device, &actual_count, viewports ? wined3d_vp : NULL);
     wined3d_mutex_unlock();
 
-    viewports[0].TopLeftX = wined3d_vp.x;
-    viewports[0].TopLeftY = wined3d_vp.y;
-    viewports[0].Width = wined3d_vp.width;
-    viewports[0].Height = wined3d_vp.height;
-    viewports[0].MinDepth = wined3d_vp.min_z;
-    viewports[0].MaxDepth = wined3d_vp.max_z;
+    if (!viewports)
+    {
+        *viewport_count = actual_count;
+        return;
+    }
 
-    if (*viewport_count > 1)
-        memset(&viewports[1], 0, (*viewport_count - 1) * sizeof(*viewports));
+    if (*viewport_count > actual_count)
+        memset(&viewports[actual_count], 0, (*viewport_count - actual_count) * sizeof(*viewports));
+
+    *viewport_count = min(actual_count, *viewport_count);
+    for (i = 0; i < *viewport_count; ++i)
+    {
+        viewports[i].TopLeftX = wined3d_vp[i].x;
+        viewports[i].TopLeftY = wined3d_vp[i].y;
+        viewports[i].Width = wined3d_vp[i].width;
+        viewports[i].Height = wined3d_vp[i].height;
+        viewports[i].MinDepth = wined3d_vp[i].min_z;
+        viewports[i].MaxDepth = wined3d_vp[i].max_z;
+    }
 }
 
 static void STDMETHODCALLTYPE d3d10_device_RSGetScissorRects(ID3D10Device1 *iface, UINT *rect_count, D3D10_RECT *rects)
 {
     struct d3d_device *device = impl_from_ID3D10Device(iface);
+    unsigned int actual_count;
 
     TRACE("iface %p, rect_count %p, rects %p.\n", iface, rect_count, rects);
 
-    if (!rects)
-    {
-        *rect_count = 1;
-        return;
-    }
-
-    if (!*rect_count)
+    if (!rect_count)
         return;
 
     wined3d_mutex_lock();
-    wined3d_device_get_scissor_rect(device->wined3d_device, rects);
+    wined3d_device_get_scissor_rects(device->wined3d_device, &actual_count, rects);
     wined3d_mutex_unlock();
-    if (*rect_count > 1)
-        memset(&rects[1], 0, (*rect_count - 1) * sizeof(*rects));
+
+    if (!rects)
+    {
+        *rect_count = actual_count;
+        return;
+    }
+
+    if (*rect_count > actual_count)
+        memset(&rects[actual_count], 0, (*rect_count - actual_count) * sizeof(*rects));
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_device_GetDeviceRemovedReason(ID3D10Device1 *iface)

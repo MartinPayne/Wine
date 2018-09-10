@@ -2,6 +2,7 @@
  * Test suite for Task interface
  *
  * Copyright (C) 2008 Google (Roy Shea)
+ * Copyright (C) 2018 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -35,10 +36,6 @@ static BOOL setup_trigger(void)
     HRESULT hres;
     const WCHAR task_name[] = {'T','e','s','t','i','n','g', 0};
 
-    hres = CoCreateInstance(&CLSID_CTaskScheduler, NULL, CLSCTX_INPROC_SERVER,
-            &IID_ITaskScheduler, (void **) &test_task_scheduler);
-    if(hres != S_OK)
-        return FALSE;
     hres = ITaskScheduler_NewWorkItem(test_task_scheduler, task_name,
             &CLSID_CTask, &IID_ITask, (IUnknown**)&test_task);
     if(hres != S_OK)
@@ -60,7 +57,6 @@ static void cleanup_trigger(void)
 {
     ITaskTrigger_Release(test_trigger);
     ITask_Release(test_task);
-    ITaskScheduler_Release(test_task_scheduler);
 }
 
 static BOOL compare_trigger_state(TASK_TRIGGER found_state,
@@ -376,10 +372,125 @@ static void test_SetTrigger_GetTrigger(void)
     return;
 }
 
+static void test_task_trigger(void)
+{
+    static const WCHAR task_name[] = { 'T','e','s','t','i','n','g',0 };
+    HRESULT hr;
+    ITask *task;
+    ITaskTrigger *trigger, *trigger2;
+    WORD count, idx;
+    DWORD ref;
+
+    hr = ITaskScheduler_NewWorkItem(test_task_scheduler, task_name, &CLSID_CTask,
+                                    &IID_ITask, (IUnknown **)&task);
+    ok(hr == S_OK, "got %#x\n", hr);
+
+    count = 0xdead;
+    hr = ITask_GetTriggerCount(task, &count);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(count == 0, "got %u\n", count);
+
+    hr = ITask_DeleteTrigger(task, 0);
+    ok(hr == SCHED_E_TRIGGER_NOT_FOUND, "got %#x\n", hr);
+
+    hr = ITask_GetTrigger(task, 0, &trigger);
+    ok(hr == SCHED_E_TRIGGER_NOT_FOUND, "got %#x\n", hr);
+
+    idx = 0xdead;
+    hr = ITask_CreateTrigger(task, &idx, &trigger);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(idx == 0, "got %u\n", idx);
+
+    hr = ITask_GetTrigger(task, 0, &trigger2);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(trigger != trigger2, "%p != %p\n", trigger, trigger2);
+
+    ref = ITaskTrigger_Release(trigger2);
+    ok(ref == 0, "got %u\n", ref);
+
+    ref = ITaskTrigger_Release(trigger);
+    ok(ref == 0, "got %u\n", ref);
+
+    count = 0xdead;
+    hr = ITask_GetTriggerCount(task, &count);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(count == 1, "got %u\n", count);
+
+    hr = ITask_DeleteTrigger(task, 0);
+    ok(hr == S_OK, "got %#x\n", hr);
+
+    idx = 0xdead;
+    hr = ITask_CreateTrigger(task, &idx, &trigger);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(idx == 0, "got %u\n", idx);
+
+    hr = ITask_DeleteTrigger(task, 0);
+    ok(hr == S_OK, "got %#x\n", hr);
+
+    count = 0xdead;
+    hr = ITask_GetTriggerCount(task, &count);
+    ok(hr == S_OK, "got %#x\n", hr);
+    ok(count == 0, "got %u\n", count);
+
+    ref = ITaskTrigger_Release(trigger);
+    ok(ref == 0, "got %u\n", ref);
+
+    ref = ITask_Release(task);
+    ok(ref == 0, "got %u\n", ref);
+}
+
+static void test_GetNextRunTime(void)
+{
+    static const WCHAR task_name[] = { 'T','e','s','t','i','n','g',0 };
+    static const SYSTEMTIME st_empty;
+    HRESULT hr;
+    ITask *task;
+    ITaskTrigger *trigger;
+    WORD idx;
+    SYSTEMTIME st;
+
+    hr = ITaskScheduler_NewWorkItem(test_task_scheduler, task_name, &CLSID_CTask,
+                                    &IID_ITask, (IUnknown **)&task);
+    ok(hr == S_OK, "got %#x\n", hr);
+
+    if (0) /* crashes under Windows */
+        hr = ITask_GetNextRunTime(task, NULL);
+
+    memset(&st, 0xff, sizeof(st));
+    hr = ITask_GetNextRunTime(task, &st);
+    ok(hr == SCHED_S_TASK_NO_VALID_TRIGGERS, "got %#x\n", hr);
+    ok(!memcmp(&st, &st_empty, sizeof(st)), "got %d/%d/%d wday %d %d:%d:%d.%03d\n",
+       st.wDay, st.wMonth, st.wYear, st.wDayOfWeek,
+       st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+    hr = ITask_CreateTrigger(task, &idx, &trigger);
+    ok(hr == S_OK, "got %#x\n", hr);
+
+    memset(&st, 0xff, sizeof(st));
+    hr = ITask_GetNextRunTime(task, &st);
+    ok(hr == SCHED_S_TASK_NO_VALID_TRIGGERS, "got %#x\n", hr);
+    ok(!memcmp(&st, &st_empty, sizeof(st)), "got %d/%d/%d wday %d %d:%d:%d.%03d\n",
+       st.wDay, st.wMonth, st.wYear, st.wDayOfWeek,
+       st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+    ITaskTrigger_Release(trigger);
+    ITask_Release(task);
+}
 
 START_TEST(task_trigger)
 {
+    HRESULT hr;
+
     CoInitialize(NULL);
+
+    hr = CoCreateInstance(&CLSID_CTaskScheduler, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ITaskScheduler, (void **)&test_task_scheduler);
+    ok(hr == S_OK, "error creating TaskScheduler instance %#x\n", hr);
+
     test_SetTrigger_GetTrigger();
+    test_task_trigger();
+    test_GetNextRunTime();
+
+    ITaskScheduler_Release(test_task_scheduler);
     CoUninitialize();
 }

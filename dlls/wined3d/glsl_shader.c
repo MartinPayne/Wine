@@ -804,11 +804,12 @@ static void append_transform_feedback_skip_components(const char **varyings,
     }
 }
 
-static void shader_glsl_generate_transform_feedback_varyings(const struct wined3d_stream_output_desc *so_desc,
+static BOOL shader_glsl_generate_transform_feedback_varyings(const struct wined3d_stream_output_desc *so_desc,
         struct wined3d_string_buffer *buffer, const char **varyings, unsigned int *varying_count,
         char *strings, unsigned int *strings_length, GLenum buffer_mode)
 {
     unsigned int i, buffer_idx, count, length, highest_output_slot, stride;
+    BOOL have_varyings_to_record = FALSE;
 
     count = length = 0;
     highest_output_slot = 0;
@@ -858,6 +859,8 @@ static void shader_glsl_generate_transform_feedback_varyings(const struct wined3
                 string_buffer_sprintf(buffer, "shader_in_out.reg%u", e->register_idx);
                 append_transform_feedback_varying(varyings, &count, &strings, &length, buffer);
             }
+
+            have_varyings_to_record = TRUE;
         }
 
         if (buffer_idx < so_desc->buffer_stride_count
@@ -882,10 +885,12 @@ static void shader_glsl_generate_transform_feedback_varyings(const struct wined3
         *varying_count = count;
     if (strings_length)
         *strings_length = length;
+
+    return have_varyings_to_record;
 }
 
 static void shader_glsl_init_transform_feedback(const struct wined3d_context *context,
-        struct shader_glsl_priv *priv, GLuint program_id, const struct wined3d_shader *shader)
+        struct shader_glsl_priv *priv, GLuint program_id, struct wined3d_shader *shader)
 {
     const struct wined3d_stream_output_desc *so_desc = &shader->u.gs.so_desc;
     const struct wined3d_gl_info *gl_info = context->gl_info;
@@ -941,7 +946,12 @@ static void shader_glsl_init_transform_feedback(const struct wined3d_context *co
 
     buffer = string_buffer_get(&priv->string_buffers);
 
-    shader_glsl_generate_transform_feedback_varyings(so_desc, buffer, NULL, &count, NULL, &length, mode);
+    if (!shader_glsl_generate_transform_feedback_varyings(so_desc, buffer, NULL, &count, NULL, &length, mode))
+    {
+        FIXME("No varyings to record, disabling transform feedback.\n");
+        shader->u.gs.so_desc.element_count = 0;
+        return;
+    }
 
     if (!(varyings = heap_calloc(count, sizeof(*varyings))))
     {
@@ -1756,7 +1766,7 @@ static void shader_glsl_load_constants(void *shader_priv, struct wined3d_context
     const struct wined3d_shader *pshader = state->shader[WINED3D_SHADER_TYPE_PIXEL];
     const struct wined3d_gl_info *gl_info = context->gl_info;
     struct shader_glsl_priv *priv = shader_priv;
-    float position_fixup[4];
+    float position_fixup[4 * WINED3D_MAX_VIEWPORTS];
     DWORD update_mask;
 
     struct glsl_shader_prog_link *prog = ctx_data->glsl_program;
@@ -1793,9 +1803,11 @@ static void shader_glsl_load_constants(void *shader_priv, struct wined3d_context
 
     if (update_mask & WINED3D_SHADER_CONST_POS_FIXUP)
     {
-        shader_get_position_fixup(context, state, position_fixup);
+        unsigned int fixup_count = state->shader[WINED3D_SHADER_TYPE_GEOMETRY] ?
+                max(state->viewport_count, 1) : 1;
+        shader_get_position_fixup(context, state, fixup_count, position_fixup);
         if (state->shader[WINED3D_SHADER_TYPE_GEOMETRY])
-            GL_EXTCALL(glUniform4fv(prog->gs.pos_fixup_location, 1, position_fixup));
+            GL_EXTCALL(glUniform4fv(prog->gs.pos_fixup_location, fixup_count, position_fixup));
         else if (state->shader[WINED3D_SHADER_TYPE_DOMAIN])
             GL_EXTCALL(glUniform4fv(prog->ds.pos_fixup_location, 1, position_fixup));
         else
@@ -3806,7 +3818,7 @@ static void PRINTF_ATTR(9, 10) shader_glsl_gen_sample_code(const struct wined3d_
         shader_glsl_color_correction(ins, fixup);
 }
 
-static void shader_glsl_fixup_position(struct wined3d_string_buffer *buffer)
+static void shader_glsl_fixup_position(struct wined3d_string_buffer *buffer, BOOL use_viewport_index)
 {
     /* Write the final position.
      *
@@ -3815,8 +3827,16 @@ static void shader_glsl_fixup_position(struct wined3d_string_buffer *buffer)
      * pos_fixup. pos_fixup.y contains 1.0 or -1.0 to turn the rendering
      * upside down for offscreen rendering. pos_fixup.x contains 1.0 to allow
      * a MAD. */
-    shader_addline(buffer, "gl_Position.y = gl_Position.y * pos_fixup.y;\n");
-    shader_addline(buffer, "gl_Position.xy += pos_fixup.zw * gl_Position.ww;\n");
+    if (use_viewport_index)
+    {
+        shader_addline(buffer, "gl_Position.y = gl_Position.y * pos_fixup[gl_ViewportIndex].y;\n");
+        shader_addline(buffer, "gl_Position.xy += pos_fixup[gl_ViewportIndex].zw * gl_Position.ww;\n");
+    }
+    else
+    {
+        shader_addline(buffer, "gl_Position.y = gl_Position.y * pos_fixup.y;\n");
+        shader_addline(buffer, "gl_Position.xy += pos_fixup.zw * gl_Position.ww;\n");
+    }
 
     /* Z coord [0;1]->[-1;1] mapping, see comment in get_projection_matrix()
      * in utils.c
@@ -5142,10 +5162,11 @@ static void shader_glsl_else(const struct wined3d_shader_instruction *ins)
 static void shader_glsl_emit(const struct wined3d_shader_instruction *ins)
 {
     unsigned int stream = ins->handler_idx == WINED3DSIH_EMIT ? 0 : ins->src[0].reg.idx[0].offset;
+    const struct wined3d_shader_reg_maps *reg_maps = ins->ctx->reg_maps;
 
     shader_addline(ins->ctx->buffer, "setup_gs_output(gs_out);\n");
     if (!ins->ctx->gl_info->supported[ARB_CLIP_CONTROL])
-        shader_glsl_fixup_position(ins->ctx->buffer);
+        shader_glsl_fixup_position(ins->ctx->buffer, reg_maps->viewport_array);
 
     if (!stream)
         shader_addline(ins->ctx->buffer, "EmitVertex();\n");
@@ -6766,6 +6787,14 @@ static void shader_glsl_input_pack(const struct wined3d_shader *shader, struct w
                 else
                     FIXME("ARB_fragment_layer_viewport is not supported.\n");
             }
+            else if (input->sysval_semantic == WINED3D_SV_VIEWPORT_ARRAY_INDEX && !semantic_idx)
+            {
+                if (gl_info->supported[ARB_VIEWPORT_ARRAY])
+                    shader_addline(buffer, "ps_in[%u]%s = intBitsToFloat(gl_ViewportIndex);\n",
+                            input->register_idx, reg_mask);
+                else
+                    FIXME("ARB_viewport_array is not supported.\n");
+            }
             else
             {
                 if (input->sysval_semantic)
@@ -7055,6 +7084,11 @@ static void shader_glsl_setup_sm3_rasterizer_input(struct shader_glsl_priv *priv
         else if (output->sysval_semantic == WINED3D_SV_RENDER_TARGET_ARRAY_INDEX && !semantic_idx)
         {
             shader_addline(buffer, "gl_Layer = floatBitsToInt(outputs[%u])%s;\n",
+                    output->register_idx, reg_mask);
+        }
+        else if (output->sysval_semantic == WINED3D_SV_VIEWPORT_ARRAY_INDEX && !semantic_idx)
+        {
+            shader_addline(buffer, "gl_ViewportIndex = floatBitsToInt(outputs[%u])%s;\n",
                     output->register_idx, reg_mask);
         }
         else if (output->sysval_semantic == WINED3D_SV_CLIP_DISTANCE)
@@ -7491,6 +7525,8 @@ static void shader_glsl_enable_extensions(struct wined3d_string_buffer *buffer,
         shader_addline(buffer, "#extension GL_ARB_texture_query_levels : enable\n");
     if (gl_info->supported[ARB_UNIFORM_BUFFER_OBJECT])
         shader_addline(buffer, "#extension GL_ARB_uniform_buffer_object : enable\n");
+    if (gl_info->supported[ARB_VIEWPORT_ARRAY])
+        shader_addline(buffer, "#extension GL_ARB_viewport_array : enable\n");
     if (gl_info->supported[EXT_GPU_SHADER4])
         shader_addline(buffer, "#extension GL_EXT_gpu_shader4 : enable\n");
     if (gl_info->supported[EXT_TEXTURE_ARRAY])
@@ -7830,7 +7866,7 @@ static void shader_glsl_generate_vs_epilogue(const struct wined3d_gl_info *gl_in
         shader_addline(buffer, "gl_PointSize = clamp(ffp_point.size, ffp_point.size_min, ffp_point.size_max);\n");
 
     if (args->next_shader_type == WINED3D_SHADER_TYPE_PIXEL && !gl_info->supported[ARB_CLIP_CONTROL])
-        shader_glsl_fixup_position(buffer);
+        shader_glsl_fixup_position(buffer, FALSE);
 }
 
 /* Context activation is done by the caller. */
@@ -8068,7 +8104,7 @@ static void shader_glsl_generate_ds_epilogue(const struct wined3d_gl_info *gl_in
     shader_addline(buffer, "setup_ds_output(ds_out);\n");
 
     if (args->next_shader_type == WINED3D_SHADER_TYPE_PIXEL && !gl_info->supported[ARB_CLIP_CONTROL])
-        shader_glsl_fixup_position(buffer);
+        shader_glsl_fixup_position(buffer, FALSE);
 }
 
 static GLuint shader_glsl_generate_domain_shader(const struct wined3d_context *context,
@@ -8172,7 +8208,11 @@ static GLuint shader_glsl_generate_geometry_shader(const struct wined3d_context 
     const struct wined3d_shader_reg_maps *reg_maps = &shader->reg_maps;
     struct wined3d_string_buffer *buffer = &priv->shader_buffer;
     const struct wined3d_gl_info *gl_info = context->gl_info;
+    const struct wined3d_shader_signature_element *output;
+    enum wined3d_primitive_type primitive_type;
     struct shader_glsl_ctx_priv priv_ctx;
+    unsigned int max_vertices;
+    unsigned int i, j;
     GLuint shader_id;
 
     memset(&priv_ctx, 0, sizeof(priv_ctx));
@@ -8184,16 +8224,42 @@ static GLuint shader_glsl_generate_geometry_shader(const struct wined3d_context 
 
     shader_generate_glsl_declarations(context, buffer, shader, reg_maps, &priv_ctx);
 
-    shader_addline(buffer, "layout(%s", glsl_primitive_type_from_d3d(shader->u.gs.input_type));
+    primitive_type = shader->u.gs.input_type ? shader->u.gs.input_type : args->primitive_type;
+    shader_addline(buffer, "layout(%s", glsl_primitive_type_from_d3d(primitive_type));
     if (shader->u.gs.instance_count > 1)
         shader_addline(buffer, ", invocations = %u", shader->u.gs.instance_count);
     shader_addline(buffer, ") in;\n");
+
+    primitive_type = shader->u.gs.output_type ? shader->u.gs.output_type : args->primitive_type;
+    if (!(max_vertices = shader->u.gs.vertices_out))
+    {
+        switch (args->primitive_type)
+        {
+            case WINED3D_PT_POINTLIST:
+                max_vertices = 1;
+                break;
+            case WINED3D_PT_LINELIST:
+                max_vertices = 2;
+                break;
+            case WINED3D_PT_TRIANGLELIST:
+                max_vertices = 3;
+                break;
+            default:
+                FIXME("Unhandled primitive type %s.\n", debug_d3dprimitivetype(args->primitive_type));
+                break;
+        }
+    }
     shader_addline(buffer, "layout(%s, max_vertices = %u) out;\n",
-            glsl_primitive_type_from_d3d(shader->u.gs.output_type), shader->u.gs.vertices_out);
+            glsl_primitive_type_from_d3d(primitive_type), max_vertices);
     shader_addline(buffer, "in shader_in_out { vec4 reg[%u]; } shader_in[];\n", shader->limits->packed_input);
 
     if (!gl_info->supported[ARB_CLIP_CONTROL])
-        shader_addline(buffer, "uniform vec4 pos_fixup;\n");
+    {
+        shader_addline(buffer, "uniform vec4 pos_fixup");
+        if (reg_maps->viewport_array)
+            shader_addline(buffer, "[%u]", WINED3D_MAX_VIEWPORTS);
+        shader_addline(buffer, ";\n");
+    }
 
     if (is_rasterization_disabled(shader))
     {
@@ -8204,9 +8270,29 @@ static GLuint shader_glsl_generate_geometry_shader(const struct wined3d_context 
         shader_glsl_generate_sm4_output_setup(priv, shader, args->output_count,
                 gl_info, TRUE, args->interpolation_mode);
     }
+
     shader_addline(buffer, "void main()\n{\n");
-    if (FAILED(shader_generate_code(shader, buffer, reg_maps, &priv_ctx, NULL, NULL)))
-        return 0;
+    if (shader->function)
+    {
+        if (FAILED(shader_generate_code(shader, buffer, reg_maps, &priv_ctx, NULL, NULL)))
+            return 0;
+    }
+    else
+    {
+        for (i = 0; i < max_vertices; ++i)
+        {
+            for (j = 0; j < shader->output_signature.element_count; ++j)
+            {
+                output = &shader->output_signature.elements[j];
+                shader_addline(buffer, "gs_out[%u] = shader_in[%u].reg[%u];\n",
+                        output->register_idx, i, output->register_idx);
+            }
+            shader_addline(buffer, "setup_gs_output(gs_out);\n");
+            if (!gl_info->supported[ARB_CLIP_CONTROL])
+                shader_glsl_fixup_position(buffer, FALSE);
+            shader_addline(buffer, "EmitVertex();\n");
+        }
+    }
     shader_addline(buffer, "}\n");
 
     shader_id = GL_EXTCALL(glCreateShader(GL_GEOMETRY_SHADER));
@@ -12246,8 +12332,8 @@ static GLuint glsl_blitter_generate_program(struct wined3d_glsl_blitter *blitter
         "\n"
         "void main()\n"
         "{\n";
+    struct wined3d_string_buffer *buffer, *string;
     GLuint program, vshader_id, fshader_id;
-    struct wined3d_string_buffer *buffer;
     const char *tex_type, *swizzle, *ptr;
     unsigned int i;
 
@@ -12290,9 +12376,14 @@ static GLuint glsl_blitter_generate_program(struct wined3d_glsl_blitter *blitter
     declare_in_varying(gl_info, buffer, FALSE, "vec3 out_texcoord;\n");
     if (!needs_legacy_glsl_syntax(gl_info))
         shader_addline(buffer, "out vec4 ps_out[1];\n");
+
     shader_addline(buffer, fshader_header);
-    shader_addline(buffer, "    %s[0] = texture%s(sampler, out_texcoord.%s);\n",
-            get_fragment_output(gl_info), needs_legacy_glsl_syntax(gl_info) ? tex_type : "", swizzle);
+    string = string_buffer_get(&blitter->string_buffers);
+    string_buffer_sprintf(string, "%s[0]", get_fragment_output(gl_info));
+    shader_addline(buffer, "    %s = texture%s(sampler, out_texcoord.%s);\n",
+            string->buffer, needs_legacy_glsl_syntax(gl_info) ? tex_type : "", swizzle);
+    shader_glsl_color_correction_ext(buffer, string->buffer, WINED3DSP_WRITEMASK_ALL, args->fixup);
+    string_buffer_release(&blitter->string_buffers, string);
     shader_addline(buffer, "}\n");
 
     ptr = buffer->buffer;
@@ -12390,6 +12481,9 @@ static BOOL glsl_blitter_supported(enum wined3d_blit_op blit_op, const struct wi
         return FALSE;
     }
 
+    if (src_resource->type != WINED3D_RTYPE_TEXTURE_2D)
+        return FALSE;
+
     if (src_texture->target == GL_TEXTURE_2D_MULTISAMPLE
             || dst_texture->target == GL_TEXTURE_2D_MULTISAMPLE
             || src_texture->target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY
@@ -12399,11 +12493,9 @@ static BOOL glsl_blitter_supported(enum wined3d_blit_op blit_op, const struct wi
         return FALSE;
     }
 
-    /* FIXME: We never want to blit from resources without
+    /* We don't necessarily want to blit from resources without
      * WINED3D_RESOURCE_ACCESS_GPU, but that may be the only way to decompress
-     * compressed textures. We should probably create an explicit staging
-     * texture for this purpose instead of loading the resource into an
-     * invalid location. */
+     * compressed textures. */
     decompress = src_format && (src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED)
             && !(dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED);
     if (!decompress && !(src_resource->access & dst_resource->access & WINED3D_RESOURCE_ACCESS_GPU))
@@ -12412,9 +12504,9 @@ static BOOL glsl_blitter_supported(enum wined3d_blit_op blit_op, const struct wi
         return FALSE;
     }
 
-    if (!is_identity_fixup(src_format->color_fixup))
+    if (is_complex_fixup(src_format->color_fixup))
     {
-        TRACE("Source fixups are not supported.\n");
+        TRACE("Complex source fixups are not supported.\n");
         return FALSE;
     }
 
@@ -12436,8 +12528,10 @@ static DWORD glsl_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bli
 {
     struct wined3d_device *device = dst_texture->resource.device;
     const struct wined3d_gl_info *gl_info = context->gl_info;
+    struct wined3d_texture *staging_texture = NULL;
     struct wined3d_glsl_blitter *glsl_blitter;
     struct wined3d_blitter *next;
+    unsigned int src_level;
     GLuint program_id;
     RECT s, d;
 
@@ -12462,12 +12556,45 @@ static DWORD glsl_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bli
 
     glsl_blitter = CONTAINING_RECORD(blitter, struct wined3d_glsl_blitter, blitter);
 
-    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
+    if (!(src_texture->resource.access & WINED3D_RESOURCE_ACCESS_GPU))
+    {
+        struct wined3d_resource_desc desc;
+        struct wined3d_box upload_box;
+        HRESULT hr;
+
+        TRACE("Source texture is not GPU accessible, creating a staging texture.\n");
+
+        src_level = src_sub_resource_idx % src_texture->level_count;
+        desc.resource_type = WINED3D_RTYPE_TEXTURE_2D;
+        desc.format = src_texture->resource.format->id;
+        desc.multisample_type = src_texture->resource.multisample_type;
+        desc.multisample_quality = src_texture->resource.multisample_quality;
+        desc.usage = WINED3DUSAGE_PRIVATE;
+        desc.access = WINED3D_RESOURCE_ACCESS_GPU;
+        desc.width = wined3d_texture_get_level_width(src_texture, src_level);
+        desc.height = wined3d_texture_get_level_height(src_texture, src_level);
+        desc.depth = 1;
+        desc.size = 0;
+
+        if (FAILED(hr = wined3d_texture_create(device, &desc, 1, 1, 0,
+                NULL, NULL, &wined3d_null_parent_ops, &staging_texture)))
+        {
+            ERR("Failed to create staging texture, hr %#x.\n", hr);
+            return dst_location;
+        }
+
+        wined3d_box_set(&upload_box, 0, 0, desc.width, desc.height, 0, desc.depth);
+        wined3d_texture_upload_from_texture(staging_texture, 0, 0, 0, 0,
+                src_texture, src_sub_resource_idx, &upload_box);
+
+        src_texture = staging_texture;
+        src_sub_resource_idx = 0;
+    }
+    else if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
             && (src_texture->sub_resources[src_sub_resource_idx].locations
             & (WINED3D_LOCATION_TEXTURE_RGB | WINED3D_LOCATION_DRAWABLE)) == WINED3D_LOCATION_DRAWABLE
             && !wined3d_resource_is_offscreen(&src_texture->resource))
     {
-        unsigned int src_level = src_sub_resource_idx % src_texture->level_count;
 
         /* Without FBO blits transferring from the drawable to the texture is
          * expensive, because we have to flip the data in sysmem. Since we can
@@ -12477,6 +12604,7 @@ static DWORD glsl_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bli
         texture2d_load_fb_texture(src_texture, src_sub_resource_idx, FALSE, context);
 
         s = *src_rect;
+        src_level = src_sub_resource_idx % src_texture->level_count;
         s.top = wined3d_texture_get_level_height(src_texture, src_level) - s.top;
         s.bottom = wined3d_texture_get_level_height(src_texture, src_level) - s.bottom;
         src_rect = &s;
@@ -12528,6 +12656,9 @@ static DWORD glsl_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bli
     if (dst_texture->swapchain && (dst_texture->swapchain->front_buffer == dst_texture))
         gl_info->gl_ops.gl.p_glFlush();
 
+    if (staging_texture)
+        wined3d_texture_decref(staging_texture);
+
     return dst_location;
 }
 
@@ -12558,9 +12689,6 @@ void wined3d_glsl_blitter_create(struct wined3d_blitter **next, const struct win
         return;
 
     if (!gl_info->supported[ARB_VERTEX_SHADER] || !gl_info->supported[ARB_FRAGMENT_SHADER])
-        return;
-
-    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
         return;
 
     if (!(blitter = heap_alloc(sizeof(*blitter))))

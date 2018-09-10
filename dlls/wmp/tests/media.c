@@ -303,6 +303,13 @@ static BOOL test_wmp(void)
     static DWORD dw = 100;
     IWMPSettings *settings;
     BOOL test_ran = TRUE;
+    IWMPNetwork *network;
+    DOUBLE duration;
+    VARIANT_BOOL vbool;
+    LONG progress;
+    IWMPMedia *media;
+    static const WCHAR currentPosition[] = {'c','u','r','r','e','n','t','P','o','s','i','t','i','o','n',0};
+    BSTR bstrcurrentPosition = SysAllocString(currentPosition);
 
     hres = CoCreateInstance(&CLSID_WindowsMediaPlayer, NULL, CLSCTX_INPROC_SERVER, &IID_IOleObject, (void**)&oleobj);
     if(hres == REGDB_E_CLASSNOTREG) {
@@ -331,15 +338,24 @@ static BOOL test_wmp(void)
 
     hres = IWMPSettings_put_autoStart(settings, VARIANT_FALSE);
     ok(hres == S_OK, "Could not put autoStart in IWMPSettings: %08x\n", hres);
-    IWMPSettings_Release(settings);
 
     controls = NULL;
     hres = IWMPPlayer4_get_controls(player4, &controls);
     ok(hres == S_OK, "get_controls failed: %08x\n", hres);
     ok(controls != NULL, "controls = NULL\n");
 
+    hres = IWMPControls_get_isAvailable(controls, bstrcurrentPosition, &vbool);
+    ok(hres == S_OK, "IWMPControls_get_isAvailable failed: %08x\n", hres);
+    ok(vbool == VARIANT_FALSE, "unexpected value\n");
+
     hres = IWMPControls_play(controls);
     ok(hres == NS_S_WMPCORE_COMMAND_NOT_AVAILABLE, "IWMPControls_play is available: %08x\n", hres);
+
+    hres = IWMPSettings_put_volume(settings, 36);
+    ok(hres == S_OK, "IWMPSettings_put_volume failed: %08x\n", hres);
+    hres = IWMPSettings_get_volume(settings, &progress);
+    ok(hres == S_OK, "IWMPSettings_get_volume failed: %08x\n", hres);
+    ok(progress == 36, "unexpected value: %d\n", progress);
 
     filename = SysAllocString(load_resource(mp3file));
 
@@ -364,7 +380,7 @@ static BOOL test_wmp(void)
     SET_EXPECT(OPENSTATE, wmposMediaOpening);
     hres = IWMPControls_play(controls);
     ok(hres == S_OK, "IWMPControls_play failed: %08x\n", hres);
-    res = pump_messages(5000, 1, &playing_event);
+    res = pump_messages(1000, 1, &playing_event);
     ok(res == WAIT_OBJECT_0 || broken(res == WAIT_TIMEOUT), "Timed out while waiting for media to become ready\n");
     if (res == WAIT_TIMEOUT) {
         /* This happens on Vista Ultimate 64 vms
@@ -379,6 +395,47 @@ static BOOL test_wmp(void)
     CHECK_CALLED(PLAYSTATE, wmppsTransitioning);
     /* MediaOpening happens only on xp, 2003 */
     CLEAR_CALLED(OPENSTATE, wmposMediaOpening);
+
+    hres = IWMPControls_get_isAvailable(controls, bstrcurrentPosition, &vbool);
+    ok(hres == S_OK, "IWMPControls_get_isAvailable failed: %08x\n", hres);
+    ok(vbool == VARIANT_TRUE, "unexpected value\n");
+
+    duration = 0.0;
+    hres = IWMPControls_get_currentPosition(controls, &duration);
+    ok(hres == S_OK, "IWMPControls_get_currentPosition failed: %08x\n", hres);
+    ok((int)duration == 0, "unexpected value %f\n", duration);
+
+    duration = 1.1;
+    hres = IWMPControls_put_currentPosition(controls, duration);
+    ok(hres == S_OK, "IWMPControls_put_currentPosition failed: %08x\n", hres);
+
+    duration = 0.0;
+    hres = IWMPControls_get_currentPosition(controls, &duration);
+    ok(hres == S_OK, "IWMPControls_get_currentPosition failed: %08x\n", hres);
+    /* builtin quartz does not handle this currently and resets to 0.0, works
+     * with native quartz */
+    todo_wine ok(duration >= 1.05 /* save some fp errors */, "unexpected value %f\n", duration);
+
+    hres = IWMPPlayer4_get_currentMedia(player4, &media);
+    ok(hres == S_OK, "IWMPPlayer4_get_currentMedia failed: %08x\n", hres);
+    hres = IWMPMedia_get_duration(media, &duration);
+    ok(hres == S_OK, "IWMPMedia_get_duration failed: %08x\n", hres);
+    ok(round(duration) == 3, "unexpected value: %f\n", duration);
+    IWMPMedia_Release(media);
+
+    network = NULL;
+    hres = IWMPPlayer4_get_network(player4, &network);
+    ok(hres == S_OK, "get_network failed: %08x\n", hres);
+    ok(network != NULL, "network = NULL\n");
+    progress = 0;
+    hres = IWMPNetwork_get_bufferingProgress(network, &progress);
+    ok(hres == S_OK || broken(hres == S_FALSE), "IWMPNetwork_get_bufferingProgress failed: %08x\n", hres);
+    ok(progress == 100, "unexpected value: %d\n", progress);
+    progress = 0;
+    hres = IWMPNetwork_get_downloadProgress(network, &progress);
+    ok(hres == S_OK, "IWMPNetwork_get_downloadProgress failed: %08x\n", hres);
+    ok(progress == 100, "unexpected value: %d\n", progress);
+    IWMPNetwork_Release(network);
 
     SET_EXPECT(PLAYSTATE, wmppsStopped);
     /* The following happens on wine only since we close media on stop */
@@ -408,12 +465,23 @@ playback_skip:
     hres = IConnectionPoint_Unadvise(point, dw);
     ok(hres == S_OK, "Unadvise failed: %08x\n", hres);
 
+    hres = IWMPSettings_get_volume(settings, &progress);
+    ok(hres == S_OK, "IWMPSettings_get_volume failed: %08x\n", hres);
+    ok(progress == 36, "unexpected value: %d\n", progress);
+    hres = IWMPSettings_put_volume(settings, 99);
+    ok(hres == S_OK, "IWMPSettings_put_volume failed: %08x\n", hres);
+    hres = IWMPSettings_get_volume(settings, &progress);
+    ok(hres == S_OK, "IWMPSettings_get_volume failed: %08x\n", hres);
+    ok(progress == 99, "unexpected value: %d\n", progress);
+
     IConnectionPoint_Release(point);
+    IWMPSettings_Release(settings);
     IWMPControls_Release(controls);
     IWMPPlayer4_Release(player4);
     IOleObject_Release(oleobj);
     DeleteFileW(filename);
     SysFreeString(filename);
+    SysFreeString(bstrcurrentPosition);
 
     return test_ran;
 }

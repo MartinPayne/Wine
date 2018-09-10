@@ -31,8 +31,6 @@
 #include "msi.h"
 #include "msidefs.h"
 #include "msiquery.h"
-#include "msipriv.h"
-#include "msiserver.h"
 #include "wincrypt.h"
 #include "winver.h"
 #include "winuser.h"
@@ -41,6 +39,9 @@
 #include "objidl.h"
 #include "wintrust.h"
 #include "softpub.h"
+
+#include "msipriv.h"
+#include "winemsi.h"
 
 #include "initguid.h"
 #include "msxml2.h"
@@ -2004,27 +2005,21 @@ UINT WINAPI MsiEnumComponentCostsW( MSIHANDLE handle, LPCWSTR component, DWORD i
     if (!drive || !buflen || !cost || !temp) return ERROR_INVALID_PARAMETER;
     if (!(package = msihandle2msiinfo( handle, MSIHANDLETYPE_PACKAGE )))
     {
-        HRESULT hr;
-        IWineMsiRemotePackage *remote_package;
-        BSTR bname = NULL;
+        WCHAR buffer[3];
+        MSIHANDLE remote;
 
-        if (!(remote_package = (IWineMsiRemotePackage *)msi_get_remote( handle )))
+        if (!(remote = msi_get_remote(handle)))
             return ERROR_INVALID_HANDLE;
 
-        if (component && !(bname = SysAllocString( component )))
+        r = remote_EnumComponentCosts(remote, component, index, state, buffer, cost, temp);
+        if (r == ERROR_SUCCESS)
         {
-            IWineMsiRemotePackage_Release( remote_package );
-            return ERROR_OUTOFMEMORY;
+            lstrcpynW(drive, buffer, *buflen);
+            if (*buflen < 3)
+                r = ERROR_MORE_DATA;
+            *buflen = 2;
         }
-        hr = IWineMsiRemotePackage_EnumComponentCosts( remote_package, bname, index, state, drive, buflen, cost, temp );
-        IWineMsiRemotePackage_Release( remote_package );
-        SysFreeString( bname );
-        if (FAILED(hr))
-        {
-            if (HRESULT_FACILITY(hr) == FACILITY_WIN32) return HRESULT_CODE(hr);
-            return ERROR_FUNCTION_FAILED;
-        }
-        return ERROR_SUCCESS;
+        return r;
     }
 
     if (!msi_get_property_int( package->db, szCostingComplete, 0 ))

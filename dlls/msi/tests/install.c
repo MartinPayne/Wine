@@ -695,14 +695,28 @@ static const CHAR wrv_component_dat[] = "Component\tComponentId\tDirectory_\tAtt
 static const CHAR ca1_install_exec_seq_dat[] = "Action\tCondition\tSequence\n"
                                                "s72\tS255\tI2\n"
                                                "InstallExecuteSequence\tAction\n"
+                                               "CostInitialize\t\t100\n"
+                                               "FileCost\t\t200\n"
+                                               "CostFinalize\t\t300\n"
+                                               "InstallValidate\t\t400\n"
+                                               "embednull\t\t600\n"
                                                "maintest\tMAIN_TEST\t700\n"
                                                "testretval\tTEST_RETVAL\t710\n";
 
 static const CHAR ca1_custom_action_dat[] = "Action\tType\tSource\tTarget\n"
                                              "s72\ti2\tS64\tS0\n"
                                              "CustomAction\tAction\n"
+                                             "embednull\t51\tembednullprop\ta[~]b\n"
+                                             "nested51\t51\tnested\t1\n"
+                                             "nested1\t1\tcustom.dll\tnested\n"
                                              "maintest\t1\tcustom.dll\tmain_test\n"
                                              "testretval\t1\tcustom.dll\ttest_retval\n";
+
+static const CHAR ca1_test_seq_dat[] = "Action\tCondition\tSequence\n"
+                                       "s72\tS255\tI2\n"
+                                       "TestSequence\tAction\n"
+                                       "nested1\t\t1\n"
+                                       "nested51\t\t2\n";
 
 static const CHAR ca51_component_dat[] = "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
                                          "s72\tS38\ts72\ti2\tS255\tS72\n"
@@ -1699,9 +1713,16 @@ static const msi_table sf_tables[] =
 
 static const msi_table ca1_tables[] =
 {
+    ADD_TABLE(component),
+    ADD_TABLE(directory),
+    ADD_TABLE(feature),
+    ADD_TABLE(feature_comp),
+    ADD_TABLE(file),
     ADD_TABLE(property),
+    ADD_TABLE(directory),
     ADD_TABLE(ca1_install_exec_seq),
     ADD_TABLE(ca1_custom_action),
+    ADD_TABLE(ca1_test_seq),
 };
 
 static const msi_table ca51_tables[] =
@@ -4106,10 +4127,25 @@ static INT CALLBACK ok_callback(void *context, UINT message_type, MSIHANDLE reco
 
 static void test_customaction1(void)
 {
+    MSIHANDLE hdb, record;
     UINT r;
 
+    create_test_files();
     create_database(msifile, ca1_tables, sizeof(ca1_tables) / sizeof(msi_table));
     add_custom_dll();
+
+    /* create a test table */
+    MsiOpenDatabaseW(msifileW, MSIDBOPEN_TRANSACT, &hdb);
+    run_query(hdb, 0, "CREATE TABLE `Test` (`Name` CHAR(10), `Number` INTEGER, `Data` OBJECT PRIMARY KEY `Name`)");
+    create_file("unus", 10);
+    create_file("duo", 10);
+    record = MsiCreateRecord(1);
+    MsiRecordSetStreamA(record, 1, "unus");
+    run_query(hdb, record, "INSERT INTO `Test` (`Name`, `Number`, `Data`) VALUES ('one', 1, ?)");
+    MsiRecordSetStreamA(record, 1, "duo");
+    run_query(hdb, record, "INSERT INTO `Test` (`Name`, `Number`, `Data`) VALUES ('two', 2, ?)");
+    MsiDatabaseCommit(hdb);
+    MsiCloseHandle(hdb);
 
     MsiSetInternalUI(INSTALLUILEVEL_NONE, NULL);
 
@@ -4133,7 +4169,10 @@ static void test_customaction1(void)
     r = MsiInstallProductA(msifile, "TEST_RETVAL=1");
     ok(r == ERROR_INSTALL_FAILURE, "Expected ERROR_INSTALL_FAILURE, got %u\n", r);
 
+    delete_test_files();
     DeleteFileA(msifile);
+    DeleteFileA("unus");
+    DeleteFileA("duo");
 }
 
 static void test_customaction51(void)

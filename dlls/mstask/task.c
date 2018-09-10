@@ -33,14 +33,38 @@ WINE_DEFAULT_DEBUG_CHANNEL(mstask);
 
 typedef struct
 {
+    USHORT product_version;
+    USHORT file_version;
+    UUID uuid;
+    USHORT name_size_offset;
+    USHORT trigger_offset;
+    USHORT error_retry_count;
+    USHORT error_retry_interval;
+    USHORT idle_deadline;
+    USHORT idle_wait;
+    UINT priority;
+    UINT maximum_runtime;
+    UINT exit_code;
+    HRESULT status;
+    UINT flags;
+    SYSTEMTIME last_runtime;
+} FIXDLEN_DATA;
+
+typedef struct
+{
     ITask ITask_iface;
     IPersistFile IPersistFile_iface;
     LONG ref;
     ITaskDefinition *task;
     IExecAction *action;
     LPWSTR task_name;
-    DWORD maxRunTime;
+    HRESULT status;
+    WORD idle_minutes, deadline_minutes;
+    DWORD priority, maxRunTime;
     LPWSTR accountName;
+    DWORD trigger_count;
+    TASK_TRIGGER *trigger;
+    BOOL is_dirty;
 } TaskImpl;
 
 static inline TaskImpl *impl_from_ITask(ITask *iface)
@@ -59,9 +83,10 @@ static void TaskDestructor(TaskImpl *This)
     if (This->action)
         IExecAction_Release(This->action);
     ITaskDefinition_Release(This->task);
-    HeapFree(GetProcessHeap(), 0, This->task_name);
-    HeapFree(GetProcessHeap(), 0, This->accountName);
-    HeapFree(GetProcessHeap(), 0, This);
+    heap_free(This->task_name);
+    heap_free(This->accountName);
+    heap_free(This->trigger);
+    heap_free(This);
     InterlockedDecrement(&dll_ref);
 }
 
@@ -117,38 +142,81 @@ static ULONG WINAPI MSTASK_ITask_Release(
     return ref;
 }
 
-static HRESULT WINAPI MSTASK_ITask_CreateTrigger(
-        ITask* iface,
-        WORD *piNewTrigger,
-        ITaskTrigger **ppTrigger)
+static HRESULT WINAPI MSTASK_ITask_CreateTrigger(ITask *iface, WORD *idx, ITaskTrigger **task_trigger)
 {
-    TRACE("(%p, %p, %p)\n", iface, piNewTrigger, ppTrigger);
-    return TaskTriggerConstructor((LPVOID *)ppTrigger);
+    TaskImpl *This = impl_from_ITask(iface);
+    TASK_TRIGGER *new_trigger;
+    HRESULT hr;
+
+    TRACE("(%p, %p, %p)\n", iface, idx, task_trigger);
+
+    hr = TaskTriggerConstructor((void **)task_trigger);
+    if (hr != S_OK) return hr;
+
+    if (This->trigger)
+        new_trigger = heap_realloc(This->trigger, sizeof(This->trigger[0]) * (This->trigger_count + 1));
+    else
+        new_trigger = heap_alloc(sizeof(This->trigger[0]));
+    if (!new_trigger)
+    {
+        ITaskTrigger_Release(*task_trigger);
+        return E_OUTOFMEMORY;
+    }
+
+    This->trigger = new_trigger;
+
+    hr = ITaskTrigger_GetTrigger(*task_trigger, &This->trigger[This->trigger_count]);
+    if (hr == S_OK)
+        *idx = This->trigger_count++;
+
+    return hr;
 }
 
-static HRESULT WINAPI MSTASK_ITask_DeleteTrigger(
-        ITask* iface,
-        WORD iTrigger)
+static HRESULT WINAPI MSTASK_ITask_DeleteTrigger(ITask *iface, WORD idx)
 {
-    FIXME("(%p, %d): stub\n", iface, iTrigger);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %u)\n", iface, idx);
+
+    if (idx >= This->trigger_count)
+        return SCHED_E_TRIGGER_NOT_FOUND;
+
+    This->trigger_count--;
+    memmove(&This->trigger[idx], &This->trigger[idx + 1], (This->trigger_count - idx) * sizeof(This->trigger[0]));
+    /* this shouldn't fail in practice since we're shrinking the memory block */
+    This->trigger = heap_realloc(This->trigger, sizeof(This->trigger[0]) * This->trigger_count);
+
+    return S_OK;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetTriggerCount(
-        ITask* iface,
-        WORD *plCount)
+static HRESULT WINAPI MSTASK_ITask_GetTriggerCount(ITask *iface, WORD *count)
 {
-    FIXME("(%p, %p): stub\n", iface, plCount);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p)\n", iface, count);
+
+    *count = This->trigger_count;
+    return S_OK;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetTrigger(
-        ITask* iface,
-        WORD iTrigger,
-        ITaskTrigger **ppTrigger)
+static HRESULT WINAPI MSTASK_ITask_GetTrigger(ITask *iface, WORD idx, ITaskTrigger **trigger)
 {
-    FIXME("(%p, %d, %p): stub\n", iface, iTrigger, ppTrigger);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+    HRESULT hr;
+
+    TRACE("(%p, %u, %p)\n", iface, idx, trigger);
+
+    if (idx >= This->trigger_count)
+        return SCHED_E_TRIGGER_NOT_FOUND;
+
+    hr = TaskTriggerConstructor((void **)trigger);
+    if (hr != S_OK) return hr;
+
+    hr = ITaskTrigger_SetTrigger(*trigger, &This->trigger[idx]);
+    if (hr != S_OK)
+        ITaskTrigger_Release(*trigger);
+
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITask_GetTriggerString(
@@ -172,12 +240,12 @@ static HRESULT WINAPI MSTASK_ITask_GetRunTimes(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetNextRunTime(
-        ITask* iface,
-        SYSTEMTIME *pstNextRun)
+static HRESULT WINAPI MSTASK_ITask_GetNextRunTime(ITask *iface, SYSTEMTIME *st)
 {
-    FIXME("(%p, %p): stub\n", iface, pstNextRun);
-    return E_NOTIMPL;
+    FIXME("(%p, %p): stub\n", iface, st);
+
+    memset(st, 0, sizeof(*st));
+    return SCHED_S_TASK_NO_VALID_TRIGGERS;
 }
 
 static HRESULT WINAPI MSTASK_ITask_SetIdleWait(
@@ -189,13 +257,15 @@ static HRESULT WINAPI MSTASK_ITask_SetIdleWait(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetIdleWait(
-        ITask* iface,
-        WORD *pwIdleMinutes,
-        WORD *pwDeadlineMinutes)
+static HRESULT WINAPI MSTASK_ITask_GetIdleWait(ITask *iface, WORD *idle_minutes, WORD *deadline_minutes)
 {
-    FIXME("(%p, %p, %p): stub\n", iface, pwIdleMinutes, pwDeadlineMinutes);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p, %p): stub\n", iface, idle_minutes, deadline_minutes);
+
+    *idle_minutes = This->idle_minutes;
+    *deadline_minutes = This->deadline_minutes;
+    return S_OK;
 }
 
 static HRESULT WINAPI MSTASK_ITask_Run(
@@ -221,28 +291,30 @@ static HRESULT WINAPI MSTASK_ITask_EditWorkItem(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetMostRecentRunTime(
-        ITask* iface,
-        SYSTEMTIME *pstLastRun)
+static HRESULT WINAPI MSTASK_ITask_GetMostRecentRunTime(ITask *iface, SYSTEMTIME *st)
 {
-    FIXME("(%p, %p): stub\n", iface, pstLastRun);
-    return E_NOTIMPL;
+    FIXME("(%p, %p): stub\n", iface, st);
+
+    memset(st, 0, sizeof(*st));
+    return SCHED_S_TASK_HAS_NOT_RUN;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetStatus(
-        ITask* iface,
-        HRESULT *phrStatus)
+static HRESULT WINAPI MSTASK_ITask_GetStatus(ITask *iface, HRESULT *status)
 {
-    FIXME("(%p, %p): stub\n", iface, phrStatus);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p)\n", iface, status);
+
+    *status = This->status;
+    return S_OK;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetExitCode(
-        ITask* iface,
-        DWORD *pdwExitCode)
+static HRESULT WINAPI MSTASK_ITask_GetExitCode(ITask *iface, DWORD *exit_code)
 {
-    FIXME("(%p, %p): stub\n", iface, pdwExitCode);
-    return E_NOTIMPL;
+    FIXME("(%p, %p): stub\n", iface, exit_code);
+
+    *exit_code = 0;
+    return SCHED_S_TASK_HAS_NOT_RUN;
 }
 
 static HRESULT WINAPI MSTASK_ITask_SetComment(ITask *iface, LPCWSTR comment)
@@ -261,6 +333,7 @@ static HRESULT WINAPI MSTASK_ITask_SetComment(ITask *iface, LPCWSTR comment)
     {
         hr = IRegistrationInfo_put_Description(info, (BSTR)comment);
         IRegistrationInfo_Release(info);
+        This->is_dirty = TRUE;
     }
     return hr;
 }
@@ -317,6 +390,7 @@ static HRESULT WINAPI MSTASK_ITask_SetCreator(ITask *iface, LPCWSTR creator)
     {
         hr = IRegistrationInfo_put_Author(info, (BSTR)creator);
         IRegistrationInfo_Release(info);
+        This->is_dirty = TRUE;
     }
     return hr;
 }
@@ -383,11 +457,9 @@ static HRESULT WINAPI MSTASK_ITask_SetErrorRetryCount(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetErrorRetryCount(
-        ITask* iface,
-        WORD *pwRetryCount)
+static HRESULT WINAPI MSTASK_ITask_GetErrorRetryCount(ITask *iface, WORD *count)
 {
-    FIXME("(%p, %p): stub\n", iface, pwRetryCount);
+    TRACE("(%p, %p)\n", iface, count);
     return E_NOTIMPL;
 }
 
@@ -399,11 +471,9 @@ static HRESULT WINAPI MSTASK_ITask_SetErrorRetryInterval(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetErrorRetryInterval(
-        ITask* iface,
-        WORD *pwRetryInterval)
+static HRESULT WINAPI MSTASK_ITask_GetErrorRetryInterval(ITask *iface, WORD *interval)
 {
-    FIXME("(%p, %p): stub\n", iface, pwRetryInterval);
+    TRACE("(%p, %p)\n", iface, interval);
     return E_NOTIMPL;
 }
 
@@ -412,7 +482,7 @@ static HRESULT WINAPI MSTASK_ITask_SetFlags(
         DWORD dwFlags)
 {
     FIXME("(%p, 0x%08x): stub\n", iface, dwFlags);
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI MSTASK_ITask_GetFlags(ITask *iface, DWORD *flags)
@@ -438,12 +508,13 @@ static HRESULT WINAPI MSTASK_ITask_SetAccountInformation(
         FIXME("Partial stub ignores passwords\n");
 
     n = (lstrlenW(pwszAccountName) + 1);
-    tmp_account_name = HeapAlloc(GetProcessHeap(), 0, n * sizeof(WCHAR));
+    tmp_account_name = heap_alloc(n * sizeof(WCHAR));
     if (!tmp_account_name)
         return E_OUTOFMEMORY;
     lstrcpyW(tmp_account_name, pwszAccountName);
-    HeapFree(GetProcessHeap(), 0, This->accountName);
+    heap_free(This->accountName);
     This->accountName = tmp_account_name;
+    This->is_dirty = TRUE;
     return S_OK;
 }
 
@@ -473,6 +544,7 @@ static HRESULT WINAPI MSTASK_ITask_SetApplicationName(ITask *iface, LPCWSTR appn
 {
     TaskImpl *This = impl_from_ITask(iface);
     DWORD len;
+    HRESULT hr;
 
     TRACE("(%p, %s)\n", iface, debugstr_w(appname));
 
@@ -485,23 +557,27 @@ static HRESULT WINAPI MSTASK_ITask_SetApplicationName(ITask *iface, LPCWSTR appn
     if (len)
     {
         LPWSTR tmp_name;
-        HRESULT hr;
 
-        tmp_name = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+        tmp_name = heap_alloc(len * sizeof(WCHAR));
         if (!tmp_name)
             return E_OUTOFMEMORY;
         len = SearchPathW(NULL, appname, NULL, len, tmp_name, NULL);
         if (len)
+        {
             hr = IExecAction_put_Path(This->action, tmp_name);
+            if (hr == S_OK) This->is_dirty = TRUE;
+        }
         else
             hr = HRESULT_FROM_WIN32(GetLastError());
 
-        HeapFree(GetProcessHeap(), 0, tmp_name);
+        heap_free(tmp_name);
         return hr;
     }
 
     /* If unable to path resolve name, simply set to appname */
-    return IExecAction_put_Path(This->action, (BSTR)appname);
+    hr = IExecAction_put_Path(This->action, (BSTR)appname);
+    if (hr == S_OK) This->is_dirty = TRUE;
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITask_GetApplicationName(ITask *iface, LPWSTR *appname)
@@ -536,6 +612,7 @@ static HRESULT WINAPI MSTASK_ITask_GetApplicationName(ITask *iface, LPWSTR *appn
 static HRESULT WINAPI MSTASK_ITask_SetParameters(ITask *iface, LPCWSTR params)
 {
     TaskImpl *This = impl_from_ITask(iface);
+    HRESULT hr;
 
     TRACE("(%p, %s)\n", iface, debugstr_w(params));
 
@@ -543,7 +620,9 @@ static HRESULT WINAPI MSTASK_ITask_SetParameters(ITask *iface, LPCWSTR params)
     if (!params || !params[0])
         params = NULL;
 
-    return IExecAction_put_Arguments(This->action, (BSTR)params);
+    hr = IExecAction_put_Arguments(This->action, (BSTR)params);
+    if (hr == S_OK) This->is_dirty = TRUE;
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITask_GetParameters(ITask *iface, LPWSTR *params)
@@ -578,13 +657,16 @@ static HRESULT WINAPI MSTASK_ITask_GetParameters(ITask *iface, LPWSTR *params)
 static HRESULT WINAPI MSTASK_ITask_SetWorkingDirectory(ITask * iface, LPCWSTR workdir)
 {
     TaskImpl *This = impl_from_ITask(iface);
+    HRESULT hr;
 
     TRACE("(%p, %s)\n", iface, debugstr_w(workdir));
 
     if (!workdir || !workdir[0])
         workdir = NULL;
 
-    return IExecAction_put_WorkingDirectory(This->action, (BSTR)workdir);
+    hr = IExecAction_put_WorkingDirectory(This->action, (BSTR)workdir);
+    if (hr == S_OK) This->is_dirty = TRUE;
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_ITask_GetWorkingDirectory(ITask *iface, LPWSTR *workdir)
@@ -624,12 +706,14 @@ static HRESULT WINAPI MSTASK_ITask_SetPriority(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_ITask_GetPriority(
-        ITask* iface,
-        DWORD *pdwPriority)
+static HRESULT WINAPI MSTASK_ITask_GetPriority(ITask *iface, DWORD *priority)
 {
-    FIXME("(%p, %p): stub\n", iface, pdwPriority);
-    return E_NOTIMPL;
+    TaskImpl *This = impl_from_ITask(iface);
+
+    TRACE("(%p, %p)\n", iface, priority);
+
+    *priority = This->priority;
+    return S_OK;
 }
 
 static HRESULT WINAPI MSTASK_ITask_SetTaskFlags(
@@ -656,6 +740,7 @@ static HRESULT WINAPI MSTASK_ITask_SetMaxRunTime(
     TRACE("(%p, %d)\n", iface, dwMaxRunTime);
 
     This->maxRunTime = dwMaxRunTime;
+    This->is_dirty = TRUE;
     return S_OK;
 }
 
@@ -685,57 +770,582 @@ static ULONG WINAPI MSTASK_IPersistFile_AddRef(
         IPersistFile* iface)
 {
     TaskImpl *This = impl_from_IPersistFile(iface);
-    ULONG ref;
-    TRACE("\n");
-    ref = InterlockedIncrement(&This->ref);
-    return ref;
+    return ITask_AddRef(&This->ITask_iface);
 }
 
 static ULONG WINAPI MSTASK_IPersistFile_Release(
         IPersistFile* iface)
 {
     TaskImpl *This = impl_from_IPersistFile(iface);
-    ULONG ref;
-    TRACE("\n");
-    ref = InterlockedDecrement(&This->ref);
-    if (ref == 0)
-        TaskDestructor(This);
-    return ref;
+    return ITask_Release(&This->ITask_iface);
 }
 
-static HRESULT WINAPI MSTASK_IPersistFile_GetClassID(
-        IPersistFile* iface,
-        CLSID *pClassID)
+static HRESULT WINAPI MSTASK_IPersistFile_GetClassID(IPersistFile *iface, CLSID *clsid)
 {
-    FIXME("(%p, %p): stub\n", iface, pClassID);
-    return E_NOTIMPL;
-}
+    TRACE("(%p, %p)\n", iface, clsid);
 
-static HRESULT WINAPI MSTASK_IPersistFile_IsDirty(
-        IPersistFile* iface)
-{
-    FIXME("(%p): stub\n", iface);
-    return E_NOTIMPL;
-}
-
-static HRESULT WINAPI MSTASK_IPersistFile_Load(
-        IPersistFile* iface,
-        LPCOLESTR pszFileName,
-        DWORD dwMode)
-{
-    FIXME("(%p, %p, 0x%08x): stub\n", iface, pszFileName, dwMode);
-    return E_NOTIMPL;
-}
-
-static HRESULT WINAPI MSTASK_IPersistFile_Save(
-        IPersistFile* iface,
-        LPCOLESTR pszFileName,
-        BOOL fRemember)
-{
-    FIXME("(%p, %p, %d): stub\n", iface, pszFileName, fRemember);
-    WARN("Returning S_OK but not writing to disk: %s %d\n",
-            debugstr_w(pszFileName), fRemember);
+    *clsid = CLSID_CTask;
     return S_OK;
+}
+
+static HRESULT WINAPI MSTASK_IPersistFile_IsDirty(IPersistFile *iface)
+{
+    TaskImpl *This = impl_from_IPersistFile(iface);
+    TRACE("(%p)\n", iface);
+    return This->is_dirty ? S_OK : S_FALSE;
+}
+
+static DWORD load_unicode_strings(ITask *task, BYTE *data, DWORD limit)
+{
+    DWORD i, data_size = 0;
+    USHORT len;
+
+    for (i = 0; i < 5; i++)
+    {
+        if (limit < sizeof(USHORT))
+        {
+            TRACE("invalid string %u offset\n", i);
+            break;
+        }
+
+        len = *(USHORT *)data;
+        data += sizeof(USHORT);
+        data_size += sizeof(USHORT);
+        limit -= sizeof(USHORT);
+        if (limit < len * sizeof(WCHAR))
+        {
+            TRACE("invalid string %u size\n", i);
+            break;
+        }
+
+        TRACE("string %u: %s\n", i, wine_dbgstr_wn((const WCHAR *)data, len));
+
+        switch (i)
+        {
+        case 0:
+            ITask_SetApplicationName(task, (const WCHAR *)data);
+            break;
+        case 1:
+            ITask_SetParameters(task, (const WCHAR *)data);
+            break;
+        case 2:
+            ITask_SetWorkingDirectory(task, (const WCHAR *)data);
+            break;
+        case 3:
+            ITask_SetCreator(task, (const WCHAR *)data);
+            break;
+        case 4:
+            ITask_SetComment(task, (const WCHAR *)data);
+            break;
+        default:
+            break;
+        }
+
+        data += len * sizeof(WCHAR);
+        data_size += len * sizeof(WCHAR);
+    }
+
+    return data_size;
+}
+
+static HRESULT load_job_data(TaskImpl *This, BYTE *data, DWORD size)
+{
+    ITask *task = &This->ITask_iface;
+    HRESULT hr;
+    const FIXDLEN_DATA *fixed;
+    const SYSTEMTIME *st;
+    DWORD unicode_strings_size, data_size, triggers_size;
+    USHORT instance_count, trigger_count, i;
+    const USHORT *signature;
+    TASK_TRIGGER *task_trigger;
+
+    if (size < sizeof(*fixed))
+    {
+        TRACE("no space for FIXDLEN_DATA\n");
+        return SCHED_E_INVALID_TASK;
+    }
+
+    fixed = (const FIXDLEN_DATA *)data;
+
+    TRACE("product_version %04x\n", fixed->product_version);
+    TRACE("file_version %04x\n", fixed->file_version);
+    TRACE("uuid %s\n", wine_dbgstr_guid(&fixed->uuid));
+
+    if (fixed->file_version != 0x0001)
+        return SCHED_E_INVALID_TASK;
+
+    TRACE("name_size_offset %04x\n", fixed->name_size_offset);
+    TRACE("trigger_offset %04x\n", fixed->trigger_offset);
+    TRACE("error_retry_count %u\n", fixed->error_retry_count);
+    TRACE("error_retry_interval %u\n", fixed->error_retry_interval);
+    TRACE("idle_deadline %u\n", fixed->idle_deadline);
+    This->deadline_minutes = fixed->idle_deadline;
+    TRACE("idle_wait %u\n", fixed->idle_wait);
+    This->idle_minutes = fixed->idle_wait;
+    TRACE("priority %08x\n", fixed->priority);
+    This->priority = fixed->priority;
+    TRACE("maximum_runtime %u\n", fixed->maximum_runtime);
+    This->maxRunTime = fixed->maximum_runtime;
+    TRACE("exit_code %#x\n", fixed->exit_code);
+    TRACE("status %08x\n", fixed->status);
+    TRACE("flags %08x\n", fixed->flags);
+    st = &fixed->last_runtime;
+    TRACE("last_runtime %d/%d/%d wday %d %d:%d:%d.%03d\n",
+            st->wDay, st->wMonth, st->wYear, st->wDayOfWeek,
+            st->wHour, st->wMinute, st->wSecond, st->wMilliseconds);
+
+    /* Instance Count */
+    if (size < sizeof(*fixed) + sizeof(USHORT))
+    {
+        TRACE("no space for instance count\n");
+        return SCHED_E_INVALID_TASK;
+    }
+
+    instance_count = *(const USHORT *)(data + sizeof(*fixed));
+    TRACE("instance count %u\n", instance_count);
+
+    if (fixed->name_size_offset + sizeof(USHORT) < size)
+        unicode_strings_size = load_unicode_strings(task, data + fixed->name_size_offset, size - fixed->name_size_offset);
+    else
+    {
+        TRACE("invalid name_size_offset\n");
+        return SCHED_E_INVALID_TASK;
+    }
+    TRACE("unicode strings end at %#x\n", fixed->name_size_offset + unicode_strings_size);
+
+    if (size < fixed->trigger_offset + sizeof(USHORT))
+    {
+        TRACE("no space for triggers count\n");
+        return SCHED_E_INVALID_TASK;
+    }
+    trigger_count = *(const USHORT *)(data + fixed->trigger_offset);
+    TRACE("trigger_count %u\n", trigger_count);
+    triggers_size = size - fixed->trigger_offset - sizeof(USHORT);
+    TRACE("triggers_size %u\n", triggers_size);
+    task_trigger = (TASK_TRIGGER *)(data + fixed->trigger_offset + sizeof(USHORT));
+
+    data += fixed->name_size_offset + unicode_strings_size;
+    size -= fixed->name_size_offset + unicode_strings_size;
+
+    /* User Data */
+    if (size < sizeof(USHORT))
+    {
+        TRACE("no space for user data size\n");
+        return SCHED_E_INVALID_TASK;
+    }
+
+    data_size = *(const USHORT *)data;
+    if (size < sizeof(USHORT) + data_size)
+    {
+        TRACE("no space for user data\n");
+        return SCHED_E_INVALID_TASK;
+    }
+    TRACE("User Data size %#x\n", data_size);
+    ITask_SetWorkItemData(task, data_size, data + sizeof(USHORT));
+
+    size -= sizeof(USHORT) + data_size;
+    data += sizeof(USHORT) + data_size;
+
+    /* Reserved Data */
+    if (size < sizeof(USHORT))
+    {
+        TRACE("no space for reserved data size\n");
+        return SCHED_E_INVALID_TASK;
+    }
+
+    data_size = *(const USHORT *)data;
+    if (size < sizeof(USHORT) + data_size)
+    {
+        TRACE("no space for reserved data\n");
+        return SCHED_E_INVALID_TASK;
+    }
+    TRACE("Reserved Data size %#x\n", data_size);
+
+    size -= sizeof(USHORT) + data_size;
+    data += sizeof(USHORT) + data_size;
+
+    /* Trigger Data */
+    TRACE("trigger_offset %04x, triggers end at %04x\n", fixed->trigger_offset,
+          (DWORD)(fixed->trigger_offset + sizeof(USHORT) + trigger_count * sizeof(TASK_TRIGGER)));
+
+    task_trigger = (TASK_TRIGGER *)(data + sizeof(USHORT));
+
+    if (trigger_count * sizeof(TASK_TRIGGER) > triggers_size)
+    {
+        TRACE("no space for triggers data\n");
+        return SCHED_E_INVALID_TASK;
+    }
+
+    This->trigger_count = 0;
+
+    for (i = 0; i < trigger_count; i++)
+    {
+        ITaskTrigger *trigger;
+        WORD idx;
+
+        hr = ITask_CreateTrigger(task, &idx, &trigger);
+        if (hr != S_OK) return hr;
+
+        hr = ITaskTrigger_SetTrigger(trigger, &task_trigger[i]);
+        ITaskTrigger_Release(trigger);
+        if (hr != S_OK)
+        {
+            ITask_DeleteTrigger(task, idx);
+            return hr;
+        }
+    }
+
+    size -= sizeof(USHORT) + trigger_count * sizeof(TASK_TRIGGER);
+    data += sizeof(USHORT) + trigger_count * sizeof(TASK_TRIGGER);
+
+    if (size < 2 * sizeof(USHORT) + 64)
+    {
+        TRACE("no space for signature\n");
+        return S_OK; /* signature is optional */
+    }
+
+    signature = (const USHORT *)data;
+    TRACE("signature version %04x, client version %04x\n", signature[0], signature[1]);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI MSTASK_IPersistFile_Load(IPersistFile *iface, LPCOLESTR file_name, DWORD mode)
+{
+    TaskImpl *This = impl_from_IPersistFile(iface);
+    HRESULT hr;
+    HANDLE file, mapping;
+    DWORD access, sharing, size;
+    void *data;
+
+    TRACE("(%p, %s, 0x%08x)\n", iface, debugstr_w(file_name), mode);
+
+    switch (mode & 0x000f)
+    {
+    default:
+    case STGM_READ:
+        access = GENERIC_READ;
+        break;
+    case STGM_WRITE:
+    case STGM_READWRITE:
+        access = GENERIC_READ | GENERIC_WRITE;
+        break;
+    }
+
+    switch (mode & 0x00f0)
+    {
+    default:
+    case STGM_SHARE_DENY_NONE:
+        sharing = FILE_SHARE_READ | FILE_SHARE_WRITE;
+        break;
+    case STGM_SHARE_DENY_READ:
+        sharing = FILE_SHARE_WRITE;
+        break;
+    case STGM_SHARE_DENY_WRITE:
+        sharing = FILE_SHARE_READ;
+        break;
+    case STGM_SHARE_EXCLUSIVE:
+        sharing = 0;
+        break;
+    }
+
+    file = CreateFileW(file_name, access, sharing, NULL, OPEN_EXISTING, 0, 0);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        TRACE("Failed to open %s, error %u\n", debugstr_w(file_name), GetLastError());
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    size = GetFileSize(file, NULL);
+
+    mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, 0);
+    if (!mapping)
+    {
+        TRACE("Failed to create file mapping %s, error %u\n", debugstr_w(file_name), GetLastError());
+        CloseHandle(file);
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    data = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    if (data)
+    {
+        hr = load_job_data(This, data, size);
+        if (hr == S_OK) This->is_dirty = FALSE;
+        UnmapViewOfFile(data);
+    }
+    else
+        hr = HRESULT_FROM_WIN32(GetLastError());
+
+    CloseHandle(mapping);
+    CloseHandle(file);
+
+    return hr;
+}
+
+static BOOL write_signature(HANDLE hfile)
+{
+    struct
+    {
+        USHORT SignatureVersion;
+        USHORT ClientVersion;
+        BYTE md5[64];
+    } signature;
+    DWORD size;
+
+    signature.SignatureVersion = 0x0001;
+    signature.ClientVersion = 0x0001;
+    memset(&signature.md5, 0, sizeof(signature.md5));
+
+    return WriteFile(hfile, &signature, sizeof(signature), &size, NULL);
+}
+
+static BOOL write_reserved_data(HANDLE hfile)
+{
+    static const struct
+    {
+        USHORT size;
+        BYTE data[8];
+    } user = { 8, { 0xff,0x0f,0x1d,0,0,0,0,0 } };
+    DWORD size;
+
+    return WriteFile(hfile, &user, sizeof(user), &size, NULL);
+}
+
+static BOOL write_user_data(HANDLE hfile, BYTE *data, WORD data_size)
+{
+    DWORD size;
+
+    if (!WriteFile(hfile, &data_size, sizeof(data_size), &size, NULL))
+        return FALSE;
+
+    if (!data_size) return TRUE;
+
+    return WriteFile(hfile, data, data_size, &size, NULL);
+}
+
+static HRESULT write_triggers(ITask *task, HANDLE hfile)
+{
+    WORD count, i, idx = 0xffff;
+    DWORD size;
+    HRESULT hr;
+    ITaskTrigger *trigger;
+
+    hr = ITask_GetTriggerCount(task, &count);
+    if (hr != S_OK) return hr;
+
+    /* Windows saves a .job with at least 1 trigger */
+    if (!count)
+    {
+        hr = ITask_CreateTrigger(task, &idx, &trigger);
+        if (hr != S_OK) return hr;
+        ITaskTrigger_Release(trigger);
+
+        count = 1;
+    }
+
+    if (!WriteFile(hfile, &count, sizeof(count), &size, NULL))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    for (i = 0; i < count; i++)
+    {
+        TASK_TRIGGER task_trigger;
+
+        hr = ITask_GetTrigger(task, i, &trigger);
+        if (hr != S_OK) return hr;
+
+        hr = ITaskTrigger_GetTrigger(trigger, &task_trigger);
+        ITaskTrigger_Release(trigger);
+        if (hr != S_OK) break;
+
+        if (!WriteFile(hfile, &task_trigger, sizeof(task_trigger), &size, NULL))
+            return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    if (idx != 0xffff)
+        ITask_DeleteTrigger(task, idx);
+
+    return hr;
+}
+
+static BOOL write_unicode_string(HANDLE hfile, const WCHAR *str)
+{
+    USHORT count;
+    DWORD size;
+
+    count = str ? (lstrlenW(str) + 1) : 0;
+    if (!WriteFile(hfile, &count, sizeof(count), &size, NULL))
+        return FALSE;
+
+    if (!str) return TRUE;
+
+    count *= sizeof(WCHAR);
+    return WriteFile(hfile, str, count, &size, NULL);
+}
+
+static HRESULT WINAPI MSTASK_IPersistFile_Save(IPersistFile *iface, LPCOLESTR task_name, BOOL remember)
+{
+    static WCHAR authorW[] = { 'W','i','n','e',0 };
+    static WCHAR commentW[] = { 'C','r','e','a','t','e','d',' ','b','y',' ','W','i','n','e',0 };
+    FIXDLEN_DATA fixed;
+    WORD word, user_data_size = 0;
+    HANDLE hfile;
+    DWORD size, ver, disposition;
+    TaskImpl *This = impl_from_IPersistFile(iface);
+    ITask *task = &This->ITask_iface;
+    LPWSTR appname = NULL, params = NULL, workdir = NULL, creator = NULL, comment = NULL;
+    BYTE *user_data = NULL;
+    HRESULT hr;
+
+    TRACE("(%p, %s, %d)\n", iface, debugstr_w(task_name), remember);
+
+    disposition = task_name ? CREATE_NEW : OPEN_ALWAYS;
+
+    if (!task_name)
+    {
+        task_name = This->task_name;
+        remember = FALSE;
+    }
+
+    ITask_GetComment(task, &comment);
+    if (!comment) comment = commentW;
+    ITask_GetCreator(task, &creator);
+    if (!creator) creator = authorW;
+    ITask_GetApplicationName(task, &appname);
+    ITask_GetParameters(task, &params);
+    ITask_GetWorkingDirectory(task, &workdir);
+    ITask_GetWorkItemData(task, &user_data_size, &user_data);
+
+    ver = GetVersion();
+    fixed.product_version = MAKEWORD(ver >> 8, ver);
+    fixed.file_version = 0x0001;
+    CoCreateGuid(&fixed.uuid);
+    fixed.name_size_offset = sizeof(fixed) + sizeof(USHORT); /* FIXDLEN_DATA + Instance Count */
+    fixed.trigger_offset = sizeof(fixed) + sizeof(USHORT); /* FIXDLEN_DATA + Instance Count */
+    fixed.trigger_offset += sizeof(USHORT); /* Application Name */
+    if (appname)
+        fixed.trigger_offset += (lstrlenW(appname) + 1) * sizeof(WCHAR);
+    fixed.trigger_offset += sizeof(USHORT); /* Parameters */
+    if (params)
+        fixed.trigger_offset += (lstrlenW(params) + 1) * sizeof(WCHAR);
+    fixed.trigger_offset += sizeof(USHORT); /* Working Directory */
+    if (workdir)
+        fixed.trigger_offset += (lstrlenW(workdir) + 1) * sizeof(WCHAR);
+    fixed.trigger_offset += sizeof(USHORT); /* Author */
+    if (creator)
+        fixed.trigger_offset += (lstrlenW(creator) + 1) * sizeof(WCHAR);
+    fixed.trigger_offset += sizeof(USHORT); /* Comment */
+    if (comment)
+        fixed.trigger_offset += (lstrlenW(comment) + 1) * sizeof(WCHAR);
+    fixed.trigger_offset += sizeof(USHORT) + user_data_size; /* User Data */
+    fixed.trigger_offset += 10; /* Reserved Data */
+
+    fixed.error_retry_count = 0;
+    fixed.error_retry_interval = 0;
+    fixed.idle_wait = This->idle_minutes;
+    fixed.idle_deadline = This->deadline_minutes;
+    fixed.priority = This->priority;
+    fixed.maximum_runtime = This->maxRunTime;
+    fixed.exit_code = 0;
+    fixed.status = SCHED_S_TASK_HAS_NOT_RUN;
+    fixed.flags = 0;
+    memset(&fixed.last_runtime, 0, sizeof(fixed.last_runtime));
+
+    hfile = CreateFileW(task_name, GENERIC_WRITE, 0, NULL, disposition, 0, 0);
+    if (hfile == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    if (!WriteFile(hfile, &fixed, sizeof(fixed), &size, NULL))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+
+    /* Instance Count */
+    word = 0;
+    if (!WriteFile(hfile, &word, sizeof(word), &size, NULL))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+    /* Application Name */
+    if (!write_unicode_string(hfile, appname))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+    /* Parameters */
+    if (!write_unicode_string(hfile, params))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+    /* Working Directory */
+    if (!write_unicode_string(hfile, workdir))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+    /* Author */
+    if (!write_unicode_string(hfile, creator))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+    /* Comment */
+    if (!write_unicode_string(hfile, comment))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+
+    /* User Data */
+    if (!write_user_data(hfile, user_data, user_data_size))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+
+    /* Reserved Data */
+    if (!write_reserved_data(hfile))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+
+    /* Triggers */
+    hr = write_triggers(task, hfile);
+    if (hr != S_OK)
+        goto failed;
+
+    /* Signature */
+    if (!write_signature(hfile))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto failed;
+    }
+
+    hr = S_OK;
+    This->is_dirty = FALSE;
+
+failed:
+    CoTaskMemFree(appname);
+    CoTaskMemFree(params);
+    CoTaskMemFree(workdir);
+    if (creator != authorW)
+        CoTaskMemFree(creator);
+    if (comment != commentW)
+        CoTaskMemFree(comment);
+    CoTaskMemFree(user_data);
+
+    CloseHandle(hfile);
+    if (hr != S_OK)
+        DeleteFileW(task_name);
+    else if (remember)
+    {
+        heap_free(This->task_name);
+        This->task_name = heap_strdupW(task_name);
+    }
+    return hr;
 }
 
 static HRESULT WINAPI MSTASK_IPersistFile_SaveCompleted(
@@ -746,14 +1356,18 @@ static HRESULT WINAPI MSTASK_IPersistFile_SaveCompleted(
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI MSTASK_IPersistFile_GetCurFile(
-        IPersistFile* iface,
-        LPOLESTR *ppszFileName)
+static HRESULT WINAPI MSTASK_IPersistFile_GetCurFile(IPersistFile *iface, LPOLESTR *file_name)
 {
-    FIXME("(%p, %p): stub\n", iface, ppszFileName);
-    return E_NOTIMPL;
-}
+    TaskImpl *This = impl_from_IPersistFile(iface);
 
+    TRACE("(%p, %p)\n", iface, file_name);
+
+    *file_name = CoTaskMemAlloc((strlenW(This->task_name) + 1) * sizeof(WCHAR));
+    if (!*file_name) return E_OUTOFMEMORY;
+
+    strcpyW(*file_name, This->task_name);
+    return S_OK;
+}
 
 static const ITaskVtbl MSTASK_ITaskVtbl =
 {
@@ -816,19 +1430,29 @@ static const IPersistFileVtbl MSTASK_IPersistFileVtbl =
     MSTASK_IPersistFile_GetCurFile
 };
 
-HRESULT TaskConstructor(ITaskService *service, const WCHAR *task_name, ITask **task)
+HRESULT TaskConstructor(ITaskService *service, const WCHAR *name, ITask **task)
 {
+    static const WCHAR tasksW[] = { '\\','T','a','s','k','s','\\',0 };
+    static const WCHAR jobW[] = { '.','j','o','b',0 };
     TaskImpl *This;
+    WCHAR task_name[MAX_PATH];
     ITaskDefinition *taskdef;
     IActionCollection *actions;
     HRESULT hr;
 
-    TRACE("(%s, %p)\n", debugstr_w(task_name), task);
+    TRACE("(%s, %p)\n", debugstr_w(name), task);
+
+    if (strchrW(name, '.')) return E_INVALIDARG;
+
+    GetWindowsDirectoryW(task_name, MAX_PATH);
+    lstrcatW(task_name, tasksW);
+    lstrcatW(task_name, name);
+    lstrcatW(task_name, jobW);
 
     hr = ITaskService_NewTask(service, 0, &taskdef);
     if (hr != S_OK) return hr;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    This = heap_alloc(sizeof(*This));
     if (!This)
     {
         ITaskDefinition_Release(taskdef);
@@ -840,7 +1464,14 @@ HRESULT TaskConstructor(ITaskService *service, const WCHAR *task_name, ITask **t
     This->ref = 1;
     This->task = taskdef;
     This->task_name = heap_strdupW(task_name);
+    This->status = SCHED_S_TASK_NOT_SCHEDULED;
+    This->idle_minutes = 10;
+    This->deadline_minutes = 60;
+    This->priority = NORMAL_PRIORITY_CLASS;
     This->accountName = NULL;
+    This->trigger_count = 0;
+    This->trigger = NULL;
+    This->is_dirty = FALSE;
 
     /* Default time is 3 days = 259200000 ms */
     This->maxRunTime = 259200000;

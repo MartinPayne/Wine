@@ -618,6 +618,14 @@ enum wined3d_tessellator_partitioning
 #define WINED3DSI_SAMPLE_INFO_UINT  0x1
 #define WINED3DSI_SAMPLER_COMPARISON_MODE 0x1
 
+#define WINED3DSI_PRECISE_X         0x100
+#define WINED3DSI_PRECISE_Y         0x200
+#define WINED3DSI_PRECISE_Z         0x400
+#define WINED3DSI_PRECISE_W         0x800
+#define WINED3DSI_PRECISE_XYZW      (WINED3DSI_PRECISE_X | WINED3DSI_PRECISE_Y \
+                                    | WINED3DSI_PRECISE_Z | WINED3DSI_PRECISE_W)
+#define WINED3DSI_PRECISE_SHIFT     8
+
 enum wined3d_shader_rel_op
 {
     WINED3D_SHADER_REL_OP_GT = 1,
@@ -929,6 +937,7 @@ enum wined3d_shader_type
 
     WINED3D_SHADER_TYPE_COMPUTE = WINED3D_SHADER_TYPE_GRAPHICS_COUNT,
     WINED3D_SHADER_TYPE_COUNT,
+    WINED3D_SHADER_TYPE_INVALID = WINED3D_SHADER_TYPE_COUNT,
 };
 
 struct wined3d_shader_version
@@ -1029,7 +1038,8 @@ struct wined3d_shader_reg_maps
     DWORD point_size     : 1;
     DWORD vocp           : 1;
     DWORD input_rel_addressing : 1;
-    DWORD padding        : 16;
+    DWORD viewport_array : 1;
+    DWORD padding        : 15;
 
     DWORD rt_mask; /* Used render targets, 32 max. */
 
@@ -1265,6 +1275,9 @@ struct wined3d_shader_frontend
 extern const struct wined3d_shader_frontend sm1_shader_frontend DECLSPEC_HIDDEN;
 extern const struct wined3d_shader_frontend sm4_shader_frontend DECLSPEC_HIDDEN;
 
+enum wined3d_shader_type wined3d_get_sm4_shader_type(const DWORD *byte_code,
+        size_t byte_code_size) DECLSPEC_HIDDEN;
+
 typedef void (*SHADER_HANDLER)(const struct wined3d_shader_instruction *);
 
 #define WINED3D_SHADER_CAP_VS_CLIPPING      0x00000001
@@ -1391,6 +1404,7 @@ struct ds_compile_args
 struct gs_compile_args
 {
     unsigned int output_count;
+    enum wined3d_primitive_type primitive_type;
     DWORD interpolation_mode[WINED3D_PACKED_INTERPOLATION_SIZE];
 };
 
@@ -1883,7 +1897,7 @@ struct wined3d_context
     DWORD last_was_vshader : 1;
     DWORD last_was_normal : 1;
     DWORD namedArraysLoaded : 1;
-    DWORD numberedArraysLoaded : 1;
+    DWORD last_was_ffp_blit : 1;
     DWORD last_was_blit : 1;
     DWORD last_was_ckey : 1;
     DWORD fog_coord : 1;
@@ -1892,6 +1906,7 @@ struct wined3d_context
     DWORD current : 1;
     DWORD destroyed : 1;
     DWORD valid : 1;
+
     DWORD texShaderBumpMap : 8;         /* MAX_TEXTURES, 8 */
     DWORD lastWasPow2Texture : 8;       /* MAX_TEXTURES, 8 */
     DWORD fixed_function_usage_map : 8; /* MAX_TEXTURES, 8 */
@@ -1900,6 +1915,7 @@ struct wined3d_context
     DWORD rebind_fbo : 1;
     DWORD needs_set : 1;
     DWORD hdc_is_private : 1;
+
     DWORD hdc_has_format : 1;           /* only meaningful if hdc_is_private */
     DWORD update_shader_resource_bindings : 1;
     DWORD update_compute_shader_resource_bindings : 1;
@@ -1911,11 +1927,10 @@ struct wined3d_context
     DWORD transform_feedback_paused : 1;
     DWORD shader_update_mask : 6; /* WINED3D_SHADER_TYPE_COUNT, 6 */
     DWORD clip_distance_mask : 8; /* MAX_CLIP_DISTANCES, 8 */
-    DWORD last_was_ffp_blit : 1;
-    DWORD padding : 8;
+    DWORD padding : 9;
 
     DWORD constant_update_mask;
-    DWORD                   numbered_array_mask;
+    DWORD numbered_array_mask;
     GLenum                  tracking_parm;     /* Which source is tracking current colour         */
     GLenum                  untracked_materials[2];
     UINT                    blit_w, blit_h;
@@ -1982,6 +1997,8 @@ struct wined3d_context
     struct wined3d_fence *buffer_fences[MAX_ATTRIBS];
     unsigned int buffer_fence_count;
 
+    GLuint blit_vbo;
+
     DWORD tex_unit_map[MAX_COMBINED_SAMPLERS];
     DWORD rev_tex_unit_map[MAX_GL_FRAGMENT_SAMPLERS + MAX_VERTEX_SAMPLERS];
 
@@ -1990,6 +2007,9 @@ struct wined3d_context
     GLfloat                 fog_coord_value;
     GLfloat                 color[4], fogstart, fogend, fogcolor[4];
     GLuint                  dummy_arbfp_prog;
+
+    unsigned int viewport_count;
+    unsigned int scissor_rect_count;
 };
 
 struct wined3d_fb_state
@@ -2175,6 +2195,8 @@ void context_gl_resource_released(struct wined3d_device *device,
         GLuint name, BOOL rb_namespace) DECLSPEC_HIDDEN;
 void context_invalidate_compute_state(struct wined3d_context *context, DWORD state_id) DECLSPEC_HIDDEN;
 void context_invalidate_state(struct wined3d_context *context, DWORD state_id) DECLSPEC_HIDDEN;
+void context_load_tex_coords(const struct wined3d_context *context, const struct wined3d_stream_info *si,
+        GLuint *current_bo, const struct wined3d_state *state) DECLSPEC_HIDDEN;
 void *context_map_bo_address(struct wined3d_context *context, const struct wined3d_bo_address *data,
         size_t size, GLenum binding, DWORD flags) DECLSPEC_HIDDEN;
 struct wined3d_context *context_reacquire(const struct wined3d_device *device,
@@ -2191,8 +2213,11 @@ void context_state_drawbuf(struct wined3d_context *context,
 void context_state_fb(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id) DECLSPEC_HIDDEN;
 void context_texture_update(struct wined3d_context *context, const struct wined3d_texture *texture) DECLSPEC_HIDDEN;
+void context_unload_tex_coords(const struct wined3d_context *context) DECLSPEC_HIDDEN;
 void context_unmap_bo_address(struct wined3d_context *context,
         const struct wined3d_bo_address *data, GLenum binding) DECLSPEC_HIDDEN;
+void context_update_stream_sources(struct wined3d_context *context,
+        const struct wined3d_state *state) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * Internal representation of a light
@@ -2851,8 +2876,10 @@ struct wined3d_state
     struct wined3d_matrix transforms[HIGHEST_TRANSFORMSTATE + 1];
     struct wined3d_vec4 clip_planes[MAX_CLIP_DISTANCES];
     struct wined3d_material material;
-    struct wined3d_viewport viewport;
-    RECT scissor_rect;
+    struct wined3d_viewport viewports[WINED3D_MAX_VIEWPORTS];
+    unsigned int viewport_count;
+    RECT scissor_rects[WINED3D_MAX_VIEWPORTS];
+    unsigned int scissor_rect_count;
 
     /* Light hashmap. Collisions are handled using linked lists. */
 #define LIGHTMAP_SIZE 43
@@ -3302,6 +3329,9 @@ void wined3d_texture_upload_data(struct wined3d_texture *texture, unsigned int s
         struct wined3d_context *context, const struct wined3d_format *format, const struct wined3d_box *src_box,
         const struct wined3d_const_bo_address *data, unsigned int row_pitch, unsigned int slice_pitch,
         unsigned int dst_x, unsigned int dst_y, unsigned int dst_z, BOOL srgb) DECLSPEC_HIDDEN;
+void wined3d_texture_upload_from_texture(struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx,
+        unsigned int dst_x, unsigned int dst_y, unsigned int dst_z, struct wined3d_texture *src_texture,
+        unsigned int src_sub_resource_idx, const struct wined3d_box *src_box) DECLSPEC_HIDDEN;
 void wined3d_texture_validate_location(struct wined3d_texture *texture,
         unsigned int sub_resource_idx, DWORD location) DECLSPEC_HIDDEN;
 
@@ -3585,7 +3615,7 @@ void wined3d_cs_emit_set_sampler(struct wined3d_cs *cs, enum wined3d_shader_type
         UINT sampler_idx, struct wined3d_sampler *sampler) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_sampler_state(struct wined3d_cs *cs, UINT sampler_idx,
         enum wined3d_sampler_state state, DWORD value) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_scissor_rect(struct wined3d_cs *cs, const RECT *rect) DECLSPEC_HIDDEN;
+void wined3d_cs_emit_set_scissor_rects(struct wined3d_cs *cs, unsigned int rect_count, const RECT *rects) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_shader(struct wined3d_cs *cs, enum wined3d_shader_type type,
         struct wined3d_shader *shader) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_stream_output(struct wined3d_cs *cs, UINT stream_idx,
@@ -3604,7 +3634,7 @@ void wined3d_cs_emit_set_unordered_access_view(struct wined3d_cs *cs, enum wined
         unsigned int initial_count) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_vertex_declaration(struct wined3d_cs *cs,
         struct wined3d_vertex_declaration *declaration) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_viewport(struct wined3d_cs *cs, const struct wined3d_viewport *viewport) DECLSPEC_HIDDEN;
+void wined3d_cs_emit_set_viewports(struct wined3d_cs *cs, unsigned int viewport_count, const struct wined3d_viewport *viewports) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_unload_resource(struct wined3d_cs *cs, struct wined3d_resource *resource) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_update_sub_resource(struct wined3d_cs *cs, struct wined3d_resource *resource,
         unsigned int sub_resource_idx, const struct wined3d_box *box, const void *data, unsigned int row_pitch,
@@ -3885,6 +3915,7 @@ void state_shademode(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id) DECLSPEC_HIDDEN;
 
 GLenum gl_primitive_type_from_d3d(enum wined3d_primitive_type primitive_type) DECLSPEC_HIDDEN;
+enum wined3d_primitive_type d3d_primitive_type_from_gl(GLenum primitive_type) DECLSPEC_HIDDEN;
 
 /* Math utils */
 void multiply_matrix(struct wined3d_matrix *dest, const struct wined3d_matrix *src1,
@@ -4107,24 +4138,28 @@ static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
 }
 
 static inline void shader_get_position_fixup(const struct wined3d_context *context,
-        const struct wined3d_state *state, float *position_fixup)
+        const struct wined3d_state *state, unsigned int fixup_count, float *position_fixup)
 {
     float center_offset;
+    unsigned int i;
 
     if (context->d3d_info->wined3d_creation_flags & WINED3D_PIXEL_CENTER_INTEGER)
         center_offset = 63.0f / 64.0f;
     else
         center_offset = -1.0f / 64.0f;
 
-    position_fixup[0] = 1.0f;
-    position_fixup[1] = 1.0f;
-    position_fixup[2] = center_offset / state->viewport.width;
-    position_fixup[3] = -center_offset / state->viewport.height;
-
-    if (context->render_offscreen)
+    for (i = 0; i < fixup_count; ++i)
     {
-        position_fixup[1] *= -1.0f;
-        position_fixup[3] *= -1.0f;
+        position_fixup[4 * i    ] = 1.0f;
+        position_fixup[4 * i + 1] = 1.0f;
+        position_fixup[4 * i + 2] = center_offset / state->viewports[i].width;
+        position_fixup[4 * i + 3] = -center_offset / state->viewports[i].height;
+
+        if (context->render_offscreen)
+        {
+            position_fixup[4 * i + 1] *= -1.0f;
+            position_fixup[4 * i + 3] *= -1.0f;
+        }
     }
 }
 

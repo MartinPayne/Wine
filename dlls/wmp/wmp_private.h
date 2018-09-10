@@ -42,6 +42,8 @@ typedef struct {
     LONG ref;
 
     WCHAR *url;
+
+    DOUBLE duration;
 } WMPMedia;
 
 struct WindowsMediaPlayer {
@@ -67,6 +69,7 @@ struct WindowsMediaPlayer {
     VARIANT_BOOL auto_start;
     VARIANT_BOOL invoke_urls;
     VARIANT_BOOL enable_error_dialogs;
+    LONG volume;
 
     ConnectionPoint *wmpocx;
 
@@ -76,6 +79,8 @@ struct WindowsMediaPlayer {
     IGraphBuilder* filter_graph;
     IMediaControl* media_control;
     IMediaEvent* media_event;
+    IMediaSeeking* media_seeking;
+    IBasicAudio* basic_audio;
 
     /* Async event notification */
     HWND msg_window;

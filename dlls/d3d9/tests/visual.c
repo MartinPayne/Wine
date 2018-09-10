@@ -4706,7 +4706,7 @@ done:
     DestroyWindow(window);
 }
 
-static void check_rect(IDirect3DDevice9 *device, RECT r, const char *message)
+static void check_rect(struct surface_readback *rb, RECT r, const char *message)
 {
     LONG x_coords[2][2] =
     {
@@ -4719,6 +4719,30 @@ static void check_rect(IDirect3DDevice9 *device, RECT r, const char *message)
         {r.bottom + 1, r.bottom - 1}
     };
     unsigned int i, j, x_side, y_side;
+    DWORD color;
+    LONG x, y;
+
+    if (r.left < 0 && r.top < 0 && r.right < 0 && r.bottom < 0)
+    {
+        BOOL all_match = TRUE;
+
+        for (y = 0; y < 480; ++y)
+        {
+            for (x = 0; x < 640; ++x)
+            {
+                color = get_readback_color(rb, x, y);
+                if (color != 0xff000000)
+                {
+                    all_match = FALSE;
+                    break;
+                }
+            }
+            if (!all_match)
+                break;
+        }
+        ok(all_match, "%s: pixel (%d, %d) has color %08x.\n", message, x, y, color);
+        return;
+    }
 
     for (i = 0; i < 2; ++i)
     {
@@ -4728,12 +4752,14 @@ static void check_rect(IDirect3DDevice9 *device, RECT r, const char *message)
             {
                 for (y_side = 0; y_side < 2; ++y_side)
                 {
-                    unsigned int x = x_coords[i][x_side], y = y_coords[j][y_side];
-                    DWORD color;
-                    DWORD expected = (x_side == 1 && y_side == 1) ? 0x00ffffff : 0;
+                    DWORD expected = (x_side == 1 && y_side == 1) ? 0xffffffff : 0xff000000;
 
-                    color = getPixelColor(device, x, y);
-                    ok(color == expected, "%s: Pixel (%d, %d) has color %08x, expected %08x\n",
+                    x = x_coords[i][x_side];
+                    y = y_coords[j][y_side];
+                    if (x < 0 || x >= 640 || y < 0 || y >= 480)
+                        continue;
+                    color = get_readback_color(rb, x, y);
+                    ok(color == expected, "%s: pixel (%d, %d) has color %08x, expected %08x.\n",
                             message, x, y, color, expected);
                 }
             }
@@ -4776,6 +4802,8 @@ static void projected_textures_test(IDirect3DDevice9 *device,
     IDirect3D9 *d3d;
     D3DCAPS9 caps;
     HRESULT hr;
+    IDirect3DSurface9 *backbuffer;
+    struct surface_readback rb;
 
     IDirect3DDevice9_GetDirect3D(device, &d3d);
     hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
@@ -4792,6 +4820,9 @@ static void projected_textures_test(IDirect3DDevice9 *device,
         hr = IDirect3DDevice9_CreatePixelShader(device, pixel_shader, &ps);
         ok(SUCCEEDED(hr), "CreatePixelShader failed (%08x)\n", hr);
     }
+
+    hr = IDirect3DDevice9_GetBackBuffer(device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer);
+    ok(SUCCEEDED(hr), "Failed to get back buffer, hr %#x.\n", hr);
 
     hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff203040, 0.0f, 0);
     ok(hr == D3D_OK, "IDirect3DDevice9_Clear returned %08x\n", hr);
@@ -4872,14 +4903,14 @@ static void projected_textures_test(IDirect3DDevice9 *device,
     if (vs) IDirect3DVertexShader9_Release(vs);
     if (ps) IDirect3DPixelShader9_Release(ps);
 
+    get_rt_readback(backbuffer, &rb);
     for (i = 0; i < 4; ++i)
     {
         if ((!tests[i].vs || vs) && (!tests[i].ps || ps))
-            check_rect(device, tests[i].rect, tests[i].message);
+            check_rect(&rb, tests[i].rect, tests[i].message);
     }
-
-    hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
-    ok(hr == D3D_OK, "IDirect3DDevice9_Present failed with %08x\n", hr);
+    release_surface_readback(&rb);
+    IDirect3DSurface9_Release(backbuffer);
 }
 
 static void texture_transform_flags_test(void)
@@ -13875,24 +13906,41 @@ done:
     DestroyWindow(window);
 }
 
-static void viewport_test(void)
+static void test_viewport(void)
 {
+    static const struct
+    {
+        D3DVIEWPORT9 vp;
+        RECT expected_rect;
+        const char *message;
+    }
+    tests[] =
+    {
+        {{  0,   0,  640,  480}, {  0, 120, 479, 359}, "Viewport (0, 0) - (640, 480)"},
+        {{  0,   0,  320,  240}, {  0,  60, 239, 179}, "Viewport (0, 0) - (320, 240)"},
+        {{  0,   0, 1280,  960}, {  0, 240, 639, 479}, "Viewport (0, 0) - (1280, 960)"},
+        {{  0,   0, 2000, 1600}, {  0, 400, 639, 479}, "Viewport (0, 0) - (2000, 1600)"},
+        {{100, 100,  640,  480}, {100, 220, 579, 459}, "Viewport (100, 100) - (640, 480)"},
+        {{  0,   0, 8192, 8192}, {-10, -10, -10, -10}, "Viewport (0, 0) - (8192, 8192)"},
+        /* AMD HD 2600 on XP draws nothing visible for this one. */
+        /* {{  0,   0, 8192,  480}, {-10, -10,  -1,  -1}, "(0, 0) - (8192, 480) viewport"}, */
+    };
+    static const struct vec3 quad[] =
+    {
+        {-1.5f, -0.5f, 0.1f},
+        {-1.5f,  0.5f, 0.1f},
+        { 0.5f, -0.5f, 0.1f},
+        { 0.5f,  0.5f, 0.1f},
+    };
+    IDirect3DSurface9 *backbuffer;
+    struct surface_readback rb;
     IDirect3DDevice9 *device;
-    BOOL draw_failed = TRUE;
-    D3DVIEWPORT9 vp;
+    BOOL draw_succeeded;
     IDirect3D9 *d3d;
+    unsigned int i;
     ULONG refcount;
-    DWORD color;
     HWND window;
     HRESULT hr;
-
-    static const float quad[] =
-    {
-        -0.5f, -0.5f, 0.1f,
-        -0.5f,  0.5f, 0.1f,
-         0.5f, -0.5f, 0.1f,
-         0.5f,  0.5f, 0.1f,
-    };
 
     window = create_window();
     d3d = Direct3DCreate9(D3D_SDK_VERSION);
@@ -13903,71 +13951,47 @@ static void viewport_test(void)
         goto done;
     }
 
-    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0x00ff0000, 1.0f, 0);
-    ok(hr == D3D_OK, "IDirect3DDevice9_Clear returned %08x\n", hr);
-
-    /* Test a viewport with Width and Height bigger than the surface dimensions
-     *
-     * TODO: Test Width < surface.width, but X + Width > surface.width
-     * TODO: Test Width < surface.width, what happens with the height?
-     *
-     * The expected behavior is that the viewport behaves like the "default"
-     * viewport with X = Y = 0, Width = surface_width, Height = surface_height,
-     * MinZ = 0.0, MaxZ = 1.0.
-     *
-     * Starting with Windows 7 the behavior among driver versions is not
-     * consistent. The SetViewport call is accepted on all drivers. Some
-     * drivers(older nvidia ones) refuse to draw and return an error. Newer
-     * nvidia drivers draw, but use the actual values in the viewport and only
-     * display the upper left part on the surface.
-     */
-    memset(&vp, 0, sizeof(vp));
-    vp.X = 0;
-    vp.Y = 0;
-    vp.Width = 10000;
-    vp.Height = 10000;
-    vp.MinZ = 0.0;
-    vp.MaxZ = 0.0;
-    hr = IDirect3DDevice9_SetViewport(device, &vp);
-    ok(hr == D3D_OK, "IDirect3DDevice9_SetViewport failed with %08x\n", hr);
+    hr = IDirect3DDevice9_GetBackBuffer(device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer);
+    ok(SUCCEEDED(hr), "Failed to get backbuffer, hr %#x.\n", hr);
 
     hr = IDirect3DDevice9_SetRenderState(device, D3DRS_LIGHTING, FALSE);
     ok(SUCCEEDED(hr), "Failed to disable lighting, hr %#x.\n", hr);
 
     hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZ);
-    ok(hr == D3D_OK, "IDirect3DDevice9_SetFVF returned %08x\n", hr);
-    hr = IDirect3DDevice9_BeginScene(device);
-    ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
-    hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, 3 * sizeof(float));
-    ok(hr == D3D_OK || broken(hr == D3DERR_INVALIDCALL), "Got unexpected hr %#x.\n", hr);
-    draw_failed = FAILED(hr);
-    hr = IDirect3DDevice9_EndScene(device);
-    ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Failed to set FVF, hr %#x.\n", hr);
 
-    if(!draw_failed)
+    /* This crashes on Windows. */
+    if (0)
+        hr = IDirect3DDevice9_SetViewport(device, NULL);
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
-        color = getPixelColor(device, 158, 118);
-        ok(color == 0x00ff0000, "viewport test: (158,118) has color %08x\n", color);
-        color = getPixelColor(device, 162, 118);
-        ok(color == 0x00ff0000, "viewport test: (162,118) has color %08x\n", color);
-        color = getPixelColor(device, 158, 122);
-        ok(color == 0x00ff0000, "viewport test: (158,122) has color %08x\n", color);
-        color = getPixelColor(device, 162, 122);
-        ok(color == 0x00ffffff || broken(color == 0x00ff0000), "viewport test: (162,122) has color %08x\n", color);
+        hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000, 1.0f, 0);
+        ok(SUCCEEDED(hr), "Failed to clear, hr %#x.\n", hr);
 
-        color = getPixelColor(device, 478, 358);
-        ok(color == 0x00ffffff || broken(color == 0x00ff0000), "viewport test: (478,358 has color %08x\n", color);
-        color = getPixelColor(device, 482, 358);
-        ok(color == 0x00ff0000, "viewport test: (482,358) has color %08x\n", color);
-        color = getPixelColor(device, 478, 362);
-        ok(color == 0x00ff0000, "viewport test: (478,362) has color %08x\n", color);
-        color = getPixelColor(device, 482, 362);
-        ok(color == 0x00ff0000, "viewport test: (482,362) has color %08x\n", color);
+        hr = IDirect3DDevice9_SetViewport(device, &tests[i].vp);
+        ok(SUCCEEDED(hr), "Failed to set the viewport, hr %#x.\n", hr);
+
+        hr = IDirect3DDevice9_BeginScene(device);
+        ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+        hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(quad[0]));
+        ok(SUCCEEDED(hr) || broken(hr == D3DERR_INVALIDCALL), "Got unexpected hr %#x.\n", hr);
+        draw_succeeded = SUCCEEDED(hr);
+        hr = IDirect3DDevice9_EndScene(device);
+        ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+
+        if (draw_succeeded)
+        {
+            get_rt_readback(backbuffer, &rb);
+            check_rect(&rb, tests[i].expected_rect, tests[i].message);
+            release_surface_readback(&rb);
+        }
     }
 
     hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
-    ok(hr == D3D_OK, "IDirect3DDevice9_Present failed with %08x\n", hr);
+    ok(SUCCEEDED(hr), "Failed to present, hr %#x.\n", hr);
 
+    IDirect3DSurface9_Release(backbuffer);
     refcount = IDirect3DDevice9_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
 done:
@@ -19764,9 +19788,12 @@ static void test_multisample_mismatch(void)
     hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
     ok(SUCCEEDED(hr), "Failed to present, hr %#x.\n", hr);
 
-    /* Check depth buffer values. AMD GPUs (r500 and evergreen tested) clear the depth buffer
-     * like you'd expect in a correct framebuffer setup. Nvidia doesn't clear it, neither in
-     * the Z only clear case nor in the combined clear case. */
+    /* Check depth buffer values. AMD GPUs (r500 and evergreen tested) clear
+     * the depth buffer like you'd expect in a correct framebuffer
+     * setup. Nvidia doesn't clear it, neither in the Z only clear case nor in
+     * the combined clear case.
+     * In Wine we currently happen to allow the depth only clear case but
+     * disallow the combined one. */
     hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZ | D3DFVF_DIFFUSE);
     ok(SUCCEEDED(hr), "Failed to set FVF, hr %#x.\n", hr);
     hr = IDirect3DDevice9_BeginScene(device);
@@ -19778,7 +19805,7 @@ static void test_multisample_mismatch(void)
     color = getPixelColor(device, 62, 240);
     ok(color_match(color, 0x000000ff, 1), "Got unexpected color 0x%08x.\n", color);
     color = getPixelColor(device, 64, 240);
-    ok(color_match(color, 0x0000ff00, 1) || broken(color_match(color, 0x000000ff, 1)),
+    ok(color_match(color, 0x0000ff00, 1) || color_match(color, 0x000000ff, 1),
             "Got unexpected color 0x%08x.\n", color);
     color = getPixelColor(device, 318, 240);
     ok(color_match(color, 0x0000ff00, 1) || broken(color_match(color, 0x000000ff, 1)),
@@ -23508,26 +23535,25 @@ static void test_null_format(void)
     {
         unsigned int x, y;
         D3DCOLOR color;
-        BOOL todo;
     }
     expected_colors[] =
     {
-        {200,  30, 0x0000ff00, FALSE},
-        {440,  30, 0x0000ff00, FALSE},
-        {520,  30, 0x0000ff00, FALSE},
-        {600,  30, 0x0000ff00, FALSE},
-        {200,  90, 0x00000000, FALSE},
-        {440,  90, 0x0000ff00, FALSE},
-        {520,  90, 0x0000ff00, FALSE},
-        {600,  90, 0x0000ff00, FALSE},
-        {200, 150, 0x000000ff, FALSE},
-        {440, 150, 0x000000ff, FALSE},
-        {520, 150, 0x0000ff00, FALSE},
-        {600, 150, 0x0000ff00, FALSE},
-        {200, 320, 0x000000ff, FALSE},
-        {440, 320, 0x000000ff, FALSE},
-        {520, 320, 0x00000000, TRUE},
-        {600, 320, 0x0000ff00, FALSE},
+        {200,  30, 0x0000ff00},
+        {440,  30, 0x0000ff00},
+        {520,  30, 0x0000ff00},
+        {600,  30, 0x0000ff00},
+        {200,  90, 0x00000000},
+        {440,  90, 0x0000ff00},
+        {520,  90, 0x0000ff00},
+        {600,  90, 0x0000ff00},
+        {200, 150, 0x000000ff},
+        {440, 150, 0x000000ff},
+        {520, 150, 0x0000ff00},
+        {600, 150, 0x0000ff00},
+        {200, 320, 0x000000ff},
+        {440, 320, 0x000000ff},
+        {520, 320, 0x00000000},
+        {600, 320, 0x0000ff00},
     };
     IDirect3DSurface9 *original_rt, *small_rt, *null_rt, *small_null_rt;
     IDirect3DDevice9 *device;
@@ -23648,7 +23674,7 @@ static void test_null_format(void)
     for (i = 0; i < ARRAY_SIZE(expected_colors); ++i)
     {
         color = getPixelColor(device, expected_colors[i].x, expected_colors[i].y);
-        todo_wine_if(expected_colors[i].todo) ok(color_match(color, expected_colors[i].color, 1),
+        ok(color_match(color, expected_colors[i].color, 1),
                 "Expected color 0x%08x at (%u, %u), got 0x%08x.\n",
                 expected_colors[i].color, expected_colors[i].x, expected_colors[i].y, color);
     }
@@ -23942,7 +23968,7 @@ START_TEST(visual)
     yuv_layout_test();
     zwriteenable_test();
     alphatest_test();
-    viewport_test();
+    test_viewport();
     test_constant_clamp_vs();
     test_compare_instructions();
     test_mova();

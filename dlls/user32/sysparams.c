@@ -630,11 +630,17 @@ static UINT get_system_dpi(void)
     static const WCHAR dpi_key_name[] = {'C','o','n','t','r','o','l',' ','P','a','n','e','l','\\','D','e','s','k','t','o','p','\0'};
     static const WCHAR def_dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
     static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
-    DWORD dpi;
+    static UINT system_dpi;
+    UINT dpi;
 
-    if ((dpi = get_reg_dword( HKEY_CURRENT_USER, dpi_key_name, dpi_value_name ))) return dpi;
-    if ((dpi = get_reg_dword( HKEY_CURRENT_CONFIG, def_dpi_key_name, dpi_value_name ))) return dpi;
-    return USER_DEFAULT_SCREEN_DPI;
+    if (!system_dpi)
+    {
+        if (!(dpi = get_reg_dword( HKEY_CURRENT_USER, dpi_key_name, dpi_value_name )) &&
+            !(dpi = get_reg_dword( HKEY_CURRENT_CONFIG, def_dpi_key_name, dpi_value_name )))
+            dpi = USER_DEFAULT_SCREEN_DPI;
+        system_dpi = dpi;
+    }
+    return system_dpi;
 }
 
 HDC get_display_dc(void)
@@ -3284,12 +3290,22 @@ BOOL WINAPI IsProcessDPIAware(void)
  */
 UINT WINAPI GetDpiForSystem(void)
 {
-    static int display_dpi;
-
     if (!IsProcessDPIAware()) return USER_DEFAULT_SCREEN_DPI;
+    return get_system_dpi();
+}
 
-    if (!display_dpi) display_dpi = get_system_dpi();
-    return display_dpi;
+/***********************************************************************
+ *              GetDpiForMonitorInternal   (USER32.@)
+ */
+BOOL WINAPI GetDpiForMonitorInternal( HMONITOR monitor, UINT type, UINT *x, UINT *y )
+{
+    UINT dpi = get_system_dpi();
+
+    WARN( "(%p, %u, %p, %p): semi-stub\n", monitor, type, x, y );
+
+    if (x) *x = dpi;
+    if (y) *y = dpi;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -3297,8 +3313,21 @@ UINT WINAPI GetDpiForSystem(void)
  */
 UINT WINAPI GetDpiForWindow( HWND hwnd )
 {
-    FIXME( "stub: %p\n", hwnd );
-    return GetDpiForSystem();
+    UINT dpi;
+
+    switch (GetAwarenessFromDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd )))
+    {
+    case DPI_AWARENESS_UNAWARE:
+        return USER_DEFAULT_SCREEN_DPI;
+    case DPI_AWARENESS_SYSTEM_AWARE:
+        return get_system_dpi();
+    case DPI_AWARENESS_PER_MONITOR_AWARE:
+        GetDpiForMonitorInternal( MonitorFromWindow( hwnd, MONITOR_DEFAULTTOPRIMARY ),
+                                  0 /* MDT_EFFECTIVE_DPI */, &dpi, NULL );
+        return dpi;
+    default:
+        return 0;
+    }
 }
 
 /**********************************************************************
@@ -3335,6 +3364,43 @@ DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT
     if (((ULONG_PTR)context & ~(ULONG_PTR)0x13) == 0x80000000) info->dpi_awareness = 0;
     else info->dpi_awareness = val | 0x10;
     return ULongToHandle( prev );
+}
+
+/**********************************************************************
+ *              LogicalToPhysicalPointForPerMonitorDPI   (USER32.@)
+ */
+BOOL WINAPI LogicalToPhysicalPointForPerMonitorDPI( HWND hwnd, POINT *pt )
+{
+    UINT system_dpi = get_system_dpi();
+    UINT dpi = GetDpiForWindow( hwnd );
+    RECT rect;
+
+    GetWindowRect( hwnd, &rect );
+    if (pt->x < rect.left || pt->y < rect.top || pt->x > rect.right || pt->y > rect.bottom) return FALSE;
+    pt->x = MulDiv( pt->x, system_dpi, dpi );
+    pt->y = MulDiv( pt->y, system_dpi, dpi );
+    return TRUE;
+}
+
+/**********************************************************************
+ *              PhysicalToLogicalPointForPerMonitorDPI   (USER32.@)
+ */
+BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI( HWND hwnd, POINT *pt )
+{
+    DPI_AWARENESS_CONTEXT context;
+    UINT system_dpi = get_system_dpi();
+    UINT dpi = GetDpiForWindow( hwnd );
+    RECT rect;
+
+    /* get window rect in physical coords */
+    context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+    GetWindowRect( hwnd, &rect );
+    SetThreadDpiAwarenessContext( context );
+
+    if (pt->x < rect.left || pt->y < rect.top || pt->x > rect.right || pt->y > rect.bottom) return FALSE;
+    pt->x = MulDiv( pt->x, dpi, system_dpi );
+    pt->y = MulDiv( pt->y, dpi, system_dpi );
+    return TRUE;
 }
 
 /**********************************************************************

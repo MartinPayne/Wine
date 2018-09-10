@@ -25,6 +25,7 @@
 
 #include "wsdapi_internal.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "guiddef.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wsdapi);
@@ -194,10 +195,18 @@ static HRESULT WINAPI IWSDiscoveryPublisherImpl_Publish(IWSDiscoveryPublisher *T
 static HRESULT WINAPI IWSDiscoveryPublisherImpl_UnPublish(IWSDiscoveryPublisher *This, LPCWSTR pszId, ULONGLONG ullInstanceId, ULONGLONG ullMessageNumber,
                                                           LPCWSTR pszSessionId, const WSDXML_ELEMENT *pAny)
 {
-    FIXME("(%p, %s, %s, %s, %s, %p)\n", This, debugstr_w(pszId), wine_dbgstr_longlong(ullInstanceId), wine_dbgstr_longlong(ullMessageNumber),
-        debugstr_w(pszSessionId), pAny);
+    IWSDiscoveryPublisherImpl *impl = impl_from_IWSDiscoveryPublisher(This);
 
-    return E_NOTIMPL;
+    TRACE("(%p, %s, %s, %s, %s, %p)\n", This, debugstr_w(pszId), wine_dbgstr_longlong(ullInstanceId),
+        wine_dbgstr_longlong(ullMessageNumber), debugstr_w(pszSessionId), pAny);
+
+    if ((!impl->publisherStarted) || (pszId == NULL) || (lstrlenW(pszId) > WSD_MAX_TEXT_LENGTH) ||
+        ((pszSessionId != NULL) && (lstrlenW(pszSessionId) > WSD_MAX_TEXT_LENGTH)))
+    {
+        return E_INVALIDARG;
+    }
+
+    return send_bye_message(impl, pszId, ullInstanceId, ullMessageNumber, pszSessionId, pAny);
 }
 
 static HRESULT WINAPI IWSDiscoveryPublisherImpl_MatchProbe(IWSDiscoveryPublisher *This, const WSD_SOAP_MESSAGE *pProbeMessage,
@@ -332,6 +341,7 @@ static const IWSDiscoveryPublisherVtbl publisher_vtbl =
 HRESULT WINAPI WSDCreateDiscoveryPublisher(IWSDXMLContext *pContext, IWSDiscoveryPublisher **ppPublisher)
 {
     IWSDiscoveryPublisherImpl *obj;
+    HRESULT ret;
 
     TRACE("(%p, %p)\n", pContext, ppPublisher);
 
@@ -356,17 +366,29 @@ HRESULT WINAPI WSDCreateDiscoveryPublisher(IWSDXMLContext *pContext, IWSDiscover
 
     if (pContext == NULL)
     {
-        if (FAILED(WSDXMLCreateContext(&obj->xmlContext)))
+        ret = WSDXMLCreateContext(&obj->xmlContext);
+
+        if (FAILED(ret))
         {
             WARN("Unable to create XML context\n");
-            HeapFree (GetProcessHeap(), 0, obj);
-            return E_OUTOFMEMORY;
+            heap_free(obj);
+            return ret;
         }
     }
     else
     {
         obj->xmlContext = pContext;
         IWSDXMLContext_AddRef(pContext);
+    }
+
+    ret = register_namespaces(obj->xmlContext);
+
+    if (FAILED(ret))
+    {
+        WARN("Unable to register default namespaces\n");
+        heap_free(obj);
+
+        return ret;
     }
 
     list_init(&obj->notificationSinks);

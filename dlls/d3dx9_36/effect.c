@@ -4202,7 +4202,7 @@ static HRESULT WINAPI ID3DXEffectImpl_Begin(ID3DXEffect *iface, UINT *passes, DW
 
     TRACE("iface %p, passes %p, flags %#x.\n", iface, passes, flags);
 
-    if (passes && technique)
+    if (technique)
     {
         if (flags & ~(D3DXFX_DONOTSAVESTATE | D3DXFX_DONOTSAVESAMPLERSTATE | D3DXFX_DONOTSAVESHADERSTATE))
             WARN("Invalid flags (%#x) specified.\n", flags);
@@ -4234,7 +4234,8 @@ static HRESULT WINAPI ID3DXEffectImpl_Begin(ID3DXEffect *iface, UINT *passes, DW
                 ERR("StateBlock Capture failed, hr %#x.\n", hr);
         }
 
-        *passes = technique->pass_count;
+        if (passes)
+            *passes = technique->pass_count;
         effect->started = TRUE;
         effect->begin_flags = flags;
 
@@ -6589,7 +6590,7 @@ static HRESULT d3dx9_base_effect_init(struct d3dx9_base_effect *base,
     {
         TRACE("HLSL ASCII effect, trying to compile it.\n");
         hr = D3DCompile(data, data_size, NULL, defines, include,
-                "main", "fx_2_0", compile_flags, eflags, &bytecode, &temp_errors);
+                NULL, "fx_2_0", compile_flags, eflags, &bytecode, &temp_errors);
         if (FAILED(hr))
         {
             WARN("Failed to compile ASCII effect.\n");

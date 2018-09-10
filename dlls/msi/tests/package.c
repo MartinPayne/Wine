@@ -2138,24 +2138,26 @@ static void test_condition(void)
     DeleteFileA(msifile);
 }
 
-static BOOL check_prop_empty( MSIHANDLE hpkg, const char * prop)
+static void check_prop(MSIHANDLE hpkg, const char *prop, const char *expect)
 {
-    UINT r;
-    DWORD sz;
-    char buffer[2];
-
-    sz = sizeof buffer;
-    strcpy(buffer,"x");
-    r = MsiGetPropertyA( hpkg, prop, buffer, &sz );
-    return r == ERROR_SUCCESS && buffer[0] == 0 && sz == 0;
+    char buffer[20] = "x";
+    DWORD sz = sizeof(buffer);
+    UINT r = MsiGetPropertyA(hpkg, prop, buffer, &sz);
+    ok(!r, "'%s': got %u\n", prop, r);
+    ok(sz == lstrlenA(buffer), "'%s': expected %u, got %u\n", prop, lstrlenA(buffer), sz);
+    ok(!strcmp(buffer, expect), "expected '%s', got '%s'\n", expect, buffer);
 }
 
 static void test_props(void)
 {
+    static const WCHAR booW[] = {'b','o','o',0};
+    static const WCHAR xyzW[] = {'x','y','z',0};
+    static const WCHAR xyW[] = {'x','y',0};
     MSIHANDLE hpkg, hdb;
     UINT r;
     DWORD sz;
     char buffer[0x100];
+    WCHAR bufferW[10];
 
     hdb = create_package_db();
 
@@ -2173,150 +2175,153 @@ static void test_props(void)
 
     /* test invalid values */
     r = MsiGetPropertyA( 0, NULL, NULL, NULL );
-    ok( r == ERROR_INVALID_PARAMETER, "wrong return val\n");
+    ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     r = MsiGetPropertyA( hpkg, NULL, NULL, NULL );
-    ok( r == ERROR_INVALID_PARAMETER, "wrong return val\n");
+    ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     r = MsiGetPropertyA( hpkg, "boo", NULL, NULL );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(!r, "got %u\n", r);
 
     r = MsiGetPropertyA( hpkg, "boo", buffer, NULL );
-    ok( r == ERROR_INVALID_PARAMETER, "wrong return val\n");
+    ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     /* test retrieving an empty/nonexistent property */
     sz = sizeof buffer;
     r = MsiGetPropertyA( hpkg, "boo", NULL, &sz );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( sz == 0, "wrong size returned\n");
+    ok(!r, "got %u\n", r);
+    ok(sz == 0, "got size %d\n", sz);
 
-    check_prop_empty( hpkg, "boo");
     sz = 0;
     strcpy(buffer,"x");
     r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
-    ok( r == ERROR_MORE_DATA, "wrong return val\n");
-    ok( !strcmp(buffer,"x"), "buffer was changed\n");
-    ok( sz == 0, "wrong size returned\n");
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!strcmp(buffer,"x"), "got \"%s\"\n", buffer);
+    ok(sz == 0, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( buffer[0] == 0, "buffer was not changed\n");
-    ok( sz == 0, "wrong size returned\n");
+    ok(!r, "got %u\n", r);
+    ok(!buffer[0], "got \"%s\"\n", buffer);
+    ok(sz == 0, "got size %u\n", sz);
 
     /* set the property to something */
     r = MsiSetPropertyA( 0, NULL, NULL );
-    ok( r == ERROR_INVALID_HANDLE, "wrong return val\n");
+    ok(r == ERROR_INVALID_HANDLE, "got %u\n", r);
 
     r = MsiSetPropertyA( hpkg, NULL, NULL );
-    ok( r == ERROR_INVALID_PARAMETER, "wrong return val\n");
+    ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     r = MsiSetPropertyA( hpkg, "", NULL );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(!r, "got %u\n", r);
 
-    /* try set and get some illegal property identifiers */
     r = MsiSetPropertyA( hpkg, "", "asdf" );
-    ok( r == ERROR_FUNCTION_FAILED, "wrong return val\n");
+    ok(r == ERROR_FUNCTION_FAILED, "got %u\n", r);
 
     r = MsiSetPropertyA( hpkg, "=", "asdf" );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, "=", "asdf");
 
     r = MsiSetPropertyA( hpkg, " ", "asdf" );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, " ", "asdf");
 
     r = MsiSetPropertyA( hpkg, "'", "asdf" );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-
-    sz = sizeof buffer;
-    buffer[0]=0;
-    r = MsiGetPropertyA( hpkg, "'", buffer, &sz );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( !strcmp(buffer,"asdf"), "buffer was not changed\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, "'", "asdf");
 
     /* set empty values */
     r = MsiSetPropertyA( hpkg, "boo", NULL );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( check_prop_empty( hpkg, "boo"), "prop wasn't empty\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, "boo", "");
 
     r = MsiSetPropertyA( hpkg, "boo", "" );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( check_prop_empty( hpkg, "boo"), "prop wasn't empty\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, "boo", "");
 
     /* set a non-empty value */
     r = MsiSetPropertyA( hpkg, "boo", "xyz" );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(!r, "got %u\n", r);
+    check_prop(hpkg, "boo", "xyz");
+
+    r = MsiGetPropertyA(hpkg, "boo", NULL, NULL);
+    ok(!r, "got %u\n", r);
+
+    r = MsiGetPropertyA(hpkg, "boo", buffer, NULL);
+    ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
+
+    sz = 0;
+    r = MsiGetPropertyA(hpkg, "boo", NULL, &sz);
+    ok(!r, "got %u\n", r);
+    ok(sz == 3, "got size %u\n", sz);
+
+    sz = 0;
+    strcpy(buffer, "q");
+    r = MsiGetPropertyA(hpkg, "boo", buffer, &sz);
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!strcmp(buffer, "q"), "got \"%s\"", buffer);
+    ok(sz == 3, "got size %u\n", sz);
 
     sz = 1;
     strcpy(buffer,"x");
     r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
-    ok( r == ERROR_MORE_DATA, "wrong return val\n");
-    ok( buffer[0] == 0, "buffer was not changed\n");
-    ok( sz == 3, "wrong size returned\n");
-
-    sz = 4;
-    strcpy(buffer,"x");
-    r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( !strcmp(buffer,"xyz"), "buffer was not changed\n");
-    ok( sz == 3, "wrong size returned\n");
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!buffer[0], "got \"%s\"\n", buffer);
+    ok(sz == 3, "got size %u\n", sz);
 
     sz = 3;
     strcpy(buffer,"x");
     r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
-    ok( r == ERROR_MORE_DATA, "wrong return val\n");
-    ok( !strcmp(buffer,"xy"), "buffer was not changed\n");
-    ok( sz == 3, "wrong size returned\n");
-
-    r = MsiSetPropertyA(hpkg, "SourceDir", "foo");
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!strcmp(buffer,"xy"), "got \"%s\"\n", buffer);
+    ok(sz == 3, "got size %u\n", sz);
 
     sz = 4;
-    r = MsiGetPropertyA(hpkg, "SOURCEDIR", buffer, &sz);
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( !strcmp(buffer,""), "buffer wrong\n");
-    ok( sz == 0, "wrong size returned\n");
-
-    sz = 4;
-    r = MsiGetPropertyA(hpkg, "SOMERANDOMNAME", buffer, &sz);
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( !strcmp(buffer,""), "buffer wrong\n");
-    ok( sz == 0, "wrong size returned\n");
-
-    sz = 4;
-    r = MsiGetPropertyA(hpkg, "SourceDir", buffer, &sz);
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
-    ok( !strcmp(buffer,"foo"), "buffer wrong\n");
-    ok( sz == 3, "wrong size returned\n");
-
-    r = MsiSetPropertyA(hpkg, "MetadataCompName", "Photoshop.dll");
-    ok( r == ERROR_SUCCESS, "wrong return val\n");
+    strcpy(buffer,"x");
+    r = MsiGetPropertyA( hpkg, "boo", buffer, &sz );
+    ok(!r, "got %u\n", r);
+    ok(!strcmp(buffer,"xyz"), "got \"%s\"\n", buffer);
+    ok(sz == 3, "got size %u\n", sz);
 
     sz = 0;
-    r = MsiGetPropertyA(hpkg, "MetadataCompName", NULL, &sz );
-    ok( r == ERROR_SUCCESS, "return wrong\n");
-    ok( sz == 13, "size wrong (%d)\n", sz);
+    r = MsiGetPropertyW(hpkg, booW, NULL, &sz);
+    ok(!r, "got %u\n", r);
+    ok(sz == 3, "got size %u\n", sz);
 
-    sz = 13;
-    r = MsiGetPropertyA(hpkg, "MetadataCompName", buffer, &sz );
-    ok( r == ERROR_MORE_DATA, "return wrong\n");
-    ok( !strcmp(buffer,"Photoshop.dl"), "buffer wrong\n");
+    sz = 0;
+    lstrcpyW(bufferW, booW);
+    r = MsiGetPropertyW(hpkg, booW, bufferW, &sz);
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!lstrcmpW(bufferW, booW), "got %s\n", wine_dbgstr_w(bufferW));
+    ok(sz == 3, "got size %u\n", sz);
 
-    r = MsiSetPropertyA(hpkg, "property", "value");
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    sz = 1;
+    lstrcpyW(bufferW, booW);
+    r = MsiGetPropertyW(hpkg, booW, bufferW, &sz );
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!bufferW[0], "got %s\n", wine_dbgstr_w(bufferW));
+    ok(sz == 3, "got size %u\n", sz);
 
-    sz = 6;
-    r = MsiGetPropertyA(hpkg, "property", buffer, &sz);
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok( !strcmp(buffer, "value"), "Expected value, got %s\n", buffer);
+    sz = 3;
+    lstrcpyW(bufferW, booW);
+    r = MsiGetPropertyW(hpkg, booW, bufferW, &sz );
+    ok(r == ERROR_MORE_DATA, "got %u\n", r);
+    ok(!lstrcmpW(bufferW, xyW), "got %s\n", wine_dbgstr_w(bufferW));
+    ok(sz == 3, "got size %u\n", sz);
 
-    r = MsiSetPropertyA(hpkg, "property", NULL);
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    sz = 4;
+    lstrcpyW(bufferW, booW);
+    r = MsiGetPropertyW(hpkg, booW, bufferW, &sz );
+    ok(!r, "got %u\n", r);
+    ok(!lstrcmpW(bufferW, xyzW), "got %s\n", wine_dbgstr_w(bufferW));
+    ok(sz == 3, "got size %u\n", sz);
 
-    sz = 6;
-    r = MsiGetPropertyA(hpkg, "property", buffer, &sz);
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!buffer[0], "Expected empty string, got %s\n", buffer);
+    /* properties are case-sensitive */
+    check_prop(hpkg, "BOO", "");
+
+    /* properties set in Property table should work */
+    check_prop(hpkg, "MetadataCompName", "Photoshop.dll");
 
     MsiCloseHandle( hpkg );
     DeleteFileA(msifile);
@@ -3699,9 +3704,12 @@ static void test_states(void)
     add_custom_action_entry( hdb, "'ConditionCheck6', 19, '', 'Condition check failed (6)'" );
     add_custom_action_entry( hdb, "'ConditionCheck7', 19, '', 'Condition check failed (7)'" );
     add_custom_action_entry( hdb, "'ConditionCheck8', 19, '', 'Condition check failed (8)'" );
+    add_custom_action_entry( hdb,
+            "'VBFeatureRequest', 38, NULL, 'Session.FeatureRequestState(\"three\") = 3'" );
 
     add_install_execute_sequence_entry( hdb, "'ConditionCheck1', 'REINSTALL', '798'" );
     add_install_execute_sequence_entry( hdb, "'ConditionCheck2', 'NOT REMOVE AND Preselected', '799'" );
+    add_install_execute_sequence_entry( hdb, "'VBFeatureRequest', 'NOT REMOVE', '1001'" );
     add_install_execute_sequence_entry( hdb, "'ConditionCheck3', 'REINSTALL', '6598'" );
     add_install_execute_sequence_entry( hdb, "'ConditionCheck4', 'NOT REMOVE AND Preselected', '6599'" );
     add_install_execute_sequence_entry( hdb, "'ConditionCheck5', 'REINSTALL', '6601'" );
@@ -3768,6 +3776,8 @@ static void test_states(void)
     ok(state == INSTALLSTATE_SOURCE, "state = %d\n", state);
     state = MsiQueryFeatureStateA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", "two");
     ok(state == INSTALLSTATE_ABSENT, "state = %d\n", state);
+    state = MsiQueryFeatureStateA("{7262AC98-EEBD-4364-8CE3-D654F6A425B9}", "three");
+    ok(state == INSTALLSTATE_LOCAL, "state = %d\n", state);
 
     /* uninstall the product */
     r = MsiInstallProductA(msifile4, "REMOVE=ALL");
@@ -3777,57 +3787,6 @@ static void test_states(void)
     DeleteFileA(msifile2);
     DeleteFileA(msifile3);
     DeleteFileA(msifile4);
-}
-
-static void test_getproperty(void)
-{
-    MSIHANDLE hPackage = 0;
-    char prop[100];
-    static CHAR empty[] = "";
-    DWORD size;
-    UINT r;
-
-    r = package_from_db(create_package_db(), &hPackage);
-    if (r == ERROR_INSTALL_PACKAGE_REJECTED)
-    {
-        skip("Not enough rights to perform tests\n");
-        DeleteFileA(msifile);
-        return;
-    }
-    ok( r == ERROR_SUCCESS, "Failed to create package %u\n", r );
-
-    /* set the property */
-    r = MsiSetPropertyA(hPackage, "Name", "Value");
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-
-    /* retrieve the size, NULL pointer */
-    size = 0;
-    r = MsiGetPropertyA(hPackage, "Name", NULL, &size);
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok( size == 5, "Expected 5, got %d\n", size);
-
-    /* retrieve the size, empty string */
-    size = 0;
-    r = MsiGetPropertyA(hPackage, "Name", empty, &size);
-    ok( r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok( size == 5, "Expected 5, got %d\n", size);
-
-    /* don't change size */
-    r = MsiGetPropertyA(hPackage, "Name", prop, &size);
-    ok( r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok( size == 5, "Expected 5, got %d\n", size);
-    ok( !lstrcmpA(prop, "Valu"), "Expected Valu, got %s\n", prop);
-
-    /* increase the size by 1 */
-    size++;
-    r = MsiGetPropertyA(hPackage, "Name", prop, &size);
-    ok( r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok( size == 5, "Expected 5, got %d\n", size);
-    ok( !lstrcmpA(prop, "Value"), "Expected Value, got %s\n", prop);
-
-    r = MsiCloseHandle( hPackage);
-    ok( r == ERROR_SUCCESS , "Failed to close package\n" );
-    DeleteFileA(msifile);
 }
 
 static void test_removefiles(void)
@@ -8520,7 +8479,7 @@ static void test_MsiApplyPatch(void)
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %u\n", r);
 }
 
-static void test_MsiEnumComponentCosts(void)
+static void test_costs(void)
 {
     MSIHANDLE hdb, hpkg;
     char package[12], drive[3];
@@ -8702,6 +8661,20 @@ static void test_MsiEnumComponentCosts(void)
     len = sizeof(drive);
     r = MsiEnumComponentCostsA( hpkg, "", 1, INSTALLSTATE_UNKNOWN, drive, &len, &cost, &temp );
     ok( r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %u\n", r );
+
+    /* test MsiGetFeatureCost */
+    cost = 0xdead;
+    r = MsiGetFeatureCostA( hpkg, NULL, MSICOSTTREE_SELFONLY, INSTALLSTATE_LOCAL, &cost );
+    ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r);
+    ok( cost == 0xdead, "got %d\n", cost );
+
+    r = MsiGetFeatureCostA( hpkg, "one", MSICOSTTREE_SELFONLY, INSTALLSTATE_LOCAL, NULL );
+    ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r);
+
+    cost = 0xdead;
+    r = MsiGetFeatureCostA( hpkg, "one", MSICOSTTREE_SELFONLY, INSTALLSTATE_LOCAL, &cost );
+    ok( !r, "got %u\n", r);
+    ok( cost == 8, "got %d\n", cost );
 
     MsiCloseHandle( hpkg );
 error:
@@ -9723,7 +9696,6 @@ START_TEST(package)
     test_formatrecord2();
     test_formatrecord_tables();
     test_states();
-    test_getproperty();
     test_removefiles();
     test_appsearch();
     test_appsearch_complocator();
@@ -9744,7 +9716,7 @@ START_TEST(package)
     test_MsiSetProperty();
     test_MsiApplyMultiplePatches();
     test_MsiApplyPatch();
-    test_MsiEnumComponentCosts();
+    test_costs();
     test_MsiDatabaseCommit();
     test_externalui();
     test_externalui_message();
